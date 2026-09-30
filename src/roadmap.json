@@ -1,0 +1,187 @@
+[
+  {
+    "id": "F00",
+    "title": "Repository and Environment Baseline",
+    "phase": "Foundation"
+  },
+  {
+    "id": "F01",
+    "title": "Authentication and Individual Accounts",
+    "phase": "Foundation"
+  },
+  {
+    "id": "F02",
+    "title": "RBAC Permission Engine",
+    "phase": "Foundation"
+  },
+  {
+    "id": "F03",
+    "title": "Reference Data and Academic Period Configuration",
+    "phase": "Foundation"
+  },
+  {
+    "id": "F04",
+    "title": "Scholar Registry and Permanent Scholar ID",
+    "phase": "Scholar records"
+  },
+  {
+    "id": "F05",
+    "title": "Duplicate Detection and Safe Scholar Creation",
+    "phase": "Scholar records"
+  },
+  {
+    "id": "F06",
+    "title": "Scholarship Record and Qualification Workflow",
+    "phase": "Scholar records"
+  },
+  {
+    "id": "F07",
+    "title": "Scholarship Status Change Workflow",
+    "phase": "Scholar records"
+  },
+  {
+    "id": "F08",
+    "title": "Academic Records per Academic Year",
+    "phase": "Scholar records"
+  },
+  {
+    "id": "F09",
+    "title": "Course Shift and School Transfer Workflow",
+    "phase": "Scholar records"
+  },
+  {
+    "id": "F10",
+    "title": "Masterlist Draft Generation",
+    "phase": "Official records"
+  },
+  {
+    "id": "F11",
+    "title": "Masterlist Verification, Approval, Publish and Lock",
+    "phase": "Official records"
+  },
+  {
+    "id": "F12",
+    "title": "Masterlist Amendment and Versioning",
+    "phase": "Official records"
+  },
+  {
+    "id": "F13",
+    "title": "Requirement Definition Versioning",
+    "phase": "Official records"
+  },
+  {
+    "id": "F14",
+    "title": "Requirement Instance Generation",
+    "phase": "Official records"
+  },
+  {
+    "id": "F15",
+    "title": "Physical Requirement Receiving",
+    "phase": "Official records"
+  },
+  {
+    "id": "F16",
+    "title": "Requirement Verification and Correction Loop",
+    "phase": "Official records"
+  },
+  {
+    "id": "F17",
+    "title": "Requirement Waiver",
+    "phase": "Official records"
+  },
+  {
+    "id": "F18",
+    "title": "Payout Cycle Configuration",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F19",
+    "title": "Calculated Payout Eligibility Engine",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F20",
+    "title": "Eligibility Override Request and Approval",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F21",
+    "title": "OVR Draft Batch and Entries",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F22",
+    "title": "OVR Review and Atomic Finalization",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F23",
+    "title": "OVR Submission, Processing and Closure",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F24",
+    "title": "OVR Amendment",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F25",
+    "title": "Payment Record and Reconciliation",
+    "phase": "Payouts"
+  },
+  {
+    "id": "F26",
+    "title": "Scholar Profile Timeline",
+    "phase": "Operations"
+  },
+  {
+    "id": "F27",
+    "title": "Excel Import Staging and Validation",
+    "phase": "Operations"
+  },
+  {
+    "id": "F28",
+    "title": "Excel Export and PII Controls",
+    "phase": "Operations"
+  },
+  {
+    "id": "F29",
+    "title": "Operational Reports",
+    "phase": "Operations"
+  },
+  {
+    "id": "F30",
+    "title": "Dashboard",
+    "phase": "Operations"
+  },
+  {
+    "id": "F31",
+    "title": "Audit Log and Event Viewer",
+    "phase": "Assurance"
+  },
+  {
+    "id": "F32",
+    "title": "Concurrency, Idempotency and Locking",
+    "phase": "Assurance"
+  },
+  {
+    "id": "F33",
+    "title": "Error Contract and Validation UX",
+    "phase": "Assurance"
+  },
+  {
+    "id": "F34",
+    "title": "Security Hardening and RLS Review",
+    "phase": "Assurance"
+  },
+  {
+    "id": "F35",
+    "title": "Backup, Restore and Disaster Recovery",
+    "phase": "Assurance"
+  },
+  {
+    "id": "F36",
+    "title": "UAT and Production Go-Live",
+    "phase": "Assurance"
+  }
+]

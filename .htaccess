@@ -1,0 +1,2 @@
+# Serve via npm run dev / npm start; never expose server source through Apache.
+Require all denied
