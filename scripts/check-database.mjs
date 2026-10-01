@@ -24,7 +24,7 @@ try {
   const [rows] = await connection.query(
     "SELECT version, checksum FROM schema_migrations",
   );
-  assert.equal(rows.length, 6);
+  assert.equal(rows.length, 16);
   for (const row of rows) {
     assert.match(row.version, /^\d{14}_f\d{2}_[a-z_]+\.sql$/);
     const sql = await readFile(
@@ -53,6 +53,42 @@ try {
     /GRANT (?:ALL|CREATE|ALTER|DROP|DELETE)|WITH GRANT OPTION/,
   );
   for (const sql of [
+    "EXPLAIN UPDATE requirement_workflow_events SET to_status=to_status WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_workflow_events WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_workflow_commands WHERE 1=0",
+    "EXPLAIN UPDATE requirement_receipts SET storage_location=storage_location WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_receipts WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_receipt_commands WHERE 1=0",
+    "EXPLAIN UPDATE requirement_checklists SET policy_date=policy_date WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_checklists WHERE 1=0",
+    "EXPLAIN UPDATE requirement_instances SET definition_version_id=definition_version_id WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_instances WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_generation_commands WHERE 1=0",
+    "EXPLAIN UPDATE requirement_definitions SET code=code WHERE 1=0",
+    "EXPLAIN UPDATE requirement_definition_versions SET name=name WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_definition_versions WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_definition_commands WHERE 1=0",
+    "EXPLAIN UPDATE masterlist_amendments SET reason=reason WHERE 1=0",
+    "EXPLAIN DELETE FROM masterlist_amendment_decisions WHERE 1=0",
+    "EXPLAIN UPDATE masterlist_amendment_versions SET revision=revision WHERE 1=0",
+    "EXPLAIN DELETE FROM masterlist_amendment_commands WHERE 1=0",
+    "EXPLAIN DELETE FROM masterlist_entries WHERE 1=0",
+    "EXPLAIN UPDATE masterlist_publications SET snapshot=snapshot WHERE 1=0",
+    "EXPLAIN DELETE FROM masterlist_workflow_events WHERE 1=0",
+    "EXPLAIN DELETE FROM masterlist_activations WHERE 1=0",
+    "EXPLAIN UPDATE masterlist_entries SET scholar_id=scholar_id WHERE 1=0",
+    "EXPLAIN UPDATE masterlist_commands SET resulting_version=resulting_version WHERE 1=0",
+    "EXPLAIN UPDATE academic_changes SET remarks=remarks WHERE 1=0",
+    "EXPLAIN DELETE FROM academic_changes WHERE 1=0",
+    "EXPLAIN UPDATE academic_change_decisions SET reason=reason WHERE 1=0",
+    "EXPLAIN DELETE FROM academic_change_decisions WHERE 1=0",
+    "EXPLAIN UPDATE academic_change_commands SET outcome=outcome WHERE 1=0",
+    "EXPLAIN UPDATE academic_records SET year_level=year_level WHERE 1=0",
+    "EXPLAIN DELETE FROM academic_records WHERE 1=0",
+    "EXPLAIN UPDATE academic_commands SET payload_hash=payload_hash WHERE 1=0",
+    "EXPLAIN UPDATE status_change_requests SET reason=reason WHERE 1=0",
+    "EXPLAIN DELETE FROM status_change_decisions WHERE 1=0",
+    "EXPLAIN UPDATE status_change_commands SET outcome=outcome WHERE 1=0",
     "EXPLAIN DELETE FROM scholarship_records WHERE 1=0",
     "EXPLAIN UPDATE scholarship_records SET academic_year_id=academic_year_id WHERE 1=0",
     "EXPLAIN UPDATE qualification_events SET reason=reason WHERE 1=0",

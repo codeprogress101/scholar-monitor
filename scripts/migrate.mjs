@@ -15,7 +15,7 @@ try {
       : "All migrations already applied; checksums verified.",
   );
   console.log(
-    "F04 runtime grants applied. Scholar IDs and history remain protected; no delete privileges granted.",
+    "F16 runtime grants applied. Scholar and annual identities and history remain protected; no delete privileges granted.",
   );
 } catch (error) {
   console.error(

@@ -1,3 +1,4 @@
+import AcademicPanel from "./AcademicPanel";
 import QualificationPanel from "./QualificationPanel";
 import {
   useCallback,
@@ -792,6 +793,15 @@ export default function ScholarsPage({ session }: { session: Session }) {
                         </div>
                       ))}
                     </dl>
+                    {access && (
+                      <AcademicPanel
+                        key={"academic-" + profile.id}
+                        scholarId={profile.id}
+                        session={session}
+                        access={access}
+                        years={years}
+                      />
+                    )}
                     {access && (
                       <QualificationPanel
                         key={profile.id}

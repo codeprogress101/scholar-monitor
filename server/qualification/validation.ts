@@ -63,7 +63,7 @@ export function transition(
     throw new AuthError(
       409,
       "MASTERLIST_ACTIVATION_REQUIRED",
-      "Activation requires an authoritative official masterlist. This workflow is not available yet.",
+      "Activation occurs only when a Coordinator publishes an approved official masterlist.",
     );
   throw new AuthError(
     409,

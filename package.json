@@ -1,7 +1,7 @@
 {
   "name": "ldss-scholar-monitor",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.17.0",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -26,8 +26,18 @@
     "roles": "tsx scripts/roles.ts",
     "test:rbac-db": "tsx scripts/test-rbac-db.ts",
     "test:configuration-db": "tsx scripts/test-configuration-db.ts",
+    "test:academic-db": "tsx scripts/test-academic-db.ts",
+    "test:status-db": "tsx scripts/test-status-db.ts",
     "test:qualification-db": "tsx scripts/test-qualification-db.ts",
-    "test:scholars-db": "tsx scripts/test-scholars-db.ts"
+    "test:scholars-db": "tsx scripts/test-scholars-db.ts",
+    "test:academic-changes-db": "tsx scripts/test-academic-changes-db.ts",
+    "test:masterlists-db": "tsx scripts/test-masterlists-db.ts",
+    "test:masterlist-workflow-db": "tsx scripts/test-masterlist-workflow-db.ts",
+    "test:masterlist-amendments-db": "tsx scripts/test-masterlist-amendments-db.ts",
+    "test:requirements-db": "tsx scripts/test-requirements-db.ts",
+    "test:requirement-instances-db": "tsx scripts/test-requirement-instances-db.ts",
+    "test:requirement-receipts-db": "tsx scripts/test-requirement-receipts-db.ts",
+    "test:requirement-workflow-db": "tsx scripts/test-requirement-workflow-db.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
@@ -48,7 +58,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
-    "eslint": "^10.11.0",
+    "eslint": "^10.17.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
     "tsx": "^4.23.15",

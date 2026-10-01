@@ -1,3 +1,22 @@
+import { RequirementWorkflowService } from "./requirements/workflow-service.js";
+import { registerRequirementWorkflow } from "./requirements/workflow-routes.js";
+import { RequirementReceiptService } from "./requirements/receipt-service.js";
+import { registerRequirementReceipts } from "./requirements/receipt-routes.js";
+import { RequirementInstancesService } from "./requirements/instances-service.js";
+import { registerRequirementInstances } from "./requirements/instances-routes.js";
+import { RequirementService } from "./requirements/service.js";
+import { registerRequirements } from "./requirements/routes.js";
+import { MasterlistAmendmentService } from "./masterlists/amendment-service.js";
+import { registerAmendments } from "./masterlists/amendment-routes.js";
+import { MasterlistWorkflowService } from "./masterlists/workflow-service.js";
+import { MasterlistService } from "./masterlists/service.js";
+import { registerMasterlists } from "./masterlists/routes.js";
+import { AcademicChangesService } from "./academic/changes-service.js";
+import { registerAcademicChanges } from "./academic/changes-routes.js";
+import { AcademicService } from "./academic/service.js";
+import { registerAcademic } from "./academic/routes.js";
+import { StatusService } from "./status/service.js";
+import { registerStatus } from "./status/routes.js";
 import { QualificationService } from "./qualification/service.js";
 import { registerQualification } from "./qualification/routes.js";
 import Fastify, { LogController } from "fastify";
@@ -66,6 +85,22 @@ export function buildApp(
     app,
     new ConfigurationService(new AuthorizationService(database.pool)),
   );
+  registerRequirements(
+    app,
+    new RequirementService(new AuthorizationService(database.pool)),
+  );
+  registerRequirementInstances(
+    app,
+    new RequirementInstancesService(new AuthorizationService(database.pool)),
+  );
+  registerRequirementReceipts(
+    app,
+    new RequirementReceiptService(new AuthorizationService(database.pool)),
+  );
+  registerRequirementWorkflow(
+    app,
+    new RequirementWorkflowService(new AuthorizationService(database.pool)),
+  );
   registerScholars(
     app,
     new ScholarService(new AuthorizationService(database.pool)),
@@ -73,6 +108,27 @@ export function buildApp(
   registerQualification(
     app,
     new QualificationService(new AuthorizationService(database.pool)),
+  );
+  registerStatus(
+    app,
+    new StatusService(new AuthorizationService(database.pool)),
+  );
+  registerAcademicChanges(
+    app,
+    new AcademicChangesService(new AuthorizationService(database.pool)),
+  );
+  registerAmendments(
+    app,
+    new MasterlistAmendmentService(new AuthorizationService(database.pool)),
+  );
+  registerMasterlists(
+    app,
+    new MasterlistService(new AuthorizationService(database.pool)),
+    new MasterlistWorkflowService(new AuthorizationService(database.pool)),
+  );
+  registerAcademic(
+    app,
+    new AcademicService(new AuthorizationService(database.pool)),
   );
   app.addHook("onSend", async (_request, reply) => {
     reply.header("X-Content-Type-Options", "nosniff");
@@ -88,8 +144,8 @@ export function buildApp(
   app.get("/api/v1/health", async () => ({
     status: "ok",
     service: "ldss-api",
-    release: "0.7.0",
-    checkpoint: "F06",
+    release: "0.17.0",
+    checkpoint: "F16",
     database: await database.check(),
   }));
 

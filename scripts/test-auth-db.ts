@@ -44,7 +44,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 6);
+  assert.equal((await applyMigrations(admin)).length, 16);
   assert.deepEqual(await applyMigrations(admin), []);
   pass("Ordered migrations apply once and verify checksums on rerun");
   await admin.query(

@@ -91,6 +91,34 @@ export async function grantAuthRuntime(connection, database, user) {
   const table = (name) => `\`${database}\`.\`${name}\``;
   const identity = `${connection.escape(user)}@'localhost'`;
   for (const name of [
+    "requirement_workflow_events",
+    "requirement_workflow_commands",
+    "requirement_receipts",
+    "requirement_receipt_commands",
+    "requirement_checklists",
+    "requirement_instances",
+    "requirement_generation_commands",
+    "requirement_definitions",
+    "requirement_definition_versions",
+    "requirement_definition_commands",
+    "masterlist_amendments",
+    "masterlist_amendment_decisions",
+    "masterlist_amendment_versions",
+    "masterlist_amendment_commands",
+    "masterlist_workflow_events",
+    "masterlist_publications",
+    "masterlist_activations",
+    "masterlist_versions",
+    "masterlist_entries",
+    "masterlist_commands",
+    "academic_changes",
+    "academic_change_decisions",
+    "academic_change_commands",
+    "academic_records",
+    "academic_commands",
+    "status_change_requests",
+    "status_change_decisions",
+    "status_change_commands",
     "scholarship_records",
     "qualification_events",
     "qualification_commands",
@@ -100,7 +128,13 @@ export async function grantAuthRuntime(connection, database, user) {
     );
   }
   await connection.query(
-    `GRANT UPDATE (status,version,last_effective_on,updated_at) ON ${table("scholarship_records")} TO ${identity}`,
+    `GRANT UPDATE (status,version,updated_at) ON ${table("masterlist_versions")} TO ${identity}`,
+  );
+  await connection.query(
+    `GRANT UPDATE (snapshot,award_number,removed_at,updated_at) ON ${table("masterlist_entries")} TO ${identity}`,
+  );
+  await connection.query(
+    `GRANT UPDATE (status,version,last_effective_on,operational_status,status_version,status_effective_on,updated_at) ON ${table("scholarship_records")} TO ${identity}`,
   );
   for (const name of [
     "scholars",

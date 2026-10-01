@@ -1,3 +1,4 @@
+import { requireAcademicRecord } from "../academic/service.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
@@ -202,6 +203,8 @@ export class QualificationService {
           action === "create"
             ? "applicant"
             : transition(before!.status, action);
+        if (action === "qualify")
+          await requireAcademicRecord(db, before!.scholarId, academicYearId);
         const version = (before?.version ?? 0) + 1;
         if (action === "create") {
           const [existing] = await db.execute<RowDataPacket[]>(

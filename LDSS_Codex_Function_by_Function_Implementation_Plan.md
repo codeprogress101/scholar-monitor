@@ -3,7 +3,7 @@
 **LGU-DAET Expanded Scholarship Program**  
 **LDSS Scholarship Monitoring System**
 
-Source: [Original implementation plan (PDF)](LDSS_Codex_Function_by_Function_Implementation_Plan.pdf). This editable copy preserves the source plan. F00 through F04 are accepted. F05 is implemented and tested; acceptance remains pending.
+Source: [Original implementation plan (PDF)](LDSS_Codex_Function_by_Function_Implementation_Plan.pdf). This editable copy preserves the source plan. F00 through F15 are accepted. F16 verification and correction are implemented and tested; acceptance remains pending. Payout-specific integration remains F18.
 
 Engineering baseline for building, testing, and accepting the system in small, dependency-safe increments. This document is intentionally prescriptive so Codex can implement one function at a time without redefining scholarship policy.
 
@@ -11,7 +11,7 @@ Engineering baseline for building, testing, and accepting the system in small, d
 
 The user instructed: **Use XAMPP first as database.** For the initial local implementation, XAMPP MariaDB/MySQL replaces PostgreSQL/Supabase. The original requirements below are preserved as the source baseline. Where they require PostgreSQL-specific RLS, the local implementation must instead enforce server-side default-deny authorization and narrowly scoped database grants, constraints, and controlled service access. This is a documented architecture change, not a claim that MariaDB provides PostgreSQL RLS. All scholarship policy, immutable-history, audit, and approval requirements remain applicable.
 
-Use `db/migrations/README.md` for MariaDB migration conventions and `README.md` for local setup. F00 was accepted when the user requested the next step. F01 was accepted after the user confirmed login and requested continuation. F02 and F03 were accepted when the user requested their next checkpoints. The first individual account remains System Administrator, without scholarship record or approval authority. F04 adds scholar creation, search, profiles, audited edits, and permanent IDs. First-entry year is taken from the initially selected academic year's start date and remains immutable. F04 was accepted by the request for the next checkpoint. F05 now adds duplicate review and audited separate-person creation; F06 and later remain unimplemented.
+Use `db/migrations/README.md` for MariaDB migration conventions and `README.md` for local setup. F00 was accepted when the user requested the next step. F01 was accepted after the user confirmed login and requested continuation. F02 and F03 were accepted when the user requested their next checkpoints. The first individual account remains System Administrator, without scholarship record or approval authority. F04 adds scholar creation, search, profiles, audited edits, and permanent IDs. First-entry year is taken from the initially selected academic year's start date and remains immutable. F04 was accepted by the request for the next checkpoint. F05 now adds duplicate review and audited separate-person creation; F05 was accepted by the next-step request. F06 adds annual qualification records and audited Coordinator decisions. Activation remains blocked pending the official masterlist workflow; F06 was accepted by the F07 request. F07 adds operational-status requests, separate Coordinator approval, and linked terminal corrections. F07 was accepted by the next-step request. F08 adds immutable annual academic entries and requires a complete same-year record before qualification. F08 was accepted by the next-step request. F09 adds immutable placement requests and separate Coordinator decisions. All F09 changes require approval; locked years and activated records require the future masterlist amendment workflow. F11 must extend this guard to actual official masterlist membership when that schema exists. F09 was accepted by the next-step request. F10 adds masterlist drafts, candidate add/remove/refresh, derived counts and structured validation of same-year Selected and academic records. F10 was accepted by the next-step request. F11 adds ordered verification, separate Coordinator approval, atomic publication/activation and immutable locking. F09 now blocks direct changes for approved and official membership. Published records require amendments. F11 was accepted by the next-step request. F12 adds separately approved amendments, immutable official version lineage and atomic academic history updates without resetting scholarship status. F12 was accepted by the next-step request. F13 adds immutable, effective-dated hard-copy requirement definitions, archive/restore versions, and applicability preview. Historical instances must pin their definition version; actual instance generation remains F14. F13 was accepted by the next-step request. F14 adds immutable semester checklists, Not Submitted instances, exact version links, atomic generation and safe retries. The policy date is the captured semester start; payout-specific generation integrates with the authoritative F18 payout model. Existing checklists never refresh themselves from newer policy. F14 was accepted by the next-step request. F15 adds immutable physical receipts, authenticated receiver attribution, storage metadata, Submitted projection and guarded idempotent receiving. F15 was accepted by the request to proceed. F16 adds verification context checks, append-only decisions, linked reopening, physical resubmission history and the normal Verified requirement rule. F17 and later remain unimplemented.
 
 ## Instruction to Codex
 
@@ -1447,18 +1447,18 @@ Use the following instruction pattern when handing Codex one function. Replace [
 | F02 | RBAC Permission Engine | [ ] | [x] | [x] | [x] |
 | F03 | Reference Data and Academic Period Configuration | [ ] | [x] | [x] | [x] |
 | F04 | Scholar Registry and Permanent Scholar ID | [ ] | [x] | [x] | [x] |
-| F05 | Duplicate Detection and Safe Scholar Creation | [ ] | [x] | [x] | [ ] |
-| F06 | Scholarship Record and Qualification Workflow | [ ] | [ ] | [ ] | [ ] |
-| F07 | Scholarship Status Change Workflow | [ ] | [ ] | [ ] | [ ] |
-| F08 | Academic Records per Academic Year | [ ] | [ ] | [ ] | [ ] |
-| F09 | Course Shift and School Transfer Workflow | [ ] | [ ] | [ ] | [ ] |
-| F10 | Masterlist Draft Generation | [ ] | [ ] | [ ] | [ ] |
-| F11 | Masterlist Verification, Approval, Publish and Lock | [ ] | [ ] | [ ] | [ ] |
-| F12 | Masterlist Amendment and Versioning | [ ] | [ ] | [ ] | [ ] |
-| F13 | Requirement Definition Versioning | [ ] | [ ] | [ ] | [ ] |
-| F14 | Requirement Instance Generation | [ ] | [ ] | [ ] | [ ] |
-| F15 | Physical Requirement Receiving | [ ] | [ ] | [ ] | [ ] |
-| F16 | Requirement Verification and Correction Loop | [ ] | [ ] | [ ] | [ ] |
+| F05 | Duplicate Detection and Safe Scholar Creation | [ ] | [x] | [x] | [x] |
+| F06 | Scholarship Record and Qualification Workflow | [ ] | [x] | [x] | [x] |
+| F07 | Scholarship Status Change Workflow | [ ] | [x] | [x] | [x] |
+| F08 | Academic Records per Academic Year | [ ] | [x] | [x] | [x] |
+| F09 | Course Shift and School Transfer Workflow | [ ] | [x] | [x] | [x] |
+| F10 | Masterlist Draft Generation | [ ] | [x] | [x] | [x] |
+| F11 | Masterlist Verification, Approval, Publish and Lock | [ ] | [x] | [x] | [x] |
+| F12 | Masterlist Amendment and Versioning | [ ] | [x] | [x] | [x] |
+| F13 | Requirement Definition Versioning | [ ] | [x] | [x] | [x] |
+| F14 | Requirement Instance Generation | [ ] | [x] | [x] | [x] |
+| F15 | Physical Requirement Receiving | [ ] | [x] | [x] | [x] |
+| F16 | Requirement Verification and Correction Loop | [ ] | [x] | [x] | [ ] |
 | F17 | Requirement Waiver | [ ] | [ ] | [ ] | [ ] |
 | F18 | Payout Cycle Configuration | [ ] | [ ] | [ ] | [ ] |
 | F19 | Calculated Payout Eligibility Engine | [ ] | [ ] | [ ] | [ ] |

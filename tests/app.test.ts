@@ -28,8 +28,8 @@ describe("service boundary", () => {
     expect(response.json()).toEqual({
       status: "ok",
       service: "ldss-api",
-      release: "0.7.0",
-      checkpoint: "F06",
+      release: "0.17.0",
+      checkpoint: "F16",
       database: "not_configured",
     });
     expect(response.headers["cache-control"]).toBe("no-store");

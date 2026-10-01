@@ -1,3 +1,5 @@
+import RequirementInstances from "./RequirementInstances";
+import StatusPanel from "./StatusPanel";
 import {
   useCallback,
   useEffect,
@@ -269,8 +271,8 @@ export default function QualificationPanel({
           )}
           {detail.status === "selected" && (
             <p className="alert alert-info">
-              Activation requires an official masterlist. That workflow is not
-              available yet.
+              Selection alone does not activate this record. See operational
+              status below.
             </p>
           )}
           {detail.status === "not_selected" && (
@@ -388,6 +390,23 @@ export default function QualificationPanel({
             </div>
           </fieldset>
         </form>
+      )}
+      {detail && (
+        <RequirementInstances
+          key={`requirements-${detail.id}`}
+          id={detail.id}
+          yearId={detail.academicYearId}
+          session={session}
+          access={access}
+        />
+      )}
+      {detail && (
+        <StatusPanel
+          key={detail.id}
+          id={detail.id}
+          session={session}
+          access={access}
+        />
       )}
       {detail && (
         <div>

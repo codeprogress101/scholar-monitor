@@ -5,6 +5,8 @@ export const PERMISSION_CODES = [
   "scholars.create",
   "scholars.update",
   "academic.edit",
+  "academic.changes.approve",
+  "requirements.generate",
   "requirements.receive",
   "requirements.verify",
   "requirements.waive",

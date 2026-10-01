@@ -1,3 +1,5 @@
+import RequirementsPage from "./RequirementsPage";
+import MasterlistsPage from "./MasterlistsPage";
 import { useEffect, useState } from "react";
 import {
   ArrowDownToLine,
@@ -39,11 +41,23 @@ type Page =
   | "guide"
   | "access"
   | "configuration"
-  | "scholars";
+  | "scholars"
+  | "masterlists"
+  | "requirements";
 const navigation = [
   { id: "access" as const, label: "My access", icon: ShieldCheck },
   { id: "overview" as const, label: "Overview", icon: LayoutGrid },
   { id: "scholars" as const, label: "Scholar registry", icon: Users },
+  {
+    id: "masterlists" as const,
+    label: "Masterlists",
+    icon: ClipboardCheck,
+  },
+  {
+    id: "requirements" as const,
+    label: "Requirement definitions",
+    icon: FileCheck2,
+  },
   { id: "configuration" as const, label: "Configuration", icon: Settings2 },
   { id: "roadmap" as const, label: "Implementation plan", icon: Milestone },
   { id: "status" as const, label: "System status", icon: Server },
@@ -212,7 +226,16 @@ export default function App({
           {modules
             .filter((item) => item.name !== "Scholar registry")
             .map(({ name, icon: Icon }) => (
-              <a href="#roadmap" key={name}>
+              <a
+                href={
+                  name === "Official masterlists"
+                    ? "#masterlists"
+                    : name === "Requirements"
+                      ? "#requirements"
+                      : "#roadmap"
+                }
+                key={name}
+              >
                 <Icon size={18} strokeWidth={1.6} />
                 <span>{name}</span>
                 <ChevronRight size={13} />
@@ -222,7 +245,7 @@ export default function App({
         </div>
         <div className="sidebar-bottom">
           <div className="local-badge">
-            <span className="small-dot" /> SCHOLAR REGISTRY <span>0.7</span>
+            <span className="small-dot" /> SCHOLAR REGISTRY <span>0.9</span>
           </div>
           <div className="municipality">
             <span className="municipality-icon">
@@ -266,7 +289,9 @@ export default function App({
 
         <main id="main-content" tabIndex={-1}>
           {page === "access" && <AccessPage />}
+          {page === "masterlists" && <MasterlistsPage session={session} />}
           {page === "scholars" && <ScholarsPage session={session} />}
+          {page === "requirements" && <RequirementsPage session={session} />}
           {page === "configuration" && <ConfigurationPage session={session} />}
           {page === "overview" && (
             <>
@@ -361,13 +386,13 @@ export default function App({
                   <CheckCheck size={22} />
                 </div>
                 <div className="checkpoint-copy">
-                  <strong>Annual qualification is ready</strong>
+                  <strong>Requirement verification is ready</strong>
                   <span>
-                    Record exam passage and Coordinator decisions for each
-                    academic year, with a permanent qualification history.
+                    Verify physical requirements and manage corrections while
+                    preserving every receipt and decision.
                   </span>
                 </div>
-                <span className="soft-badge">F06 · Current checkpoint</span>
+                <span className="soft-badge">F16 · Current checkpoint</span>
                 <a href="#roadmap" aria-label="Explore the implementation plan">
                   <ArrowRight size={21} />
                 </a>
@@ -393,13 +418,21 @@ export default function App({
                     <div className="col-sm-6 col-xl-3" key={name}>
                       <a
                         className={`module-card module-${index}`}
-                        href={index === 0 ? "#scholars" : "#roadmap"}
+                        href={
+                          index === 0
+                            ? "#scholars"
+                            : index === 1
+                              ? "#masterlists"
+                              : index === 2
+                                ? "#requirements"
+                                : "#roadmap"
+                        }
                       >
                         <span className="module-icon">
                           <Icon size={23} strokeWidth={1.6} />
                         </span>
                         <span className="module-state">
-                          {index === 0 ? "REGISTRY AVAILABLE" : "PLANNED"}
+                          {index < 3 ? "AVAILABLE" : "PLANNED"}
                         </span>
                         <h3>{name}</h3>
                         <p>{text}</p>
@@ -500,9 +533,9 @@ export default function App({
                 <div>
                   <strong>One function at a time.</strong>
                   <span>
-                    F00 through F05 are accepted. F06 adds annual qualification.
-                    Later functions remain planned until implementation,
-                    testing, and acceptance.
+                    F00 through F15 are accepted. F16 adds requirement
+                    definitions and version history. Later functions remain
+                    planned until implementation, testing, and acceptance.
                   </span>
                 </div>
               </div>
@@ -545,7 +578,7 @@ export default function App({
               <div className="roadmap-list">
                 {filtered.map((item) => (
                   <article
-                    className={`roadmap-item ${item.id === "F06" ? "current" : ""}`}
+                    className={`roadmap-item ${item.id === "F16" ? "current" : ""}`}
                     key={item.id}
                   >
                     <span className="roadmap-id">{item.id}</span>
@@ -554,17 +587,32 @@ export default function App({
                       <h2>{item.title}</h2>
                     </div>
                     <span
-                      className={`soft-badge ${item.id === "F06" ? "" : "neutral"}`}
+                      className={`soft-badge ${item.id === "F16" ? "" : "neutral"}`}
                     >
-                      {item.id === "F06"
+                      {item.id === "F16"
                         ? "Current release"
-                        : ["F00", "F01", "F02", "F03", "F04", "F05"].includes(
-                              item.id,
-                            )
+                        : [
+                              "F00",
+                              "F01",
+                              "F02",
+                              "F03",
+                              "F04",
+                              "F05",
+                              "F06",
+                              "F07",
+                              "F08",
+                              "F09",
+                              "F10",
+                              "F11",
+                              "F12",
+                              "F13",
+                              "F14",
+                              "F15",
+                            ].includes(item.id)
                           ? "Accepted"
                           : "Planned"}
                     </span>
-                    {item.id === "F06" ? (
+                    {item.id === "F16" ? (
                       <Check size={17} />
                     ) : (
                       <Circle size={12} />
@@ -708,11 +756,11 @@ export default function App({
                   <dl>
                     <div>
                       <dt>Checkpoint</dt>
-                      <dd>{health?.checkpoint ?? "F06"}</dd>
+                      <dd>{health?.checkpoint ?? "F16"}</dd>
                     </div>
                     <div>
                       <dt>Release</dt>
-                      <dd>{health?.release ?? "0.7.0"}</dd>
+                      <dd>{health?.release ?? "0.17.0"}</dd>
                     </div>
                     <div>
                       <dt>Record storage</dt>
@@ -829,7 +877,7 @@ export default function App({
           />
           <span role="status">{serviceLabel}</span>
           <span>·</span>
-          <span>F06 Annual qualification</span>
+          <span>F16 Requirement verification</span>
         </div>
       </div>
     </div>

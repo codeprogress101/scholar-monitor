@@ -10,3 +10,4 @@ output/
 .playwright-cli/
 .DS_Store
 *.tsbuildinfo
+.aider*

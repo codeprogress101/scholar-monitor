@@ -51,6 +51,7 @@ const staff: PermissionCode[] = [
   "scholars.create",
   "scholars.update",
   "academic.edit",
+  "requirements.generate",
   "requirements.receive",
   "requirements.verify",
   "masterlists.prepare",
@@ -65,6 +66,7 @@ const expected: Record<RoleCode | "unassigned", PermissionCode[]> = {
   staff,
   coordinator: [
     ...staff.filter((code) => code !== "audit.view_limited"),
+    "academic.changes.approve",
     "requirements.waive",
     "masterlists.approve",
     "masterlists.publish",
@@ -92,7 +94,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 6);
+  assert.equal((await applyMigrations(admin)).length, 16);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -227,7 +229,7 @@ try {
     );
   }
   pass(
-    "108 direct API permission decisions match the complete role matrix; forged browser roles and actor IDs have no authority",
+    "116 direct API permission decisions match the complete role matrix; forged browser roles and actor IDs have no authority",
   );
   pass(
     "Staff cannot approve masterlists; Coordinator can; System Administrator cannot finalize OVR",

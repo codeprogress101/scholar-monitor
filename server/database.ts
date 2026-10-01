@@ -32,7 +32,7 @@ export function createDatabase(config: AppConfig): Database {
     async check() {
       try {
         const [rows] = await pool.query<mysql.RowDataPacket[]>({
-          sql: "SELECT version FROM schema_migrations WHERE version='20260930060000_f06_qualification.sql'",
+          sql: "SELECT version FROM schema_migrations WHERE version='20261001120000_f16_requirement_verification.sql'",
           timeout: 3000,
         });
         return rows.length === 1 ? "connected" : "unavailable";

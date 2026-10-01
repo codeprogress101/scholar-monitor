@@ -50,7 +50,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 6);
+  assert.equal((await applyMigrations(admin)).length, 16);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -192,6 +192,31 @@ try {
   });
   assert.equal(personResponse.statusCode, 200, personResponse.body);
   const person = personResponse.json<ScholarResult>();
+  const academicSchool = await config("schools", {
+    code: "ACADEMIC-SCHOOL",
+    name: "Synthetic academic school",
+  });
+  const academicCourse = await config("courses", {
+    code: "ACADEMIC-COURSE",
+    name: "Synthetic academic course",
+  });
+  const addAcademic = async (academicYearId: string) => {
+    const response = await request(
+      "staff",
+      `/api/v1/scholars/${person.id}/academic-records`,
+      {
+        academicYearId,
+        schoolId: academicSchool.id,
+        courseId: academicCourse.id,
+        yearLevel: "First year",
+        reason: "Verified fixture academic record",
+        reference: "Synthetic COR 01",
+      },
+    );
+    assert.equal(response.statusCode, 200, response.body);
+  };
+  await addAcademic(year.id);
+
   const listPath = `/api/v1/scholars/${person.id}/scholarships`;
   const creation = (academicYearId = year.id) => ({
     academicYearId,
@@ -395,6 +420,7 @@ try {
     startsOn: "2028-06-01",
     endsOn: "2029-05-31",
   });
+  await addAcademic(retryYear.id);
   const key = randomUUID(),
     retryBody = creation(retryYear.id);
   const retries = await Promise.all([
