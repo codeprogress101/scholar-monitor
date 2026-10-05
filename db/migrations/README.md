@@ -112,3 +112,73 @@ The current requirement status derives Submitted from the immutable receipt; the
 `20261001120000_f16_requirement_verification.sql` adds append-only `requirement_workflow_events` and `requirement_workflow_commands`, each with SELECT/INSERT-only runtime grants. Unique instance/revision keys, constrained transition edges, explicit correction-link shape and restrictive foreign keys protect history. No role assignments, permissions or operational sample data are seeded.
 
 The shared requirement projection derives current state from ordered workflow events, falling back to immutable initial receipt/generation. F15 uses that projection for its initial-receipt guard. Verification stores source identity, academic/period/policy context and affirmative physical-document checks; reopening Verified links the prior verification, and resubmission appends new custody metadata. Every event, audit and receipt commits under the configuration guard in one transaction with current locking reads. F17 must extend this shared projection/normal-rule helper for Waived; F18 adds payout guards. Applied earlier SQL remains unchanged. Inspect partial DDL before retrying failed migration; changes to applied schema require forward corrections.
+
+## F17 migration and grants
+
+`20261001130000_f17_requirement_waivers.sql` adds append-only `requirement_waivers` and `requirement_waiver_commands` with SELECT/INSERT-only runtime grants. A unique instance key prevents duplicate waivers; restrictive foreign keys retain actor/instance identity. Checks constrain source states, revision and mandatory reason/authority. No account, role or operational sample changes are seeded. Earlier applied SQL remains unchanged.
+
+The shared state projection gives a recorded waiver its own Waived status and metadata while preserving all prior receipts and workflow history. Waiver, audit and retry receipt commit atomically under the writer guard with current locking reads, optimistic revisions and open semester/year checks. F18 must integrate payout-specific locking and policy; `satisfiesNormalRequirement(status, allowWaiver)` supports an explicit server-side policy exclusion. Inspect partial DDL before retrying interrupted migration; applied-schema corrections require a forward migration.
+
+## F18 migration and grants
+
+`20261001140000_f18_payout_cycles.sql` adds immutable `payout_cycles`, `payout_cycle_versions`, `payout_requirements` and `payout_cycle_commands`, with SELECT/INSERT-only runtime access. It seeds `payouts.operate` for Coordinator; System Administrator retains `configuration.manage` for draft configuration. No individual account assignments or operational cycles are seeded.
+
+The forward alteration adds nullable cycle/version links to requirement checklists. A generated context key (`S:` semester or `P:` payout cycle) and unique annual-record/context key preserve semester uniqueness and add independent payout uniqueness. Composite foreign keys enforce matching cycle/semester and cycle/version; the null-pair check prevents incomplete context. Existing semester records retain their IDs, policy dates, requirements and history. Earlier applied SQL is unchanged.
+
+Cycle commands append full policy snapshots with reason/reference and atomic audit/retry records under the writer guard. Opening validates applicable definitions at the configured target date; subsequent lifecycle changes copy that frozen policy. Generation and all receipt/workflow/waiver paths read current cycle state under the same guard. Locked/closed cycles block new mutations while historical reads and exact completed retries remain available. F19 must use the pinned payout policy and authoritative per-instance result in eligibility calculation. Inspect partially applied DDL before retrying; applied changes require forward correction migrations.
+
+
+## F19 migration and grants
+
+`20261002090000_f19_payout_eligibility.sql` adds append-only `payout_eligibility` snapshots and `payout_eligibility_commands` retry receipts with SELECT/INSERT-only runtime grants. Unique cycle/annual-record/revision and actor/command keys, restrictive foreign keys, and value checks preserve evidence. The `eligibility.calculate` permission is granted to Staff and Coordinator; account role assignments remain unchanged.
+
+Calculations preserve engine version, source fingerprint, reason codes and full source versions. Current locking reads under the shared configuration guard prevent stale authorization snapshots from hiding source changes. Expected revision/fingerprint checks, audit and retry receipt are atomic. Reports use the same server evaluator; GET requests never save results. F20 must retain normal calculations separately from approved overrides and respect source staleness. Earlier SQL is unchanged; inspect partial DDL before retrying and use forward migrations for applied-schema corrections.
+
+
+## F20 migration and grants
+
+`20261002093000_f20_eligibility_overrides.sql` adds immutable request headers, ordered `eligibility_override_events`, and `eligibility_override_commands`. All three tables have SELECT/INSERT-only runtime grants. Foreign keys retain source calculations and identities, unique request/revision keys serialize event history, and action/state checks constrain stored combinations. Existing F02 override request/approval permissions are reused; no personal role changes or sample records are seeded.
+
+Commands serialize under the shared writer guard and current locking reads. The latest saved normal calculation is pinned at request/re-evaluation; original evidence is retained. Source changes block submission and approval. Re-evaluation returns the request to Draft, requiring resubmission. A separate Coordinator decides; audit and retries commit atomically. Locked/closed cycles block new commands. Effective eligibility uses only the latest approval while its fingerprint matches current normal sources; it never falls back to an older approval. F21 must consume and validate this shared effective result. Earlier migrations remain immutable; inspect partial DDL before retrying failures.
+
+
+## F21 migration and grants
+
+`20261002100000_f21_ovr_drafts.sql` adds immutable `ovr_batches`, `ovr_batch_events`, `ovr_entries`, and `ovr_commands` with SELECT/INSERT-only runtime grants. Unique cycle/code and batch/revision keys, restrictive foreign keys and lifecycle/action checks preserve command and membership evidence. Existing `ovr.prepare` authority is reused; no operational data or role assignments are seeded.
+
+Membership is projected from the latest add/remove event using direct current locking reads. Duplicate checks cover every active batch membership in the payout cycle under the shared writer guard; nested snapshot aggregates are deliberately avoided. Additions recompute eligibility and enforce mandatory OVR document/status/membership rules plus pending-override guards. Batch revision, entry evidence, audit and retry receipt commit atomically. Validation stores structured current issues without finalizing. F22 must freshly validate and freeze the roster atomically, using the shared helpers and non-Draft guard. Applied earlier migrations remain immutable; inspect partial DDL before retrying failures.
+
+
+## F22 migration and grants
+
+`20261002110000_f22_ovr_finalization.sql` adds one immutable `ovr_finalizations` record per batch, linked to the exact batch revision and finalizer. It preserves the full roster, current source evidence, cycle, validation, submitter/finalizer metadata and SHA-256 snapshot hash. Positive entry counts and restrictive foreign keys protect metadata. Runtime grants are SELECT/INSERT only; prior migration SQL and personal role assignments remain unchanged.
+
+Submission and finalization use the shared current-source validator inside the guarded transaction. Review locks membership; Coordinator return restores Draft editing. Finalization requires a separate individual and commits its state event, snapshot, audit and retry receipt atomically. One invalid entry or an audit failure leaves no partial finalized state. F23 must retain this snapshot and use separate processing/payment records. Inspect partial DDL before retrying failures and use forward migrations for applied-schema corrections.
+
+## F23 migration and grants
+
+`20261003090000_f23_ovr_processing.sql` adds append-only payment records with unique scholarship/cycle outcomes and foreign keys to frozen batches and lifecycle events. Runtime receives SELECT/INSERT only. Coordinator receives `ovr.submit`; Staff and Coordinator receive `ovr.process`; existing Coordinator `ovr.close` governs reconciled closure. All commands share the writer guard and commit lifecycle event, outcome, audit and retry receipt together. Processing preserves the F22 snapshot hash, checks chronology/revision, and permits open/locked available cycles only. Closed batches reject ordinary mutations; exact completed retries remain valid. F25 will add controlled corrections, never UPDATE/DELETE of original outcomes.
+
+## F24 migration and grants
+
+`20261003100000_f24_ovr_amendments.sql` adds append-only request/decision snapshots tied to OVR batch revisions. Runtime receives SELECT/INSERT only. Staff and Coordinator receive `ovr.amendments.request`; Coordinator receives `ovr.amendments.approve`. Separate-actor approval, shared transaction guard, fresh eligibility/duplicate checks, current revision and audit/retry atomicity preserve original and approved roster versions. Processing resolves the latest approved snapshot and refuses pending amendments. Approval requires administrative resubmission; amendments cannot change processed/closed batches or locked/closed cycles.
+
+## F25 migration and grants
+
+`20261003110000_f25_payment_corrections.sql` adds append-only correction request/decision snapshots linked to the original unique payment and batch event. Runtime receives SELECT/INSERT only. Staff/Coordinator receive `payments.correct`; Coordinator receives `payments.corrections.approve`. Pre-closure corrections apply atomically; closed-period corrections require separate approval. Original payment rows, roster snapshots and closure reconciliation are preserved. Effective totals use the latest applied/approved correction. Shared locking, revision checks, strict input and audit/retry atomicity protect commands. No destructive payment updates or deletes are granted.
+
+## F26 profile read model
+
+`20261003120000_f26_profile_audit_view.sql` creates a SQL SECURITY DEFINER view containing only scholar-related audit IDs, types, actions, actors and timestamps. Runtime receives SELECT on this view, never raw audit SELECT or mutation privileges on the view. The profile endpoint separately enforces scholar read permission, entity scope and own/all audit permission. Current source reads use the shared transaction guard. Profile reads do not create or change domain or audit records. No historical data is rewritten.
+
+### F27 Excel import staging
+
+`20261004090000_f27_excel_import.sql` adds `import_jobs` and `import_confirmations`. Runtime has SELECT/INSERT only. Immutable previews retain normalized row data, errors/warnings and a content fingerprint; confirmations uniquely reference their job and retain per-row results. Both tables link the authenticated actor. No existing scholar data or personal accounts are changed. Confirmation runs the original scholar/academic domain operations, ID allocation, receipts and audit writes in one database transaction.
+
+### F28 Excel exports
+
+`20261004093000_f28_excel_exports.sql` adds the `scholars.export` permission for Staff/Coordinator and the `export_audit_metadata` SQL SECURITY DEFINER view. The runtime receives SELECT on the view only; no raw audit SELECT or audit-history mutation grant is added. The existing System Administrator-only `audit.export` permission is retained. Export events are written through existing append-only audit INSERT access.
+
+### F31 audit viewer
+
+`20261004180000_f31_audit_viewer.sql` adds nullable actor-role snapshots and time/actor indexes to audit_logs. A BEFORE INSERT trigger captures active roles using MariaDB-compatible JSON_QUOTE/GROUP_CONCAT; old events retain NULL. The audit_event_view exposes recorded event evidence through runtime SELECT only. Raw audit SELECT, UPDATE and DELETE remain denied. Own/all scope is enforced inside authenticated service transactions. The export metadata view remains unchanged.

@@ -1,4 +1,11 @@
+import RoutineEvidence from "./RoutineEvidence";
+import ErrorNotice from "./ErrorNotice";
+import ScholarRequirements from "./ScholarRequirements";
+import ScholarImport from "./ScholarImport";
+import ExcelExport from "./ExcelExport";
+import ScholarTimeline from "./ScholarTimeline";
 import AcademicPanel from "./AcademicPanel";
+import ScholarAcademicSummary from "./ScholarAcademicSummary";
 import QualificationPanel from "./QualificationPanel";
 import {
   useCallback,
@@ -51,7 +58,7 @@ async function choices(kind: string, signal: AbortSignal) {
 }
 const message = (error: unknown) =>
   error instanceof ApiError
-    ? error.message
+    ? error
     : "The result could not be confirmed. Refresh to check the latest record, or retry the same changes safely.";
 function asFields(row: ScholarDetail): ScholarFields {
   return {
@@ -66,6 +73,7 @@ function asFields(row: ScholarDetail): ScholarFields {
   };
 }
 export default function ScholarsPage({ session }: { session: Session }) {
+  const [showImport, setShowImport] = useState(false);
   const [access, setAccess] = useState<Access | null>(null);
   const [list, setList] = useState<ScholarList | null>(null);
   const [years, setYears] = useState<ConfigRecord[]>([]),
@@ -78,10 +86,12 @@ export default function ScholarsPage({ session }: { session: Session }) {
   const [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
     [opening, setOpening] = useState(false);
-  const [error, setError] = useState(""),
+  const [error, setError] = useState<string | ApiError>(""),
     [notice, setNotice] = useState("");
   const [profile, setProfile] = useState<ScholarDetail | null>(null),
     [editing, setEditing] = useState(false);
+  const [profileSection, setProfileSection] = useState("overview");
+  const [academicYearChoice, setAcademicYearChoice] = useState("");
   const [fields, setFields] = useState<ScholarFields>(blank),
     [reason, setReason] = useState("");
   const [duplicateCheck, setDuplicateCheck] = useState<DuplicateCheck | null>(
@@ -174,7 +184,10 @@ export default function ScholarsPage({ session }: { session: Session }) {
     setEditing(false);
     try {
       const row = await request<ScholarDetail>("scholars/" + id);
-      if (generation.current === token) setProfile(row);
+      if (generation.current === token) {
+        setProfile(row);
+        setProfileSection("overview");
+      }
     } catch (failure) {
       if (generation.current === token) setError(message(failure));
     } finally {
@@ -314,11 +327,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
           Refresh
         </button>
       </div>
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
+      <ErrorNotice error={error} />
       {notice && (
         <div className="alert alert-success" role="status">
           {notice}
@@ -403,7 +412,31 @@ export default function ScholarsPage({ session }: { session: Session }) {
                 Add scholar
               </button>
             )}
+            {allowed("scholars.create") && (
+              <button
+                className="btn btn-outline-secondary"
+                disabled={saving || opening}
+                onClick={() => setShowImport((v) => !v)}
+              >
+                {showImport ? "Close import" : "Import Excel"}
+              </button>
+            )}
           </div>
+          {showImport && allowed("scholars.create") && (
+            <ScholarImport
+              session={session}
+              onImported={() => setRevision((n) => n + 1)}
+            />
+          )}
+          {allowed("scholars.export") && (
+            <ExcelExport
+              kind="scholars"
+              session={session}
+              academicYearId={yearFilter || undefined}
+              yearLabel={years.find((y) => y.id === yearFilter)?.code}
+              q={search}
+            />
+          )}
           {!loading && !availableYears.length && (
             <div className="notice">
               <GraduationCap size={22} />
@@ -622,7 +655,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                           }
                         />
                       </div>
-                      <div className="col-12">
+                      <RoutineEvidence ><div className="col-12">
                         <label className="form-label" htmlFor="scholar-reason">
                           Reason for change
                         </label>
@@ -635,7 +668,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                           value={reason}
                           onChange={(event) => setReason(event.target.value)}
                         />
-                      </div>
+                      </div></RoutineEvidence>
                     </div>
                     <p className="configuration-hint scholar-id-hint">
                       {profile
@@ -775,35 +808,92 @@ export default function ScholarsPage({ session }: { session: Session }) {
                         </div>
                       </div>
                     )}
-                    <dl className="scholar-detail-grid">
+                    <ScholarAcademicSummary
+                      key={profile.id}
+                      scholarId={profile.id}
+                      years={years}
+                      refreshKey={`${profileSection}-${profile.version}`}
+                      onEdit={(yearId) => { setAcademicYearChoice(yearId); setProfileSection("academic"); }}
+                    />
+                    <nav
+                      aria-label="Scholar profile sections"
+                      className="d-flex flex-wrap gap-2 my-3"
+                    >
                       {[
-                        ["Birth date", profile.birthDate],
-                        ["Barangay", profile.barangay?.name],
-                        ["Email", profile.contact.email],
-                        ["Phone", profile.contact.phone],
-                        ["Address details", profile.contact.addressLine],
-                        [
-                          "Registration academic year",
-                          profile.academicYear.name,
-                        ],
-                      ].map(([label, value]) => (
-                        <div key={label}>
-                          <dt>{label}</dt>
-                          <dd>{value || "Not recorded"}</dd>
-                        </div>
+                        ["overview", "Personal information"],
+                        ["requirements", "Receive requirements"],
+                        ["academic", "Academic records"],
+                        ["scholarship", "Scholarship records"],
+                        ["timeline", "History"],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          aria-pressed={profileSection === value}
+                          className={`btn ${profileSection === value ? "configuration-primary" : "btn-outline-secondary"}`}
+                          onClick={() => setProfileSection(value)}
+                        >
+                          {label}
+                        </button>
                       ))}
-                    </dl>
-                    {access && (
+                    </nav>
+                    {profileSection === "overview" && (
+                      <>
+                        <p>
+                          For a submitted COR, grades or other document, choose{" "}
+                          <strong>Receive requirements</strong>. To update
+                          contact or personal details, choose{" "}
+                          <strong>Edit scholar</strong>.
+                        </p>
+                        <dl className="scholar-detail-grid">
+                          {[
+                            ["Birth date", profile.birthDate],
+                            ["Barangay", profile.barangay?.name],
+                            ["Email", profile.contact.email],
+                            ["Phone", profile.contact.phone],
+                            ["Address details", profile.contact.addressLine],
+                            [
+                              "Registration academic year",
+                              profile.academicYear.name,
+                            ],
+                          ].map(([label, value]) => (
+                            <div key={label}>
+                              <dt>{label}</dt>
+                              <dd>{value || "Not recorded"}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </>
+                    )}
+                    {profileSection === "requirements" && access && (
+                      <ScholarRequirements
+                        scholarId={profile.id}
+                        scholarLabel={`${profile.scholarId} - ${profile.displayName}`}
+                        session={session}
+                        access={access}
+                        onSetup={() => setProfileSection("scholarship")}
+                        onAcademicSetup={(yearId) => { setAcademicYearChoice(yearId); setProfileSection("academic"); }}
+                      />
+                    )}
+                    {profileSection === "timeline" && (
+                      <ScholarTimeline
+                        key={`timeline-${profile.id}-${profile.version}`}
+                        scholarId={profile.id}
+                      />
+                    )}
+                    {profileSection === "academic" && access && (
                       <AcademicPanel
                         key={"academic-" + profile.id}
                         scholarId={profile.id}
                         session={session}
                         access={access}
                         years={years}
+                        initialYearId={academicYearChoice}
                       />
                     )}
-                    {access && (
+                    {profileSection === "scholarship" && access && (
                       <QualificationPanel
+                        showRequirements={false}
                         key={profile.id}
                         scholarId={profile.id}
                         session={session}
@@ -812,18 +902,19 @@ export default function ScholarsPage({ session }: { session: Session }) {
                       />
                     )}
                     <div className="configuration-form-actions">
-                      {allowed("scholars.update") && (
-                        <button
-                          className="btn configuration-primary"
-                          disabled={
-                            saving || opening || profile.periodUnavailable
-                          }
-                          onClick={() => edit(profile)}
-                        >
-                          <Pencil size={16} />
-                          Edit scholar
-                        </button>
-                      )}
+                      {profileSection === "overview" &&
+                        allowed("scholars.update") && (
+                          <button
+                            className="btn configuration-primary"
+                            disabled={
+                              saving || opening || profile.periodUnavailable
+                            }
+                            onClick={() => edit(profile)}
+                          >
+                            <Pencil size={16} />
+                            Edit scholar
+                          </button>
+                        )}
                       <button
                         className="btn btn-outline-secondary quiet-button"
                         onClick={() => setProfile(null)}
@@ -837,7 +928,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
               )}
             </div>
           )}
-          {!loading && list && (
+          {!loading && list && !profile && !editing && (
             <section
               className="info-panel configuration-list"
               aria-label="Scholar search results"

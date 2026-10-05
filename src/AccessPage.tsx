@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, RefreshCw, ShieldCheck } from "lucide-react";
-import { ApiError } from "./auth-api";
+import { ApiError, type Session } from "./auth-api";
+import ExcelExport from "./ExcelExport";
 import type {
   Access,
   Permission,
@@ -29,7 +30,7 @@ async function readAccess<T>(path: string, signal: AbortSignal): Promise<T> {
     );
   return body;
 }
-export default function AccessPage() {
+export default function AccessPage({ session }: { session: Session }) {
   const [access, setAccess] = useState<Access | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [error, setError] = useState("");
@@ -100,6 +101,9 @@ export default function AccessPage() {
           Refresh access
         </button>
       </div>
+      {access?.permissions.some((p) => p.code === "audit.export") && (
+        <ExcelExport kind="audit" session={session} />
+      )}
       {loading && <p role="status">Loading your permissions…</p>}
       {error && (
         <div className="alert alert-danger" role="alert">

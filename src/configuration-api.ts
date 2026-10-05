@@ -31,6 +31,9 @@ export async function configurationRequest<T>(
       response.status,
       body?.error?.code ?? "UNAVAILABLE",
       body?.error?.message ?? "Configuration is unavailable. Please try again.",
+      body?.error?.details ??
+        (body?.error?.issues ? { issues: body.error.issues } : undefined),
+      body?.error?.request_id,
     );
   if (!body) throw new Error("Unexpected service response.");
   return body as T;

@@ -1,3 +1,4 @@
+import RoutineEvidence from "./RoutineEvidence";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
@@ -410,7 +411,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
                 "date",
                 false,
               )}
-            <label className="form-label d-block">
+            <RoutineEvidence routine={editor.action !== "archive"}><label className="form-label d-block">
               Policy change reason
               <input
                 className="form-control"
@@ -431,7 +432,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
               />
-            </label>
+            </label></RoutineEvidence>
             <button className="btn configuration-primary" type="submit">
               Save policy version
             </button>{" "}

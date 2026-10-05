@@ -1,2 +1,3 @@
-# Serve via npm run dev / npm start; never expose server source through Apache.
+# This source workspace contains private configuration and account output.
+# Serve the application through Node/Vite, never this directory through Apache.
 Require all denied

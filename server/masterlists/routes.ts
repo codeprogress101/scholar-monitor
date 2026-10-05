@@ -57,6 +57,7 @@ export function registerMasterlists(
                   message: e.message,
                   request_id: r.id,
                   issues: e.issues,
+                  details: { issues: e.issues },
                 },
               });
           throw e;
@@ -104,6 +105,7 @@ export function registerMasterlists(
                 message: e.message,
                 request_id: r.id,
                 issues: e.issues,
+                details: { issues: e.issues },
               },
             });
           throw e;

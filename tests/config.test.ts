@@ -30,6 +30,17 @@ describe("environment configuration", () => {
   });
   it("requires explicit environment in production runtime", () => {
     expect(() => loadConfig({ NODE_ENV: "production" })).toThrow("APP_ENV");
+    expect(() => loadConfig({ NODE_ENV: "production", APP_ENV: "test" })).toThrow("APP_ENV");
+  });
+  it.each([
+    "ftp://example.invalid", "https://user:secret@example.invalid",
+    "https://example.invalid/path", "https://example.invalid?key=secret",
+    "https://example.invalid#fragment",
+  ])("rejects non-origin configuration %s", (APP_ORIGIN) => {
+    expect(() => loadConfig({ APP_ORIGIN })).toThrow("APP_ORIGIN");
+  });
+  it("normalizes an origin with a trailing slash", () => {
+    expect(loadConfig({ APP_ORIGIN: "https://example.invalid/" }).APP_ORIGIN).toBe("https://example.invalid");
   });
   it.each(["production", "staging"])(
     "requires HTTPS and dedicated DB credentials in %s",

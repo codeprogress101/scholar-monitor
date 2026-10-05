@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
@@ -40,6 +41,7 @@ export function parseAcademicChange(raw: unknown) {
       422,
       "VALIDATION_FAILED",
       "Provide a valid placement, effective date, reason, reference and remarks.",
+      validationDetails(parsed.error),
     );
   return parsed.data;
 }

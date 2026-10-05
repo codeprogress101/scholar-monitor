@@ -1,3 +1,4 @@
+import { guardPayoutRequirement } from "../payouts/service.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
@@ -21,7 +22,7 @@ export const workflowPermission = (action: RequirementAction) =>
     : ("requirements.verify" as const);
 async function base(db: PoolConnection, id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT i.definition_version_id,c.semester_id,c.semester_code,c.year_code,DATE_FORMAT(c.policy_date,'%Y-%m-%d') AS policy_date,r.scholar_id,r.academic_year_id,s.academic_year_id AS semester_year,s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived,v.active,v.applies_to,v.semester_id AS definition_semester,DATE_FORMAT(v.effective_from,'%Y-%m-%d') AS effective_from,DATE_FORMAT(v.effective_until,'%Y-%m-%d') AS effective_until FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholarship_records r ON r.id=c.scholarship_record_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=r.academic_year_id JOIN requirement_definition_versions v ON v.id=i.definition_version_id WHERE i.id=? FOR UPDATE",
+    "SELECT c.payout_cycle_id,c.payout_version_id,i.definition_version_id,c.semester_id,c.semester_code,c.year_code,DATE_FORMAT(c.policy_date,'%Y-%m-%d') AS policy_date,r.scholar_id,r.academic_year_id,s.academic_year_id AS semester_year,s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived,v.active,v.applies_to,v.semester_id AS definition_semester,DATE_FORMAT(v.effective_from,'%Y-%m-%d') AS effective_from,DATE_FORMAT(v.effective_until,'%Y-%m-%d') AS effective_until FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholarship_records r ON r.id=c.scholarship_record_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=r.academic_year_id JOIN requirement_definition_versions v ON v.id=i.definition_version_id WHERE i.id=? FOR UPDATE",
     [id],
   );
   if (!rows.length)
@@ -58,7 +59,7 @@ async function context(
     );
   if (
     !r.active ||
-    r.applies_to !== "semester" ||
+    r.applies_to !== (r.payout_cycle_id ? "payout" : "semester") ||
     (r.definition_semester && r.definition_semester !== r.semester_id) ||
     r.effective_from > r.policy_date ||
     (r.effective_until && r.effective_until <= r.policy_date)
@@ -115,6 +116,7 @@ export class RequirementWorkflowService {
         );
         const r = await base(db, id);
         openPeriod(r);
+        await guardPayoutRequirement(db, id);
         return context(db, r);
       },
     );
@@ -157,6 +159,7 @@ export class RequirementWorkflowService {
         }
         const r = await base(db, id);
         openPeriod(r);
+        await guardPayoutRequirement(db, id);
         const current = await requirementState(db, id);
         if (input.expectedVersion !== current.version)
           throw new AuthError(

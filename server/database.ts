@@ -21,7 +21,8 @@ export function createDatabase(config: AppConfig): Database {
     user: config.DB_USER,
     password: config.DB_PASSWORD,
     connectionLimit: 4,
-    waitForConnections: false,
+    waitForConnections: true,
+    queueLimit: 100,
     connectTimeout: 3000,
     multipleStatements: false,
     timezone: "Z",
@@ -32,7 +33,7 @@ export function createDatabase(config: AppConfig): Database {
     async check() {
       try {
         const [rows] = await pool.query<mysql.RowDataPacket[]>({
-          sql: "SELECT version FROM schema_migrations WHERE version='20261001120000_f16_requirement_verification.sql'",
+          sql: "SELECT version FROM schema_migrations WHERE version='20261004180000_f31_audit_viewer.sql'",
           timeout: 3000,
         });
         return rows.length === 1 ? "connected" : "unavailable";

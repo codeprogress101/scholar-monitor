@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
@@ -107,6 +108,7 @@ export function registerAuth(
           422,
           "VALIDATION_FAILED",
           "Enter a valid email and password.",
+      validationDetails(input.error),
         );
       const result = await auth.login(
         input.data.email,
@@ -157,6 +159,7 @@ export function registerAuth(
           422,
           "VALIDATION_FAILED",
           "Provide a valid reset link and password.",
+      validationDetails(input.error),
         );
       await auth.resetPassword(
         input.data.token,
@@ -182,6 +185,7 @@ export function authFailure(
       code: error.code,
       message: error.message,
       request_id: request.id,
+      ...(error.details === undefined ? {} : { details: error.details }),
     },
   });
   return true;

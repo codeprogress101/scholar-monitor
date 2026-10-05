@@ -1,7 +1,7 @@
 {
   "name": "ldss-scholar-monitor",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.37.0",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -22,6 +22,8 @@
     "test:db": "node scripts/check-database.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "account": "tsx scripts/account.ts",
+    "demo:seed": "tsx scripts/seed-demo.ts",
+    "test:receiving-db": "tsx scripts/test-receiving-db.ts",
     "test:auth-db": "tsx scripts/test-auth-db.ts",
     "roles": "tsx scripts/roles.ts",
     "test:rbac-db": "tsx scripts/test-rbac-db.ts",
@@ -37,18 +39,39 @@
     "test:requirements-db": "tsx scripts/test-requirements-db.ts",
     "test:requirement-instances-db": "tsx scripts/test-requirement-instances-db.ts",
     "test:requirement-receipts-db": "tsx scripts/test-requirement-receipts-db.ts",
-    "test:requirement-workflow-db": "tsx scripts/test-requirement-workflow-db.ts"
+    "test:ovr-amendments-db": "tsx scripts/test-eligibility-db.ts --amendments",
+    "test:profile-db": "tsx scripts/test-eligibility-db.ts --payments --profile",
+    "test:payments-db": "tsx scripts/test-eligibility-db.ts --payments",
+    "test:ovr-processing-db": "tsx scripts/test-eligibility-db.ts --processing",
+    "test:ovr-finalization-db": "tsx scripts/test-eligibility-db.ts --finalization",
+    "test:ovr-db": "tsx scripts/test-eligibility-db.ts --ovr",
+    "test:overrides-db": "tsx scripts/test-eligibility-db.ts --overrides",
+    "test:eligibility-db": "tsx scripts/test-eligibility-db.ts",
+    "test:payout-cycles-db": "tsx scripts/test-payout-cycles-db.ts",
+    "test:requirement-waivers-db": "tsx scripts/test-requirement-waivers-db.ts",
+    "test:requirement-workflow-db": "tsx scripts/test-requirement-workflow-db.ts",
+    "test:imports-db": "tsx scripts/test-import-db.ts",
+    "test:concurrency-db": "node scripts/test-concurrency.mjs",
+    "test:audit-db": "tsx scripts/test-eligibility-db.ts --payments --audit",
+    "test:dashboard-db": "tsx scripts/test-eligibility-db.ts --payments --reports --dashboard",
+    "test:reports-db": "tsx scripts/test-eligibility-db.ts --payments --reports",
+    "test:exports-db": "tsx scripts/test-export-db.ts",
+    "backup": "node scripts/backup.mjs",
+    "test:backup-db": "node scripts/test-backup-db.mjs",
+    "test:uat": "node scripts/test-uat.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
     "@fastify/static": "^10.1.5",
     "bootstrap": "^5.3.8",
     "dotenv": "^18.0.4",
+    "exceljs": "^4.4.0",
     "fastify": "^5.12.5",
     "lucide-react": "^1.48.0",
     "mysql2": "^3.24.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "yauzl": "^3.4.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -56,6 +79,7 @@
     "@types/node": "^22.20.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/yauzl": "^3.4.0",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
     "eslint": "^10.17.0",
@@ -66,5 +90,10 @@
     "typescript-eslint": "^8.71.0",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }

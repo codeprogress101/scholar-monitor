@@ -1,3 +1,7 @@
+import AuditPage from "./AuditPage";
+import DashboardPage from "./DashboardPage";
+import PayoutCyclesPage from "./PayoutCyclesPage";
+import ReportsPage from "./ReportsPage";
 import RequirementsPage from "./RequirementsPage";
 import MasterlistsPage from "./MasterlistsPage";
 import { useEffect, useState } from "react";
@@ -43,9 +47,14 @@ type Page =
   | "configuration"
   | "scholars"
   | "masterlists"
-  | "requirements";
+  | "requirements"
+  | "payouts"
+  | "reports"
+  | "dashboard"
+  | "audit";
 const navigation = [
   { id: "access" as const, label: "My access", icon: ShieldCheck },
+  { id: "dashboard" as const, label: "Dashboard", icon: LayoutGrid },
   { id: "overview" as const, label: "Overview", icon: LayoutGrid },
   { id: "scholars" as const, label: "Scholar registry", icon: Users },
   {
@@ -58,6 +67,9 @@ const navigation = [
     label: "Requirement definitions",
     icon: FileCheck2,
   },
+  { id: "payouts" as const, label: "Payout cycles", icon: Wallet },
+  { id: "reports" as const, label: "Reports", icon: ListChecks },
+  { id: "audit" as const, label: "Audit events", icon: ShieldCheck },
   { id: "configuration" as const, label: "Configuration", icon: Settings2 },
   { id: "roadmap" as const, label: "Implementation plan", icon: Milestone },
   { id: "status" as const, label: "System status", icon: Server },
@@ -86,15 +98,15 @@ const modules = [
     name: "Payout management",
     text: "Clear eligibility and accountable semester payouts.",
     icon: Wallet,
-    range: "F18–F25",
+    range: "F18–F26",
   },
 ];
 
 function initialPage(): Page {
-  const hash = window.location.hash.slice(1);
+  const hash = window.location.hash.slice(1).split("?")[0];
   return navigation.some((item) => item.id === hash)
     ? (hash as Page)
-    : "overview";
+    : "dashboard";
 }
 
 export default function App({
@@ -232,7 +244,7 @@ export default function App({
                     ? "#masterlists"
                     : name === "Requirements"
                       ? "#requirements"
-                      : "#roadmap"
+                      : "#payouts"
                 }
                 key={name}
               >
@@ -241,7 +253,9 @@ export default function App({
                 <ChevronRight size={13} />
               </a>
             ))}
-          <div className="upcoming-note">Available in upcoming checkpoints</div>
+          <div className="upcoming-note">
+            More payout operations follow in upcoming checkpoints
+          </div>
         </div>
         <div className="sidebar-bottom">
           <div className="local-badge">
@@ -288,9 +302,13 @@ export default function App({
         </header>
 
         <main id="main-content" tabIndex={-1}>
-          {page === "access" && <AccessPage />}
+          {page === "access" && <AccessPage session={session} />}
           {page === "masterlists" && <MasterlistsPage session={session} />}
           {page === "scholars" && <ScholarsPage session={session} />}
+          {page === "audit" && <AuditPage session={session} />}
+          {page === "dashboard" && <DashboardPage />}
+          {page === "reports" && <ReportsPage key={window.location.hash} />}
+          {page === "payouts" && <PayoutCyclesPage session={session} />}
           {page === "requirements" && <RequirementsPage session={session} />}
           {page === "configuration" && <ConfigurationPage session={session} />}
           {page === "overview" && (
@@ -386,13 +404,13 @@ export default function App({
                   <CheckCheck size={22} />
                 </div>
                 <div className="checkpoint-copy">
-                  <strong>Requirement verification is ready</strong>
+                  <strong>Scholar profile timelines are ready</strong>
                   <span>
-                    Verify physical requirements and manage corrections while
-                    preserving every receipt and decision.
+                    Submit payout rosters for review and freeze validated
+                    membership with Coordinator finalization.
                   </span>
                 </div>
-                <span className="soft-badge">F16 · Current checkpoint</span>
+                <span className="soft-badge">F26 · Current checkpoint</span>
                 <a href="#roadmap" aria-label="Explore the implementation plan">
                   <ArrowRight size={21} />
                 </a>
@@ -425,14 +443,14 @@ export default function App({
                               ? "#masterlists"
                               : index === 2
                                 ? "#requirements"
-                                : "#roadmap"
+                                : "#payouts"
                         }
                       >
                         <span className="module-icon">
                           <Icon size={23} strokeWidth={1.6} />
                         </span>
                         <span className="module-state">
-                          {index < 3 ? "AVAILABLE" : "PLANNED"}
+                          {index < 3 ? "AVAILABLE" : "CYCLES AVAILABLE"}
                         </span>
                         <h3>{name}</h3>
                         <p>{text}</p>
@@ -533,9 +551,10 @@ export default function App({
                 <div>
                   <strong>One function at a time.</strong>
                   <span>
-                    F00 through F15 are accepted. F16 adds requirement
-                    definitions and version history. Later functions remain
-                    planned until implementation, testing, and acceptance.
+                    F00 through F35 are accepted. F36 prepares acceptance
+                    testing and production release checks. Later functions
+                    remain planned until implementation, testing, and
+                    acceptance.
                   </span>
                 </div>
               </div>
@@ -578,7 +597,7 @@ export default function App({
               <div className="roadmap-list">
                 {filtered.map((item) => (
                   <article
-                    className={`roadmap-item ${item.id === "F16" ? "current" : ""}`}
+                    className={`roadmap-item ${item.id === "F36" ? "current" : ""}`}
                     key={item.id}
                   >
                     <span className="roadmap-id">{item.id}</span>
@@ -587,9 +606,9 @@ export default function App({
                       <h2>{item.title}</h2>
                     </div>
                     <span
-                      className={`soft-badge ${item.id === "F16" ? "" : "neutral"}`}
+                      className={`soft-badge ${item.id === "F36" ? "" : "neutral"}`}
                     >
-                      {item.id === "F16"
+                      {item.id === "F36"
                         ? "Current release"
                         : [
                               "F00",
@@ -608,11 +627,31 @@ export default function App({
                               "F13",
                               "F14",
                               "F15",
+                              "F16",
+                              "F17",
+                              "F18",
+                              "F19",
+                              "F20",
+                              "F21",
+                              "F22",
+                              "F23",
+                              "F24",
+                              "F25",
+                              "F26",
+                              "F27",
+                              "F28",
+                              "F29",
+                              "F30",
+                              "F31",
+                              "F32",
+                              "F33",
+                              "F34",
+                              "F35",
                             ].includes(item.id)
                           ? "Accepted"
                           : "Planned"}
                     </span>
-                    {item.id === "F16" ? (
+                    {item.id === "F36" ? (
                       <Check size={17} />
                     ) : (
                       <Circle size={12} />
@@ -756,11 +795,11 @@ export default function App({
                   <dl>
                     <div>
                       <dt>Checkpoint</dt>
-                      <dd>{health?.checkpoint ?? "F16"}</dd>
+                      <dd>{health?.checkpoint ?? "F36"}</dd>
                     </div>
                     <div>
                       <dt>Release</dt>
-                      <dd>{health?.release ?? "0.17.0"}</dd>
+                      <dd>{health?.release ?? "0.23.0"}</dd>
                     </div>
                     <div>
                       <dt>Record storage</dt>
@@ -877,7 +916,7 @@ export default function App({
           />
           <span role="status">{serviceLabel}</span>
           <span>·</span>
-          <span>F16 Requirement verification</span>
+          <span>F36 Acceptance testing</span>
         </div>
       </div>
     </div>

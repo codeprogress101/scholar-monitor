@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validationDetails } from "../validation-details.js";
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
 import type { RequirementStatus, RequirementAction } from "./workflow-model.js";
@@ -82,6 +83,17 @@ export function parseRequirementWorkflow(
       422,
       "VALIDATION_FAILED",
       "Provide the current revision, effective date, reason, reference and the fields required for this action. Verification requires all five document checks.",
+      result.success
+        ? {
+            issues: [
+              {
+                path: ["action"],
+                code: "invalid_value",
+                message: "The action must match the requested operation.",
+              },
+            ],
+          }
+        : validationDetails(result.error),
     );
   return result.data;
 }

@@ -13,7 +13,8 @@ export type RequirementStatus =
   | "verified"
   | "for_correction"
   | "resubmitted"
-  | "rejected";
+  | "rejected"
+  | "waived";
 export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
   not_submitted: "Not Submitted",
   submitted: "Submitted",
@@ -22,6 +23,7 @@ export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
   for_correction: "For Correction",
   resubmitted: "Resubmitted",
   rejected: "Rejected",
+  waived: "Waived",
 };
 export type VerificationContext = {
   scholarId: string;
@@ -65,5 +67,7 @@ export type RequirementWorkflowEvent = {
     };
   };
 };
-export const satisfiesNormalRequirement = (status: RequirementStatus) =>
-  status === "verified";
+export const satisfiesNormalRequirement = (
+  status: RequirementStatus,
+  allowWaiver = true,
+) => status === "verified" || (status === "waived" && allowWaiver);

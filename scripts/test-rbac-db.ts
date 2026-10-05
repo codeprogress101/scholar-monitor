@@ -48,10 +48,12 @@ const origin = "http://127.0.0.1:3003";
 // Expected authority is independent of the seeded SQL; assert every permission for every role.
 const staff: PermissionCode[] = [
   "scholars.read",
+  "scholars.export",
   "scholars.create",
   "scholars.update",
   "academic.edit",
   "requirements.generate",
+  "eligibility.calculate",
   "requirements.receive",
   "requirements.verify",
   "masterlists.prepare",
@@ -59,6 +61,9 @@ const staff: PermissionCode[] = [
   "scholarship.status.request",
   "eligibility.overrides.request",
   "ovr.prepare",
+  "payments.correct",
+  "ovr.amendments.request",
+  "ovr.process",
   "configuration.read",
   "audit.view_limited",
 ];
@@ -68,6 +73,7 @@ const expected: Record<RoleCode | "unassigned", PermissionCode[]> = {
     ...staff.filter((code) => code !== "audit.view_limited"),
     "academic.changes.approve",
     "requirements.waive",
+    "payouts.operate",
     "masterlists.approve",
     "masterlists.publish",
     "masterlists.lock",
@@ -75,6 +81,9 @@ const expected: Record<RoleCode | "unassigned", PermissionCode[]> = {
     "scholarship.status.approve",
     "eligibility.overrides.approve",
     "ovr.finalize",
+    "payments.corrections.approve",
+    "ovr.amendments.approve",
+    "ovr.submit",
     "ovr.close",
     "audit.view_all",
   ],
@@ -94,7 +103,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 16);
+  assert.equal((await applyMigrations(admin)).length, 29);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -229,7 +238,7 @@ try {
     );
   }
   pass(
-    "116 direct API permission decisions match the complete role matrix; forged browser roles and actor IDs have no authority",
+    "148 direct API permission decisions match the complete role matrix; forged browser roles and actor IDs have no authority",
   );
   pass(
     "Staff cannot approve masterlists; Coordinator can; System Administrator cannot finalize OVR",

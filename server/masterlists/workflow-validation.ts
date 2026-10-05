@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
@@ -42,6 +43,7 @@ export function parseWorkflow(action: MasterlistAction, body: unknown) {
       422,
       "VALIDATION_FAILED",
       "Provide the current revision, reason, reference and a valid publication effective date where required.",
+      validationDetails(value.error),
     );
   return value.data as {
     expectedVersion: number;

@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
@@ -60,6 +61,7 @@ export function parseAmendment(body: unknown) {
       422,
       "VALIDATION_FAILED",
       "Provide the original revision, scholar, specific amendment fields, effective date, reason and reference. Identity refresh uses the registry name automatically.",
+      validationDetails(result.error),
     );
   return result.data;
 }

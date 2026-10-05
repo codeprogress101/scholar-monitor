@@ -90,7 +90,31 @@ export async function grantAuthRuntime(connection, database, user) {
     throw new Error("Invalid database identity.");
   const table = (name) => `\`${database}\`.\`${name}\``;
   const identity = `${connection.escape(user)}@'localhost'`;
+  await connection.query(`GRANT SELECT ON ${table("scholar_profile_audit")} TO ${identity}`);
+  await connection.query(`GRANT SELECT ON ${table("export_audit_metadata")} TO ${identity}`);
+  await connection.query(`GRANT SELECT ON ${table("audit_event_view")} TO ${identity}`);
   for (const name of [
+    "import_jobs",
+    "import_confirmations",
+    "ovr_amendments",
+    "payment_corrections",
+    "payment_records",
+    "ovr_finalizations",
+    "ovr_batches",
+    "ovr_batch_events",
+    "ovr_entries",
+    "ovr_commands",
+    "eligibility_overrides",
+    "eligibility_override_events",
+    "eligibility_override_commands",
+    "payout_eligibility",
+    "payout_eligibility_commands",
+    "payout_cycles",
+    "payout_cycle_versions",
+    "payout_requirements",
+    "payout_cycle_commands",
+    "requirement_waivers",
+    "requirement_waiver_commands",
     "requirement_workflow_events",
     "requirement_workflow_commands",
     "requirement_receipts",

@@ -1,3 +1,32 @@
+import { publicFailure } from "./error-response.js";
+import { routineEvidence } from "./routine-evidence.js";
+import { AuditService } from "./audit/service.js";
+import { registerAudit } from "./audit/routes.js";
+import { ScholarProfileService } from "./scholars/profile-service.js";
+import { DashboardService } from "./dashboard/service.js";
+import { registerDashboard } from "./dashboard/routes.js";
+import { ReportService } from "./reports/service.js";
+import { registerReports } from "./reports/routes.js";
+import { ImportService } from "./imports/service.js";
+import { ExportService } from "./exports/service.js";
+import { registerExports } from "./exports/routes.js";
+import { registerImports } from "./imports/routes.js";
+import { PaymentCorrectionService } from "./ovr/payment-correction-service.js";
+import { registerPaymentCorrections } from "./ovr/payment-correction-routes.js";
+import { OvrAmendmentService } from "./ovr/amendment-service.js";
+import { registerOvrAmendments } from "./ovr/amendment-routes.js";
+import { OvrProcessingService } from "./ovr/processing-service.js";
+import { registerOvrProcessing } from "./ovr/processing-routes.js";
+import { OvrService } from "./ovr/service.js";
+import { registerOvr } from "./ovr/routes.js";
+import { EligibilityOverrideService } from "./eligibility/override-service.js";
+import { registerEligibilityOverrides } from "./eligibility/override-routes.js";
+import { EligibilityService } from "./eligibility/service.js";
+import { registerEligibility } from "./eligibility/routes.js";
+import { PayoutService } from "./payouts/service.js";
+import { registerPayouts } from "./payouts/routes.js";
+import { RequirementWaiverService } from "./requirements/waiver-service.js";
+import { registerRequirementWaiver } from "./requirements/waiver-routes.js";
 import { RequirementWorkflowService } from "./requirements/workflow-service.js";
 import { registerRequirementWorkflow } from "./requirements/workflow-routes.js";
 import { RequirementReceiptService } from "./requirements/receipt-service.js";
@@ -22,6 +51,7 @@ import { registerQualification } from "./qualification/routes.js";
 import Fastify, { LogController } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
 import { createDatabase, type Database } from "./database.js";
 import cookie from "@fastify/cookie";
@@ -63,9 +93,17 @@ export function buildApp(
       : false,
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 1024 * 1024,
+    requestTimeout: 30_000,
+    trustProxy: false,
+    requestIdHeader: false,
+    genReqId: () => randomUUID(),
   });
 
   app.addHook("onClose", async () => database.close());
+  app.addHook("preValidation", async (request) => {
+    if (["POST", "PATCH"].includes(request.method))
+      request.body = routineEvidence(request.routeOptions.url ?? request.url, request.body);
+  });
   app.register(cookie);
   registerAuth(
     app,
@@ -81,9 +119,26 @@ export function buildApp(
     app,
     options.authorization ?? new AuthorizationService(database.pool),
   );
+  registerAudit(app, new AuditService(new AuthorizationService(database.pool)));
+  registerDashboard(
+    app,
+    new DashboardService(new AuthorizationService(database.pool)),
+  );
   registerConfiguration(
     app,
     new ConfigurationService(new AuthorizationService(database.pool)),
+  );
+  registerImports(
+    app,
+    new ImportService(new AuthorizationService(database.pool)),
+  );
+  registerExports(
+    app,
+    new ExportService(new AuthorizationService(database.pool)),
+  );
+  registerReports(
+    app,
+    new ReportService(new AuthorizationService(database.pool)),
   );
   registerRequirements(
     app,
@@ -96,6 +151,43 @@ export function buildApp(
   registerRequirementReceipts(
     app,
     new RequirementReceiptService(new AuthorizationService(database.pool)),
+  );
+  registerOvrProcessing(
+    app,
+    new OvrProcessingService(new AuthorizationService(database.pool)),
+  );
+  registerOvrAmendments(
+    app,
+    new OvrAmendmentService(new AuthorizationService(database.pool)),
+  );
+  registerPaymentCorrections(
+    app,
+    new PaymentCorrectionService(new AuthorizationService(database.pool)),
+  );
+  const scholarProfile = new ScholarProfileService(
+    new AuthorizationService(database.pool),
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/v1/scholars/:id/profile",
+    { config: { permission: "scholars.read" } },
+    (r) => scholarProfile.read(r.authSession!.user.id, r.params.id, r.query),
+  );
+  registerOvr(app, new OvrService(new AuthorizationService(database.pool)));
+  registerEligibilityOverrides(
+    app,
+    new EligibilityOverrideService(new AuthorizationService(database.pool)),
+  );
+  registerEligibility(
+    app,
+    new EligibilityService(new AuthorizationService(database.pool)),
+  );
+  registerPayouts(
+    app,
+    new PayoutService(new AuthorizationService(database.pool)),
+  );
+  registerRequirementWaiver(
+    app,
+    new RequirementWaiverService(new AuthorizationService(database.pool)),
   );
   registerRequirementWorkflow(
     app,
@@ -135,17 +227,18 @@ export function buildApp(
     reply.header("Referrer-Policy", "no-referrer");
     reply.header("X-Frame-Options", "DENY");
     reply.header("Cache-Control", "no-store");
+    reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     reply.header(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     );
   });
 
   app.get("/api/v1/health", async () => ({
     status: "ok",
     service: "ldss-api",
-    release: "0.17.0",
-    checkpoint: "F16",
+    release: "0.37.0",
+    checkpoint: "F36",
     database: await database.check(),
   }));
 
@@ -208,24 +301,18 @@ export function buildApp(
 
   app.setErrorHandler((error, request, reply) => {
     if (authFailure(error, request, reply)) return;
-    const status = (error as { statusCode?: number }).statusCode;
-    if (status && status >= 400 && status < 500) {
-      return reply.code(status).send({
+    const failure = publicFailure(error);
+    if (failure.status === 500)
+      app.log.error({ requestId: request.id }, "Unhandled request failure");
+    return reply
+      .code(failure.status)
+      .send({
         error: {
-          code: "INVALID_REQUEST",
-          message: "The request could not be processed.",
+          code: failure.code,
+          message: failure.message,
           request_id: request.id,
         },
       });
-    }
-    app.log.error({ requestId: request.id }, "Unhandled request failure");
-    return reply.code(500).send({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "An unexpected error occurred.",
-        request_id: request.id,
-      },
-    });
   });
 
   return app;

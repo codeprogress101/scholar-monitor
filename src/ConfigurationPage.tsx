@@ -1,3 +1,5 @@
+import RoutineEvidence from "./RoutineEvidence";
+import ErrorNotice from "./ErrorNotice";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Archive,
@@ -59,7 +61,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
     [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false);
-  const [error, setError] = useState(""),
+  const [error, setError] = useState<string | ApiError>(""),
     [notice, setNotice] = useState("");
   const [editor, setEditor] = useState<Editor | null>(null);
   const [fields, setFields] = useState<ConfigFields>(blank),
@@ -93,7 +95,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
         if (active)
           setError(
             failure instanceof ApiError
-              ? failure.message
+              ? failure
               : "Could not load configuration. Refresh to try again.",
           );
       })
@@ -190,7 +192,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
     } catch (failure) {
       setError(
         failure instanceof ApiError
-          ? failure.message
+          ? failure
           : "The result could not be confirmed. Retry the same changes to safely check the result, or refresh the list.",
       );
     } finally {
@@ -302,11 +304,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
           {notice}
         </div>
       )}
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
+      <ErrorNotice error={error} />
       {!loading && list && !canManage && (
         <div className="notice">
           <Settings2 size={20} />
@@ -531,7 +529,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                     )}
                   </>
                 )}
-                <div className="col-12">
+                <RoutineEvidence routine={editor.action === "create" || editor.action === "update"}><div className="col-12">
                   <label className="form-label" htmlFor="config-reason">
                     Reason for change
                   </label>
@@ -545,7 +543,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                     onChange={(event) => setReason(event.target.value)}
                     placeholder="Explain why this change is needed"
                   />
-                </div>
+                </div></RoutineEvidence>
               </div>
               <div className="configuration-form-actions">
                 <button className="btn configuration-primary" type="submit">

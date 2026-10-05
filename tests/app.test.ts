@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApp } from "../server/app.js";
 import { loadConfig } from "../server/config.js";
+import { AuthError } from "../server/auth/service.js";
 
 const apps: ReturnType<typeof buildApp>[] = [];
 const folders: string[] = [];
@@ -22,14 +23,52 @@ function makeApp(options: Parameters<typeof buildApp>[1] = {}) {
 }
 
 describe("service boundary", () => {
+  it("ignores forged request IDs and proxy addresses", async () => {
+    const app = makeApp();
+    app.get("/boundary-test", (request) => ({ id: request.id, ip: request.ip }));
+    const response = await app.inject({
+      url: "/boundary-test",
+      headers: { "request-id": "forged", "x-forwarded-for": "203.0.113.99" },
+    });
+    expect(response.json().id).toMatch(/^[a-f0-9-]{36}$/);
+    expect(response.json().ip).not.toBe("203.0.113.99");
+    expect(response.headers["content-security-policy"]).toContain("object-src 'none'");
+    expect(response.headers["permissions-policy"]).toBe("camera=(), microphone=(), geolocation=()");
+  });
+  it.each([
+    [401, "AUTH_REQUIRED"],
+    [403, "PERMISSION_DENIED"],
+    [404, "SCHOLAR_NOT_FOUND"],
+    [409, "VERSION_CONFLICT"],
+    [409, "INVALID_STATE_TRANSITION"],
+    [409, "IDEMPOTENCY_CONFLICT"],
+    [422, "VALIDATION_FAILED"],
+    [423, "RECORD_LOCKED"],
+  ] as const)("preserves domain status/code %s %s", async (status, code) => {
+    const app = makeApp();
+    app.get("/domain-failure", () => {
+      throw new AuthError(status, code, "Public guidance", {
+        issues: [{ path: ["items", 0], message: "Review this row" }],
+      });
+    });
+    const response = await app.inject("/domain-failure");
+    expect(response.statusCode).toBe(status);
+    expect(response.json().error).toMatchObject({
+      code,
+      message: "Public guidance",
+      request_id: expect.any(String),
+      details: { issues: [{ path: ["items", 0], message: "Review this row" }] },
+    });
+    expect(response.body).not.toContain("stack");
+  });
   it("reports an unconfigured database honestly, without credentials", async () => {
     const response = await makeApp().inject("/api/v1/health");
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       status: "ok",
       service: "ldss-api",
-      release: "0.17.0",
-      checkpoint: "F16",
+      release: "0.37.0",
+      checkpoint: "F36",
       database: "not_configured",
     });
     expect(response.headers["cache-control"]).toBe("no-store");

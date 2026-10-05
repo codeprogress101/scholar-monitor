@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
 import { AuthError } from "../auth/service.js";
 const text = (min: number, max: number) =>
@@ -18,6 +19,7 @@ function parse<T>(schema: z.ZodType<T>, body: unknown) {
         .map((i) => `${i.path.join(".")}: ${i.message}`)
         .join(" ")
         .slice(0, 800),
+      validationDetails(result.error),
     );
   return result.data;
 }

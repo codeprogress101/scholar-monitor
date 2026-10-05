@@ -1,3 +1,4 @@
+import RoutineEvidence from "./RoutineEvidence";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
@@ -224,7 +225,7 @@ export default function MasterlistWorkflow({
                     />
                   </>
                 )}
-                {(
+                <RoutineEvidence routine={action !== "return-draft"}>{(
                   [
                     {
                       key: "reason",
@@ -259,7 +260,7 @@ export default function MasterlistWorkflow({
                       }
                     />
                   </div>
-                ))}
+                ))}</RoutineEvidence>
                 <div className="d-flex flex-wrap gap-2">
                   <button type="submit" className="btn configuration-primary">
                     {saving ? "Saving..." : "Confirm workflow action"}

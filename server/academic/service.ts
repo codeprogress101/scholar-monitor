@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import { academicCurrent } from "./changes-service.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -34,6 +35,7 @@ export function parseAcademic(body: unknown) {
         .map((i) => i.path.join(".") + ": " + i.message)
         .join(" ")
         .slice(0, 800),
+      validationDetails(value.error),
     );
   return value.data;
 }
@@ -61,7 +63,9 @@ export async function requireAcademicRecord(
   return rows[0].id as string;
 }
 export class AcademicService {
-  constructor(private authorization: AuthorizationService) {}
+  constructor(
+    private authorization: Pick<AuthorizationService, "withPermission">,
+  ) {}
   async list(
     actor: string,
     rawId: unknown,

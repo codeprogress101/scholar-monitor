@@ -50,7 +50,7 @@ describe("requirement verification workflow", () => {
         else expect(() => requirementTransition(status, action)).toThrow();
       }
   });
-  it("only Verified satisfies the normal rule", () => {
+  it("Verified satisfies the normal rule; pending and rejected states do not", () => {
     for (const status of [
       "not_submitted",
       "submitted",

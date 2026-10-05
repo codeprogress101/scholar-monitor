@@ -5,6 +5,18 @@ export function registerRequirementReceipts(
   service: RequirementReceiptService,
 ) {
   app.post<{ Params: { id: string } }>(
+    "/api/v1/requirement-checklists/:id/receive",
+    { bodyLimit: 16384, config: { permission: "requirements.receive" } },
+    (r) =>
+      service.receiveBatch(
+        r.authSession!.user.id,
+        r.params.id,
+        r.headers["idempotency-key"],
+        r.body,
+        r.id,
+      ),
+  );
+  app.post<{ Params: { id: string } }>(
     "/api/v1/requirement-instances/:id/receive",
     { bodyLimit: 8192, config: { permission: "requirements.receive" } },
     (r) =>

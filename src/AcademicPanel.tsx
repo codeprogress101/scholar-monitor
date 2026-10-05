@@ -1,3 +1,4 @@
+import RoutineEvidence from "./RoutineEvidence";
 import AcademicChanges from "./AcademicChanges";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Session } from "./auth-api";
@@ -25,11 +26,13 @@ export default function AcademicPanel({
   session,
   access,
   years,
+  initialYearId = "",
 }: {
   scholarId: string;
   session: Session;
   access: Access;
   years: ConfigRecord[];
+  initialYearId?: string;
 }) {
   const [records, setRecords] = useState<AcademicRecord[]>([]),
     [schools, setSchools] = useState<ConfigRecord[]>([]),
@@ -41,7 +44,7 @@ export default function AcademicPanel({
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
   const [fields, setFields] = useState({
-    academicYearId: "",
+    academicYearId: initialYearId,
     schoolId: "",
     courseId: "",
     yearLevel: "",
@@ -64,6 +67,7 @@ export default function AcademicPanel({
     ])
       .then(([list, s, c]) => {
         if (active) {
+          setError("");
           setRecords(list.items);
           setSchools(s);
           setCourses(c);
@@ -148,13 +152,13 @@ export default function AcademicPanel({
         </p>
       )}
       {loading && <p role="status">Loading academic history...</p>}
-      {!loading && (!schools.length || !courses.length) && (
+      {!loading && !error && (!schools.length || !courses.length) && (
         <p className="alert alert-info">
           A System Administrator must configure active schools and courses
           before academic records can be added.
         </p>
       )}
-      {!editing && editable && (
+      {!editing && !error && editable && (
         <button
           type="button"
           className="btn configuration-primary mb-3"
@@ -167,7 +171,7 @@ export default function AcademicPanel({
           }
           onClick={() => {
             setFields({
-              academicYearId: "",
+              academicYearId: initialYearId,
               schoolId: "",
               courseId: "",
               yearLevel: "",
@@ -221,43 +225,8 @@ export default function AcademicPanel({
                   </select>
                 </div>
               ))}
-              {(
-                [
-                  { key: "yearLevel", label: "Year level", min: 1, max: 60 },
-                  {
-                    key: "reference",
-                    label: "Academic physical record reference",
-                    min: 3,
-                    max: 300,
-                  },
-                  {
-                    key: "reason",
-                    label: "Academic entry reason",
-                    min: 5,
-                    max: 500,
-                  },
-                ] as const
-              ).map(({ key, label, min, max }) => (
-                <div
-                  className={key === "yearLevel" ? "col-md-4" : "col-12"}
-                  key={key}
-                >
-                  <label className="form-label" htmlFor={"academic-" + key}>
-                    {label}
-                  </label>
-                  <input
-                    id={"academic-" + key}
-                    className="form-control"
-                    required
-                    minLength={min}
-                    maxLength={max}
-                    value={fields[key]}
-                    onChange={(e) =>
-                      setFields({ ...fields, [key]: e.target.value })
-                    }
-                  />
-                </div>
-              ))}
+              <div className="col-md-4"><label className="form-label" htmlFor="academic-year-level">Year level</label><input id="academic-year-level" className="form-control" list="academic-year-levels" required maxLength={60} value={fields.yearLevel} onChange={(e) => setFields({...fields, yearLevel:e.target.value})} /><datalist id="academic-year-levels">{["First Year", "Second Year", "Third Year", "Fourth Year", "Fifth Year", "Sixth Year"].map((level)=><option key={level} value={level}/>)}</datalist></div>
+<RoutineEvidence>{(["reason", "reference"] as const).map((key)=><label className="form-label d-block" key={key}>{key === "reason" ? "Additional note" : "Supporting reference"}<input className="form-control" name={key} value={fields[key]} maxLength={key === "reason" ? 500 : 300} onChange={(e)=>setFields({...fields,[key]:e.target.value})}/></label>)}</RoutineEvidence>
             </div>
             <p className="mt-3">
               Check the placement before saving. This annual entry is retained
@@ -278,7 +247,7 @@ export default function AcademicPanel({
           </fieldset>
         </form>
       )}
-      {!loading && !records.length && (
+      {!loading && !error && !records.length && (
         <p>
           No academic records yet. Qualification requires an entry for its
           academic year.

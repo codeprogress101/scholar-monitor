@@ -1,3 +1,5 @@
+import RoutineEvidence from "./RoutineEvidence";
+import ErrorNotice from "./ErrorNotice";
 import MasterlistAmendments from "./MasterlistAmendments";
 import MasterlistWorkflow from "./MasterlistWorkflow";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -13,7 +15,7 @@ import type {
 type Page<T> = { items: T[]; total: number; offset: number; limit: number };
 const failure = (e: unknown) =>
   e instanceof ApiError
-    ? e.message
+    ? e
     : "Result unconfirmed. Refresh the draft or retry the same command safely.";
 export default function MasterlistsPage({ session }: { session: Session }) {
   const [access, setAccess] = useState<Access | null>(null),
@@ -27,7 +29,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
     [candidateOffset, setCandidateOffset] = useState(0),
     [q, setQ] = useState(""),
     [search, setSearch] = useState("");
-  const [error, setError] = useState(""),
+  const [error, setError] = useState<string | ApiError>(""),
     [notice, setNotice] = useState(""),
     [loading, setLoading] = useState(true),
     [detailLoading, setDetailLoading] = useState(false),
@@ -244,11 +246,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
           Refresh drafts
         </button>
       </div>
-      {error && (
-        <p className="alert alert-danger" role="alert">
-          {error}
-        </p>
-      )}
+      <ErrorNotice error={error} />
       {notice && (
         <p className="alert alert-success" role="status">
           {notice}
@@ -383,7 +381,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                     in the audit history.
                   </p>
                 )}
-                {(
+                <RoutineEvidence >{(
                   [
                     {
                       key: "reason",
@@ -415,7 +413,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                       }
                     />
                   </div>
-                ))}
+                ))}</RoutineEvidence>
                 <div className="d-flex gap-2">
                   <button
                     className="btn configuration-primary"

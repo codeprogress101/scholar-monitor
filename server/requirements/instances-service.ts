@@ -1,3 +1,6 @@
+import { validationDetails } from "../validation-details.js";
+import { currentPayout, requireOpenPayout } from "../payouts/service.js";
+import { satisfiesNormalRequirement } from "./workflow-model.js";
 import { requirementState } from "./workflow-state.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -7,6 +10,9 @@ import { digest } from "../auth/crypto.js";
 import { parseId, parseKey } from "../configuration/validation.js";
 import { applicableRequirements } from "./service.js";
 import { parseGeneration } from "./instances-validation.js";
+import { z } from "zod";
+import { today } from "../scholars/validation.js";
+import type { ReceivingPeriod } from "./instances-model.js";
 import type {
   RequirementChecklist,
   GenerationResult,
@@ -26,6 +32,128 @@ async function scholarship(db: PoolConnection, id: string) {
 }
 export class RequirementInstancesService {
   constructor(private authorization: AuthorizationService) {}
+  async receivingPeriods(
+    actor: string,
+    rawId: unknown,
+  ): Promise<{ items: ReceivingPeriod[] }> {
+    const id = parseId(rawId);
+    return this.authorization.withPermission(
+      actor,
+      "scholars.read",
+      async (db) => {
+        await db.query(
+          "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
+        );
+        const annual = await scholarship(db, id);
+        const [semesters] = await db.execute<RowDataPacket[]>(
+          "SELECT s.*,DATE_FORMAT(s.starts_on,'%Y-%m-%d') AS start_date,DATE_FORMAT(s.ends_on,'%Y-%m-%d') AS end_date FROM semesters s WHERE academic_year_id=? ORDER BY starts_on DESC,id",
+          [annual.academic_year_id],
+        );
+        const [existing] = await db.execute<RowDataPacket[]>(
+          "SELECT semester_id,payout_cycle_id FROM requirement_checklists WHERE scholarship_record_id=?",
+          [id],
+        );
+        const items: ReceivingPeriod[] = [];
+        for (const semester of semesters) {
+          const available =
+            !annual.locked_at &&
+            !annual.archived_at &&
+            !semester.locked_at &&
+            !semester.archived_at;
+          const current =
+            semester.start_date <= today() && semester.end_date >= today();
+          const applicable =
+            available && current
+              ? await applicableRequirements(db, {
+                  semesterId: semester.id,
+                  appliesTo: "semester",
+                  effectiveOn: semester.start_date,
+                })
+              : [];
+          if (
+            applicable.length ||
+            existing.some(
+              (e) => e.semester_id === semester.id && !e.payout_cycle_id,
+            )
+          )
+            items.push({
+              id: semester.id,
+              semesterId: semester.id,
+              semesterVersion: semester.version,
+              payoutCycleId: null,
+              payoutVersion: null,
+              label: semester.name,
+              preferred: Boolean(available && current),
+              canProvision: Boolean(available && current && applicable.length),
+            });
+          const [cycles] = await db.execute<RowDataPacket[]>(
+            "SELECT id FROM payout_cycles WHERE semester_id=? ORDER BY code",
+            [semester.id],
+          );
+          for (const row of cycles) {
+            const cycle = await currentPayout(db, row.id);
+            const open = available && cycle.state === "open";
+            if (open || existing.some((e) => e.payout_cycle_id === cycle.id))
+              items.push({
+                id: cycle.id,
+                semesterId: semester.id,
+                semesterVersion: semester.version,
+                payoutCycleId: cycle.id,
+                payoutVersion: cycle.version,
+                label: `${semester.name} / ${cycle.name}${open ? "" : " (read only)"}`,
+                preferred: Boolean(open),
+                canProvision: Boolean(open),
+              });
+          }
+        }
+        return { items };
+      },
+    );
+  }
+  async provision(
+    actor: string,
+    rawId: unknown,
+    rawKey: unknown,
+    raw: unknown,
+    requestId: string,
+  ) {
+    const input = z.object({ periodId: z.uuid() }).strict().safeParse(raw);
+    if (!input.success)
+      throw new AuthError(
+        422,
+        "VALIDATION_FAILED",
+        "Select a receiving period.",
+      validationDetails(input.error),
+      );
+    const period = (await this.receivingPeriods(actor, rawId)).items.find(
+      (p) => p.id === input.data.periodId,
+    );
+    if (!period?.canProvision)
+      throw new AuthError(
+        423,
+        "PERIOD_UNAVAILABLE",
+        "This period is unavailable for automatic setup. Existing history remains viewable.",
+      );
+    return this.generate(
+      actor,
+      rawId,
+      rawKey,
+      {
+        semesterId: period.semesterId,
+        expectedSemesterVersion: period.semesterVersion,
+        ...(period.payoutCycleId
+          ? {
+              payoutCycleId: period.payoutCycleId,
+              expectedPayoutVersion: period.payoutVersion,
+            }
+          : {}),
+        reason: "Automatic setup when receiving scholar requirements",
+        reference: `Receiving period ${period.id}`,
+      },
+      requestId,
+      true,
+    );
+  }
   async list(
     actor: string,
     rawId: unknown,
@@ -45,12 +173,19 @@ export class RequirementInstancesService {
         );
         const items: RequirementChecklist[] = [];
         for (const r of rows) {
+          const payout = r.payout_cycle_id
+            ? await currentPayout(db, r.payout_cycle_id)
+            : null;
           const [instances] = await db.execute<RowDataPacket[]>(
-            "SELECT i.id,i.definition_version_id,i.status,v.name,v.instructions,v.revision,d.code,r.id AS receipt_id,DATE_FORMAT(r.received_on,'%Y-%m-%d') AS received_on,r.physical_reference,r.storage_location,r.remarks,r.reason AS receipt_reason,r.actor_name AS receiver_name,DATE_FORMAT(r.recorded_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS receipt_recorded FROM requirement_instances i LEFT JOIN requirement_receipts r ON r.instance_id=i.id JOIN requirement_definition_versions v ON v.id=i.definition_version_id JOIN requirement_definitions d ON d.id=v.definition_id WHERE i.checklist_id=? ORDER BY d.code LOCK IN SHARE MODE",
-            [r.id],
+            "SELECT i.id,i.definition_version_id,i.status,p.allow_waiver,v.name,v.instructions,v.revision,d.code,r.id AS receipt_id,DATE_FORMAT(r.received_on,'%Y-%m-%d') AS received_on,r.physical_reference,r.storage_location,r.remarks,r.reason AS receipt_reason,r.actor_name AS receiver_name,DATE_FORMAT(r.recorded_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS receipt_recorded FROM requirement_instances i LEFT JOIN requirement_receipts r ON r.instance_id=i.id JOIN requirement_definition_versions v ON v.id=i.definition_version_id JOIN requirement_definitions d ON d.id=v.definition_id LEFT JOIN payout_requirements p ON p.cycle_version_id=? AND p.definition_version_id=i.definition_version_id WHERE i.checklist_id=? ORDER BY d.code LOCK IN SHARE MODE",
+            [r.payout_version_id, r.id],
           );
           items.push({
             id: r.id,
+            payoutCycleId: r.payout_cycle_id,
+            payoutVersionId: r.payout_version_id,
+            payoutCode: payout?.code ?? null,
+            payoutState: payout?.state ?? null,
             scholarshipRecordId: r.scholarship_record_id,
             semesterId: r.semester_id,
             policyDate: r.policy_on,
@@ -64,30 +199,45 @@ export class RequirementInstancesService {
             actorName: r.actor_name,
             createdAt: r.recorded,
             periodUnavailable: Boolean(
-              r.locked_at || r.archived_at || r.year_locked || r.year_archived,
+              r.locked_at ||
+              r.archived_at ||
+              r.year_locked ||
+              r.year_archived ||
+              (payout && payout.state !== "open"),
             ),
             items: await Promise.all(
-              instances.map(async (i) => ({
-                id: i.id,
-                definitionVersionId: i.definition_version_id,
-                code: i.code,
-                name: i.name,
-                instructions: i.instructions,
-                revision: i.revision,
-                ...(await requirementState(db, i.id)),
-                receipt: i.receipt_id
-                  ? {
-                      id: i.receipt_id,
-                      receivedOn: i.received_on,
-                      physicalReference: i.physical_reference,
-                      storageLocation: i.storage_location,
-                      remarks: i.remarks,
-                      reason: i.receipt_reason,
-                      receiverName: i.receiver_name,
-                      recordedAt: i.receipt_recorded,
-                    }
-                  : null,
-              })),
+              instances.map(async (i) => {
+                const state = await requirementState(db, i.id);
+                return {
+                  id: i.id,
+                  definitionVersionId: i.definition_version_id,
+                  code: i.code,
+                  name: i.name,
+                  instructions: i.instructions,
+                  revision: i.revision,
+                  ...state,
+                  allowWaiver:
+                    i.allow_waiver === null ? true : Boolean(i.allow_waiver),
+                  satisfiesPayoutRequirement: payout
+                    ? satisfiesNormalRequirement(
+                        state.status,
+                        Boolean(i.allow_waiver),
+                      )
+                    : null,
+                  receipt: i.receipt_id
+                    ? {
+                        id: i.receipt_id,
+                        receivedOn: i.received_on,
+                        physicalReference: i.physical_reference,
+                        storageLocation: i.storage_location,
+                        remarks: i.remarks,
+                        reason: i.receipt_reason,
+                        receiverName: i.receiver_name,
+                        recordedAt: i.receipt_recorded,
+                      }
+                    : null,
+                };
+              }),
             ),
           });
         }
@@ -101,11 +251,18 @@ export class RequirementInstancesService {
     rawKey: unknown,
     raw: unknown,
     requestId: string,
+    automatic = false,
   ): Promise<GenerationResult> {
     const id = parseId(rawId),
       key = parseKey(rawKey),
       input = parseGeneration(raw),
-      hash = digest(JSON.stringify({ id, input }));
+      hash = digest(
+        JSON.stringify(
+          automatic
+            ? { id, receivingPeriod: input.payoutCycleId ?? input.semesterId }
+            : { id, input },
+        ),
+      );
     return this.authorization.withPermission(
       actor,
       "requirements.generate",
@@ -128,7 +285,7 @@ export class RequirementInstancesService {
         }
         const annual = await scholarship(db, id);
         const [periods] = await db.execute<RowDataPacket[]>(
-          "SELECT id,academic_year_id,code,name,version,archived_at,locked_at,DATE_FORMAT(starts_on,'%Y-%m-%d') AS policy_date FROM semesters WHERE id=? LOCK IN SHARE MODE",
+          "SELECT id,academic_year_id,code,name,version,archived_at,locked_at,DATE_FORMAT(starts_on,'%Y-%m-%d') AS policy_date,DATE_FORMAT(ends_on,'%Y-%m-%d') AS end_date FROM semesters WHERE id=? LOCK IN SHARE MODE",
           [input.semesterId],
         );
         if (!periods.length)
@@ -138,6 +295,16 @@ export class RequirementInstancesService {
             "Select an existing semester.",
           );
         const period = periods[0];
+        if (
+          automatic &&
+          !input.payoutCycleId &&
+          (period.policy_date > today() || period.end_date < today())
+        )
+          throw new AuthError(
+            423,
+            "PERIOD_UNAVAILABLE",
+            "Automatic setup is limited to a current semester or open payout.",
+          );
         if (period.academic_year_id !== annual.academic_year_id)
           throw new AuthError(
             409,
@@ -156,9 +323,24 @@ export class RequirementInstancesService {
             "REFERENCE_ARCHIVED",
             "The semester or academic year is archived.",
           );
+        const payout = input.payoutCycleId
+          ? await currentPayout(db, input.payoutCycleId)
+          : null;
+        if (payout) {
+          if (
+            payout.semesterId !== period.id ||
+            payout.academicYearId !== annual.academic_year_id
+          )
+            throw new AuthError(
+              409,
+              "WRONG_ACADEMIC_YEAR",
+              "Select the payout cycle for this annual record and semester.",
+            );
+          requireOpenPayout(payout);
+        }
         const [existing] = await db.execute<RowDataPacket[]>(
-          "SELECT c.id,COUNT(i.id) AS total FROM requirement_checklists c LEFT JOIN requirement_instances i ON i.checklist_id=c.id WHERE c.scholarship_record_id=? AND c.semester_id=? GROUP BY c.id FOR UPDATE",
-          [id, input.semesterId],
+          "SELECT c.id,COUNT(i.id) AS total FROM requirement_checklists c LEFT JOIN requirement_instances i ON i.checklist_id=c.id WHERE c.scholarship_record_id=? AND c.semester_id=? AND c.payout_cycle_id <=> ? GROUP BY c.id FOR UPDATE",
+          [id, input.semesterId, payout?.id ?? null],
         );
         let result: GenerationResult;
         if (existing.length) {
@@ -174,11 +356,20 @@ export class RequirementInstancesService {
               "VERSION_CONFLICT",
               "Semester configuration changed. Refresh and review its start date before generating.",
             );
-          const definitions = await applicableRequirements(db, {
-            semesterId: period.id,
-            appliesTo: "semester",
-            effectiveOn: period.policy_date,
-          });
+          if (payout && payout.version !== input.expectedPayoutVersion)
+            throw new AuthError(
+              409,
+              "VERSION_CONFLICT",
+              "Payout cycle changed. Refresh before generation.",
+            );
+          const policyDate = payout?.targetDate ?? period.policy_date;
+          const definitions = payout
+            ? payout.requirements.map((r) => ({ id: r.definitionVersionId }))
+            : await applicableRequirements(db, {
+                semesterId: period.id,
+                appliesTo: "semester",
+                effectiveOn: policyDate,
+              });
           if (!definitions.length)
             throw new AuthError(
               409,
@@ -191,12 +382,12 @@ export class RequirementInstancesService {
             [actor],
           );
           await db.execute(
-            "INSERT INTO requirement_checklists(id,scholarship_record_id,semester_id,policy_date,year_code,year_name,semester_code,semester_name,semester_version,reason,reference_text,actor_id,actor_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))",
+            "INSERT INTO requirement_checklists(id,scholarship_record_id,semester_id,policy_date,year_code,year_name,semester_code,semester_name,semester_version,reason,reference_text,actor_id,actor_name,payout_cycle_id,payout_version_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))",
             [
               target,
               id,
               period.id,
-              period.policy_date,
+              policyDate,
               annual.code,
               annual.name,
               period.code,
@@ -206,6 +397,8 @@ export class RequirementInstancesService {
               input.reference,
               actor,
               users[0].full_name,
+              payout?.id ?? null,
+              payout?.versionId ?? null,
             ],
           );
           for (const v of definitions)
@@ -226,7 +419,9 @@ export class RequirementInstancesService {
                 scholarshipRecordId: id,
                 semesterId: period.id,
                 semesterVersion: period.version,
-                policyDate: period.policy_date,
+                policyDate,
+                payoutCycleId: payout?.id ?? null,
+                payoutVersionId: payout?.versionId ?? null,
                 definitionVersionIds: definitions.map((v) => v.id),
                 reference: input.reference,
                 idempotency_key: key,

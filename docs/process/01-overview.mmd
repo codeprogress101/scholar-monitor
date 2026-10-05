@@ -1,0 +1,31 @@
+flowchart TD
+  setup["Administrator: Configure users, periods and policies"] --> register["Staff / Coordinator: Register or find scholar"]
+  register --> annual["Staff / Coordinator: Record annual academics and application"]
+  annual --> qualify["Coordinator: Qualify and select"]
+  qualify --> official["Staff + Coordinator: Review, approve and publish masterlist"]
+  official --> active["System: Activate official scholarship; retain locked version"]
+  active --> receive["Staff / Coordinator: Receive and verify physical requirements"]
+  setup --> cycle["Administrator configures payout; Coordinator opens cycle"]
+  cycle --> assess["System: Assess current payout eligibility"]
+  receive --> assess
+  assess --> eligible{"Effective eligibility allows payout?"}
+  eligible -->|"No"| resolve["Resolve missing records or follow controlled exception process"]
+  resolve --> assess
+  eligible -->|"Yes"| draft["Staff / Coordinator: Prepare OVR roster"]
+  draft --> final["Different Coordinator: Finalize validated roster atomically"]
+  final --> submit["Coordinator: Submit for administrative processing"]
+  submit --> outcomes["Staff / Coordinator: Record external payment outcomes"]
+  outcomes --> close["Coordinator: Reconcile and close batch"]
+  close --> history["System: Preserve official, document, payment and audit history"]
+  history --> next["Next semester: New checklist and payout cycle"]
+  next --> receive
+  class setup,cycle admin
+  class qualify,final,submit,close coordinator
+  class register,annual,official,receive,draft,outcomes operator
+  class active,assess,history,next system
+  class resolve exception
+  classDef operator fill:#e9f3f0,stroke:#276657,color:#163d34,stroke-width:1.5px
+  classDef coordinator fill:#fff1cf,stroke:#94701e,color:#533f12,stroke-width:1.5px
+  classDef admin fill:#eaf0fc,stroke:#526f9a,color:#263b60,stroke-width:1.5px
+  classDef system fill:#f0f1f4,stroke:#707b8a,color:#28323f,stroke-width:1.5px
+  classDef exception fill:#fae9e8,stroke:#a75750,color:#632b27,stroke-width:1.5px

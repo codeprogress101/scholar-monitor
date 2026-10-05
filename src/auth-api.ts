@@ -5,6 +5,8 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details?: unknown,
+    public requestId?: string,
   ) {
     super(message);
   }
@@ -34,6 +36,9 @@ export async function authRequest<T>(
       response.status,
       body?.error?.code ?? "UNAVAILABLE",
       body?.error?.message ?? "The service is unavailable. Please try again.",
+      body?.error?.details ??
+        (body?.error?.issues ? { issues: body.error.issues } : undefined),
+      body?.error?.request_id,
     );
   }
   return response.status === 204 ? (undefined as T) : response.json();

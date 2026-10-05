@@ -1,3 +1,4 @@
+import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
 import { AuthError } from "../auth/service.js";
 import {
@@ -33,6 +34,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
         .map((issue) => `${issue.path.join(".") || "Input"}: ${issue.message}`)
         .join(" ")
         .slice(0, 800),
+      validationDetails(result.error),
     );
   return result.data;
 }

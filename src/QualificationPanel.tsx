@@ -1,3 +1,4 @@
+import RoutineEvidence from "./RoutineEvidence";
 import RequirementInstances from "./RequirementInstances";
 import StatusPanel from "./StatusPanel";
 import {
@@ -35,11 +36,13 @@ export default function QualificationPanel({
   session,
   access,
   years,
+  showRequirements = true,
 }: {
   scholarId: string;
   session: Session;
   access: Access;
   years: ConfigRecord[];
+  showRequirements?: boolean;
 }) {
   const [records, setRecords] = useState<ScholarshipRecord[]>([]),
     [detail, setDetail] = useState<QualificationDetail | null>(null);
@@ -73,7 +76,10 @@ export default function QualificationPanel({
       { signal: controller.signal },
     )
       .then((data) => {
-        if (active) setRecords(data.items);
+        if (active) {
+          setRecords(data.items);
+          setError("");
+        }
       })
       .catch((error) => {
         if (active) setError(failureMessage(error));
@@ -238,7 +244,7 @@ export default function QualificationPanel({
             {row.yearCode}: {STATUS_LABELS[row.status]}
           </button>
         ))}
-        {canPrepare && (
+        {canPrepare && !error && (
           <button
             type="button"
             className="btn configuration-primary"
@@ -249,7 +255,7 @@ export default function QualificationPanel({
           </button>
         )}
       </div>
-      {!loading && !records.length && (
+      {!loading && !error && !records.length && (
         <p>
           No annual qualification records yet. A permanent scholar profile does
           not establish qualification.
@@ -347,7 +353,7 @@ export default function QualificationPanel({
                   onChange={(event) => setEffectiveOn(event.target.value)}
                 />
               </div>
-              <div className="col-12">
+              <RoutineEvidence routine={action !== "not-select"}><div className="col-12">
                 <label className="form-label" htmlFor="qualification-reference">
                   Physical record / decision reference
                 </label>
@@ -374,7 +380,7 @@ export default function QualificationPanel({
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
                 />
-              </div>
+              </div></RoutineEvidence>
             </div>
             <div className="d-flex gap-2 mt-3">
               <button className="btn configuration-primary" type="submit">
@@ -391,7 +397,7 @@ export default function QualificationPanel({
           </fieldset>
         </form>
       )}
-      {detail && (
+      {detail && showRequirements && (
         <RequirementInstances
           key={`requirements-${detail.id}`}
           id={detail.id}

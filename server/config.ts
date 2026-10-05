@@ -10,7 +10,13 @@ const schema = z
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
-    APP_ORIGIN: z.url().optional(),
+    APP_ORIGIN: z.url().refine((value) => {
+      if (!URL.canParse(value)) return false;
+      const url = new URL(value);
+      return ["http:", "https:"].includes(url.protocol) &&
+        !url.username && !url.password && url.pathname === "/" &&
+        !url.search && !url.hash;
+    }, "A browser origin is required").transform((value) => new URL(value).origin).optional(),
     DB_HOST: z.string().min(1).default("127.0.0.1"),
     DB_PORT: z.coerce.number().int().min(1).max(65535).default(3306),
     DB_NAME: z
@@ -52,8 +58,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     // Report field names only: invalid values may contain secrets.
     throw new Error(`Invalid environment configuration: ${fields.join(", ")}`);
   }
-  if (env.NODE_ENV === "production" && result.data.APP_ENV === "development") {
-    throw new Error("APP_ENV must be explicitly set for a production runtime");
+  if (env.NODE_ENV === "production" && !["staging", "production"].includes(result.data.APP_ENV)) {
+    throw new Error("APP_ENV must be staging or production for a production runtime");
   }
   return result.data;
 }

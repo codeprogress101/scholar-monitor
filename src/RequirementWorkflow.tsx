@@ -1,3 +1,5 @@
+import { receivingToday } from "./receiving-selection";
+import RoutineEvidence from "./RoutineEvidence";
 import { useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
@@ -38,6 +40,7 @@ export default function RequirementWorkflow({
   closed,
   onBusy,
   onChanged,
+  onAcademicSetup,
 }: {
   instance: RequirementInstance;
   session: Session;
@@ -47,11 +50,12 @@ export default function RequirementWorkflow({
   closed: boolean;
   onBusy: (value: boolean) => void;
   onChanged: () => void;
+  onAcademicSetup?: () => void;
 }) {
   const [action, setAction] = useState<RequirementAction | null>(null),
     [context, setContext] = useState<VerificationContext | null>(null),
     [checks, setChecks] = useState(unchecked);
-  const [date, setDate] = useState(""),
+  const [date, setDate] = useState(receivingToday),
     [reason, setReason] = useState(""),
     [reference, setReference] = useState(""),
     [remarks, setRemarks] = useState(""),
@@ -59,6 +63,7 @@ export default function RequirementWorkflow({
     [physicalRef, setPhysicalRef] = useState(""),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
+  const [needsAcademic, setNeedsAcademic] = useState(false);
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
   const actions: RequirementAction[] =
@@ -76,7 +81,11 @@ export default function RequirementWorkflow({
   async function choose(a: RequirementAction) {
     if (busy.current) return;
     setAction(a);
+    setDate(receivingToday());
+    setReason("");
+    setReference("");
     setError("");
+    setNeedsAcademic(false);
     setContext(null);
     setChecks(unchecked);
     pending.current = null;
@@ -91,6 +100,7 @@ export default function RequirementWorkflow({
         ),
       );
     } catch (e) {
+      setNeedsAcademic(e instanceof ApiError && e.code === "ACADEMIC_RECORD_REQUIRED");
       setError(
         e instanceof ApiError
           ? e.message
@@ -172,7 +182,7 @@ export default function RequirementWorkflow({
   }
   return (
     <div className="mt-2" aria-label={`Workflow ${instance.code}`}>
-      {instance.satisfiesNormalRequirement && (
+      {instance.status === "verified" && (
         <p className="alert alert-success py-2">
           Verified - meets the normal requirement rule. Other payout eligibility
           checks remain separate.
@@ -206,6 +216,7 @@ export default function RequirementWorkflow({
           {error && (
             <div role="alert" className="alert alert-danger">
               {error}
+              {needsAcademic && onAcademicSetup && <button type="button" className="btn btn-outline-secondary ms-2" onClick={onAcademicSetup}>Add academic record</button>}
             </div>
           )}
           <fieldset disabled={disabled || saving || closed}>
@@ -305,7 +316,7 @@ export default function RequirementWorkflow({
                 </label>
               </>
             )}
-            <label className="form-label d-block">
+            <RoutineEvidence routine={action !== "reject" && action !== "return-for-correction"}><label className="form-label d-block">
               Decision reason
               <input
                 className="form-control"
@@ -326,7 +337,7 @@ export default function RequirementWorkflow({
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
               />
-            </label>
+            </label></RoutineEvidence>
             <label className="form-label d-block">
               Decision remarks (optional)
               <textarea
@@ -344,7 +355,7 @@ export default function RequirementWorkflow({
                   (!context || !Object.values(checks).every(Boolean))
                 }
               >
-                Save requirement decision
+                {labels[action]}
               </button>
               <button
                 className="btn btn-outline-secondary"

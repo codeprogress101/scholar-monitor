@@ -1,3 +1,4 @@
+import type { RequirementWaiver } from "./waiver-model.js";
 import type {
   RequirementStatus,
   RequirementWorkflowEvent,
@@ -24,10 +25,17 @@ export type RequirementInstance = {
   satisfiesNormalRequirement: boolean;
   version: number;
   receipt: RequirementReceipt | null;
+  allowWaiver: boolean;
+  satisfiesPayoutRequirement: boolean | null;
+  waiver: RequirementWaiver | null;
 };
 export type RequirementChecklist = {
   id: string;
   scholarshipRecordId: string;
+  payoutCycleId: string | null;
+  payoutVersionId: string | null;
+  payoutCode: string | null;
+  payoutState: import("../payouts/model.js").PayoutState | null;
   semesterId: string;
   policyDate: string;
   yearCode: string;
@@ -43,3 +51,13 @@ export type RequirementChecklist = {
   items: RequirementInstance[];
 };
 export type GenerationResult = { id: string; created: boolean; count: number };
+export type ReceivingPeriod = {
+  id: string;
+  semesterId: string;
+  semesterVersion: number;
+  payoutCycleId: string | null;
+  payoutVersion: number | null;
+  label: string;
+  preferred: boolean;
+  canProvision: boolean;
+};

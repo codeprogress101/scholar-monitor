@@ -41,9 +41,12 @@ function summary(row: RowDataPacket): ScholarSummary {
       : null,
   };
 }
-async function detail(db: PoolConnection, id: string): Promise<ScholarDetail> {
+export async function detail(
+  db: PoolConnection,
+  id: string,
+): Promise<ScholarDetail> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${summaryColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=?`,
+    `SELECT ${summaryColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? LOCK IN SHARE MODE`,
     [id],
   );
   const row = rows[0];
@@ -126,7 +129,9 @@ async function references(
   return year;
 }
 export class ScholarService {
-  constructor(private authorization: AuthorizationService) {}
+  constructor(
+    private authorization: Pick<AuthorizationService, "withPermission">,
+  ) {}
   async list(actor: string, rawQuery: unknown): Promise<ScholarList> {
     const query = parseScholarQuery(rawQuery);
     return this.authorization.withPermission(
