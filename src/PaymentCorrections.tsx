@@ -1,3 +1,4 @@
+import { useActionForm } from "./use-action-form";
 import { useRef, useState, type FormEvent } from "react";
 import type { OvrDetail } from "../server/ovr/model";
 import { ApiError, type Session } from "./auth-api";
@@ -21,6 +22,8 @@ export default function PaymentCorrections({
   const busy = useRef(false),
     retry = useRef<{ signature: string; key: string } | null>(null);
   const closed =
+    detail.claimDeadline?.expired ||
+    Boolean(detail.releases) ||
     detail.batch.state === "closed" ||
     detail.cycle.state === "closed" ||
     detail.cycle.periodUnavailable;
@@ -32,6 +35,7 @@ export default function PaymentCorrections({
   };
   const selected = detail.payments.find((p) => p.id === target);
   const decision = action === "approve" || action === "reject";
+  const actionForm = useActionForm(action);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy.current) return;
@@ -45,12 +49,15 @@ export default function PaymentCorrections({
           : {
               paymentId: target,
               outcome,
+              ...(detail.claimDeadline?.expired && outcome === "paid" ? {priorReceiptConfirmed:f.get("priorReceiptConfirmed") === "on",...(String(f.get("priorReceiptEvidence") ?? "").trim() ? {priorReceiptEvidence:String(f.get("priorReceiptEvidence"))} : {})} : {}),
+              ...(outcome === "not_paid" ? {unpaidReason:String(f.get("unpaidReason"))} : {}),
               amount: outcome === "not_paid" ? "0.00" : String(f.get("amount")),
-              effectiveOn: String(f.get("effectiveOn")),
+              effectiveOn: String(f.get("effectiveOn")) || null,
               remarks: String(f.get("remarks")),
             }),
       };
-    const path = `ovr-batches/${detail.batch.id}/payment-corrections/${action}`,
+    const writeAction = decision ? action : closed || (selected?.outcome === "paid" && outcome === "not_paid") ? "request" : "correct";
+    const path = `ovr-batches/${detail.batch.id}/payment-corrections/${writeAction}`,
       signature = JSON.stringify({ path, body });
     if (retry.current?.signature !== signature)
       retry.current = { signature, key: crypto.randomUUID() };
@@ -83,8 +90,8 @@ export default function PaymentCorrections({
     >
       <h4>Payment evidence and corrections</h4>
       <p>
-        Corrections preserve original outcomes. Closed-period changes need
-        approval from a different Coordinator. They do not reopen the OVR or
+        Corrections preserve original outcomes. Reversing Paid requires evidence that no money was received and Coordinator approval. Closed-period changes need
+        approval from the Coordinator. They do not reopen the Payroll or
         rewrite its closure evidence.
       </p>
       {detail.batch.closure && (
@@ -133,11 +140,11 @@ export default function PaymentCorrections({
                   onClick={() => {
                     setTarget(p.id);
                     setOutcome(p.outcome);
-                    setAction(closed ? "request" : "correct");
+                    setAction(closed || p.outcome === "paid" ? "request" : "correct");
                     setError("");
                   }}
                 >
-                  {closed ? "Request correction" : "Correct payment"}:{" "}
+                  {closed || p.outcome === "paid" ? "Request correction" : "Correct payment"}:{" "}
                   {member(p.scholarshipId)}
                 </button>
               )
@@ -146,7 +153,7 @@ export default function PaymentCorrections({
         );
       })}
       {detail.paymentCorrections.map((c) => (
-        <article key={c.id} className="border-top mt-3 pt-2">
+        <article id={`request-${c.id}`} key={c.id} className="border-top mt-3 pt-2">
           <h5>Correction — {c.state}</h5>
           <p>
             {member(c.before.scholarshipId)}. Requested by {c.requestedByName},{" "}
@@ -171,7 +178,7 @@ export default function PaymentCorrections({
           )}
           {c.state === "pending" &&
             permissions.includes("payments.corrections.approve") &&
-            c.requestedBy !== session.user.id && (
+             (
               <div className="d-flex gap-2">
                 <button
                   className="btn btn-success"
@@ -203,7 +210,7 @@ export default function PaymentCorrections({
         </p>
       )}
       {action && (
-        <form
+        <form ref={actionForm}
           onSubmit={submit}
           aria-label="Payment correction command"
           className="mt-3"
@@ -214,7 +221,7 @@ export default function PaymentCorrections({
               {action === "correct"
                 ? "Correct payment"
                 : action === "request"
-                  ? "Request closed-period correction"
+                  ? "Request Coordinator-reviewed payment correction"
                   : `${action} payment correction`}
             </legend>
             {!decision && selected && (
@@ -230,27 +237,30 @@ export default function PaymentCorrections({
                     <option value="not_paid">Not paid</option>
                   </select>
                 </label>
+                {detail.claimDeadline?.expired && outcome === "paid" && <label className="d-block"><input type="checkbox" name="priorReceiptConfirmed" required /> Documentary evidence confirms actual receipt on or before {detail.claimDeadline.endsOn}. This records an earlier payment; it does not authorize collection now.</label>}
+                {detail.claimDeadline?.expired && outcome === "paid" && <label className="d-block">Evidence establishing receipt before expiry (required if exact date is unknown)<textarea name="priorReceiptEvidence" minLength={20} maxLength={1000}/></label>}
+                {outcome === "not_paid" && <label className="form-label d-block">Unpaid reason<select name="unpaidReason" className="form-select" required defaultValue={selected.unpaidReason ?? ""}><option value="">Choose reason</option><option value="did_not_claim">Did not claim</option><option value="withheld">Payment withheld</option><option value="review">Other / needs review</option></select></label>}
                 {outcome === "paid" && (
                   <label className="form-label d-block">
-                    Corrected amount
+                    Stipend amount (fixed)
                     <input
                       className="form-control"
                       name="amount"
                       required
                       inputMode="decimal"
                       pattern="(0|[1-9][0-9]{0,9})\.[0-9]{2}"
-                      defaultValue={selected.amount}
+                      value="5000.00"
+                      readOnly
                     />
                   </label>
                 )}
                 <label className="form-label d-block">
-                  Payment effective date
+                  Actual payment date (leave unknown if undocumented)
                   <input
                     className="form-control"
                     type="date"
                     name="effectiveOn"
-                    required
-                    defaultValue={selected.effectiveOn}
+                    defaultValue={selected.effectiveOn ?? ""}
                   />
                 </label>
                 <label className="form-label d-block">

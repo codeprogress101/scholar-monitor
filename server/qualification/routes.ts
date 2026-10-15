@@ -8,6 +8,8 @@ export function registerQualification(
   app: FastifyInstance,
   service: QualificationService,
 ) {
+  app.get("/api/v1/scholarships/review", { config: { permission: "scholars.read" } },
+    request => service.review(request.authSession!.user.id, request.query));
   app.get<{ Params: { id: string } }>(
     "/api/v1/scholars/:id/scholarships",
     { config: { permission: "scholars.read" } },

@@ -18,15 +18,15 @@ describe("Payout cycle contract", () => {
     reason: "Configured business target",
     reference: "CALENDAR-001",
   };
-  it("stores arbitrary configured target dates and requires an explicit policy selection", () => {
+  it("stores configured target dates; empty extras require server-approved semester documents", () => {
     expect(parsePayout(create)).toEqual(create);
+    expect(parsePayout({...create, fields:{...fields, requirements:[]}})).toMatchObject({fields:{requirements:[]}});
     for (const targetDate of ["2027-01-15", "2027-06-20", "2027-11-09"])
       expect(
         parsePayout({ ...create, fields: { ...fields, targetDate } }),
       ).toMatchObject({ fields: { targetDate } });
     for (const change of [
       { targetDate: "" },
-      { requirements: [] },
       { requirements: [fields.requirements[0], fields.requirements[0]] },
       { requirements: [{ definitionVersionId: randomUUID() }] },
     ])

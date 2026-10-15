@@ -1,3 +1,4 @@
+import { preventGraduateRenewal } from "../status/graduation.js";
 import { requireAcademicRecord } from "../academic/service.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -6,7 +7,7 @@ import type { PermissionCode } from "../authorization/policy.js";
 import { AuthError } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
 import { parseId, parseKey } from "../configuration/validation.js";
-import { parseQualification, transition } from "./validation.js";
+import { admissionReviewQuery, parseQualification, transition } from "./validation.js";
 import type {
   QualificationAction,
   QualificationDetail,
@@ -17,15 +18,16 @@ import type {
 export const qualificationPermission = (
   action: QualificationAction | "create",
 ): PermissionCode =>
-  action === "create" || action === "exam-passed"
+  action === "create" || action === "exam-passed" || action === "validate"
     ? "scholarship.status.request"
     : "scholarship.status.approve";
 const columns =
-  "r.id,r.scholar_id,r.academic_year_id,r.status,r.version,DATE_FORMAT(r.last_effective_on,'%Y-%m-%d') AS effective_on,y.code,y.name,y.archived_at,y.locked_at";
+  "r.id,r.scholar_id,r.academic_year_id,r.status,r.version,r.continuing_from_scholarship_id,DATE_FORMAT(r.last_effective_on,'%Y-%m-%d') AS effective_on,y.code,y.name,y.archived_at,y.locked_at";
 const join =
   "FROM scholarship_records r JOIN academic_years y ON y.id=r.academic_year_id";
 function record(row: RowDataPacket): ScholarshipRecord {
   return {
+    continuingFromScholarshipId: row.continuing_from_scholarship_id ?? null,
     id: row.id,
     scholarId: row.scholar_id,
     academicYearId: row.academic_year_id,
@@ -50,7 +52,20 @@ async function scholarExists(db: PoolConnection, id: string) {
     );
 }
 export class QualificationService {
-  constructor(private authorization: AuthorizationService) {}
+  constructor(private authorization: Pick<AuthorizationService, "withPermission">) {}
+  async review(actor: string, raw: unknown) {
+    const parsed = admissionReviewQuery.safeParse(raw);
+    if (!parsed.success) throw new AuthError(422, "VALIDATION_FAILED", "Choose an academic year and admission stage; search is limited to 100 characters.");
+    const { academicYearId, status, q, offset } = parsed.data;
+    return this.authorization.withPermission(actor, "scholars.read", async db => {
+      const from = `${join} JOIN scholars s ON s.id=r.scholar_id LEFT JOIN scholar_identifiers i ON i.scholar_id=s.id`;
+      const where = `WHERE r.academic_year_id=? AND ${status === "for_validation" ? "r.status IN ('applicant','exam_passed')" : "r.status=?"} AND (?='' OR LOCATE(?,CONCAT_WS(' ',s.last_name,s.first_name,s.middle_name,i.human_id))>0)`;
+      const values = status === "for_validation" ? [academicYearId, q, q] : [academicYearId, status, q, q];
+      const [count] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${from} ${where}`, values);
+      const [rows] = await db.execute<RowDataPacket[]>(`SELECT ${columns},i.human_id,CONCAT_WS(' ',s.last_name,s.first_name,s.middle_name,s.suffix) AS name ${from} ${where} ORDER BY s.last_name,s.first_name,r.id LIMIT 25 OFFSET ${offset}`, values);
+      return { items: rows.map(row => ({ ...record(row), humanId: row.human_id ?? "", name: row.name })), total: Number(count[0].total), offset, limit: 25 };
+    });
+  }
   async list(actor: string, rawId: unknown) {
     const id = parseId(rawId);
     return this.authorization.withPermission(
@@ -114,7 +129,7 @@ export class QualificationService {
   ): Promise<QualificationResult> {
     const id = parseId(rawId),
       key = parseKey(rawKey),
-      input = parseQualification(body, action === "create");
+      input = parseQualification(body, action === "create", action === "validate");
     const hash = digest(JSON.stringify({ id, action, input }));
     return this.authorization.withPermission(
       actor,
@@ -143,7 +158,7 @@ export class QualificationService {
         }
         let before: ScholarshipRecord | null = null;
         let academicYearId = input.academicYearId;
-        if (action === "create") await scholarExists(db, id);
+        if (action === "create") { await scholarExists(db, id); await preventGraduateRenewal(db, id); }
         else {
           const [rows] = await db.execute<RowDataPacket[]>(
             `SELECT ${columns} ${join} WHERE r.id=? FOR UPDATE`,
@@ -203,7 +218,7 @@ export class QualificationService {
           action === "create"
             ? "applicant"
             : transition(before!.status, action);
-        if (action === "qualify")
+        if (action === "qualify" || action === "validate")
           await requireAcademicRecord(db, before!.scholarId, academicYearId);
         const version = (before?.version ?? 0) + 1;
         if (action === "create") {
@@ -265,6 +280,7 @@ export class QualificationService {
                 effectiveOn: input.effectiveOn,
               },
               reference: input.reference,
+              ...(action === "validate" ? { priorQualificationConfirmed: true, basis: "Examination and qualification completed outside this system" } : {}),
               idempotency_key: key,
             }),
           ],

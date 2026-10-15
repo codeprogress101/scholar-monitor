@@ -14,6 +14,7 @@ export type OvrIssue = {
   scholarshipId?: string;
 };
 export type OvrEvidence = {
+  reprocessing?: import("./reprocessing.js").RetryProvenance;
   current: EligibilityAssessment;
   effective: EffectiveEligibility;
   fingerprint: string;
@@ -34,6 +35,7 @@ export type OvrValidation = {
   }[];
 };
 export type OvrBatch = {
+  automaticSourceHash?: string;
   id: string;
   cycleId: string;
   code: string;
@@ -72,6 +74,8 @@ export type OvrBatch = {
   >;
 };
 export type OvrFinalization = {
+  legacyPayrollForm?: import("./payroll-form.js").PayrollForm;
+  payrollForm?: import("./payroll-form.js").PayrollForm;
   batchId: string;
   revision: number;
   code: string;
@@ -87,6 +91,15 @@ export type OvrFinalization = {
   reference: string;
 };
 export type OvrDetail = {
+  semesterPayments?: {scholarshipId:string;paidBatchId:string|null;paidCycleId:string|null;paymentId:string|null;pendingCorrection:boolean}[];
+  historicalReceipts?: Awaited<ReturnType<typeof import("./treasury-state.js").historicalReceipts>>;
+  treasuryEvidence?: import("./treasury-state.js").TreasuryEvidence | null;
+  claimDeadline?: {endsOn: string | null; expired: boolean};
+  reprocessing?: import("./reprocessing.js").ReprocessingItem[];
+  deferrals?: {scholarshipId: string; name: string; reason: string}[];
+  automatic?: import("./automatic-draft.js").AutomaticDraft | null;
+  releases?: import("./managed-release.js").ReleaseEntry[] | null;
+  managed?: import("./managed-payroll.js").ManagedCandidates | null;
   batch: OvrBatch;
   cycle: PayoutCycle;
   entries: OvrEntry[];

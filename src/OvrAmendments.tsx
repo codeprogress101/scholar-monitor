@@ -1,3 +1,4 @@
+import { useActionForm } from "./use-action-form";
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import type { OvrDetail } from "../server/ovr/model";
 import type { EligibilityView } from "../server/eligibility/model";
@@ -29,6 +30,7 @@ export default function OvrAmendments({
     ["finalized", "submitted"].includes(detail.batch.state) &&
     detail.cycle.state === "open" &&
     !detail.cycle.periodUnavailable;
+  const actionForm = useActionForm(action);
   useEffect(() => {
     if (action !== "request" || change !== "add") return;
     const c = new AbortController();
@@ -108,10 +110,10 @@ export default function OvrAmendments({
     return s ? `${s.humanId} — ${s.name}` : id;
   };
   return (
-    <section className="border rounded p-3 my-3" aria-label="OVR amendments">
-      <h4>OVR amendments</h4>
+    <section className="border rounded p-3 my-3" aria-label="Payroll amendments">
+      <h4>Payroll amendments</h4>
       <p>
-        The original frozen roster is retained. A different Coordinator must
+        The original frozen roster is retained. The Coordinator must
         approve corrections. Approval creates a new roster version and requires
         administrative resubmission. Amendments stop when processing starts or
         the cycle is locked or closed.
@@ -134,7 +136,7 @@ export default function OvrAmendments({
         </p>
       )}
       {detail.amendments.map((a) => (
-        <article className="border-top my-3 pt-2" key={a.id}>
+        <article id={`request-${a.id}`} className="border-top my-3 pt-2" key={a.id}>
           <h5>
             {a.change} — {a.state}
           </h5>
@@ -181,26 +183,26 @@ export default function OvrAmendments({
               disabled={saving}
               onClick={() => setAction("request")}
             >
-              Request OVR amendment
+              Request Payroll amendment
             </button>
           )}
           {pending &&
             permissions.includes("ovr.amendments.approve") &&
-            pending.requestedBy !== session.user.id && (
+             (
               <>
                 <button
                   className="btn btn-success"
                   disabled={saving}
                   onClick={() => setAction("approve")}
                 >
-                  Approve OVR amendment
+                  Approve Payroll amendment
                 </button>
                 <button
                   className="btn btn-outline-danger"
                   disabled={saving}
                   onClick={() => setAction("reject")}
                 >
-                  Reject OVR amendment
+                  Reject Payroll amendment
                 </button>
               </>
             )}
@@ -212,8 +214,8 @@ export default function OvrAmendments({
         </p>
       )}
       {action && allowed && (
-        <form
-          aria-label="OVR amendment command"
+        <form ref={actionForm}
+          aria-label="Payroll amendment command"
           onSubmit={submit}
           className="mt-3"
           key={action}

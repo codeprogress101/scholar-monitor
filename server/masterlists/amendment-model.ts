@@ -13,7 +13,7 @@ export type AmendmentView = {
   rootId: string;
   latestId: string;
   canRequest: boolean;
-  versions: { id: string; label: string; publishedAt: string }[];
+  versions: { id: string; label: string; publishedAt: string; kind?: string }[];
   requests: {
     id: string;
     scholarId: string;

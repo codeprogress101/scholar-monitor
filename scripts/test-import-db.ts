@@ -13,7 +13,7 @@ import { AuthorizationService } from "../server/authorization/service.js";
 import { today } from "../server/scholars/validation.js";
 import { ImportService } from "../server/imports/service.js";
 import type { ImportPreview, ImportResult } from "../server/imports/model.js";
-import { IMPORT_COLUMNS } from "../server/imports/model.js";
+import { IMPORT_COLUMNS, SIMPLE_COLUMNS } from "../server/imports/model.js";
 import ExcelJS from "exceljs";
 import { writeFileSync } from "node:fs";
 import type { ConfigRecord } from "../server/configuration/model.js";
@@ -51,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -488,16 +488,168 @@ try {
   pass(
     "F32 completed imports reject cross-job retry keys while simultaneous exact retries preserve the original result",
   );
+  const simpleSchool = await config("schools", { code: "SIMPLE-SCHOOL", name: "Simple Training College" });
+  const working = await config("settings", { code: "LDSS_WORKING_ACADEMIC_YEAR", name: "Working year", valueType: "text", value: year.id });
+  const simpleWorkbook = async (rows: (string | number)[][]) => {
+    const w = new ExcelJS.Workbook(), s = w.addWorksheet("Any worksheet name");
+    s.addRow(SIMPLE_COLUMNS.map(h => ` ${h.toUpperCase()} `));
+    rows.forEach(r => s.addRow(r));
+    return Buffer.from(await w.xlsx.writeBuffer());
+  };
+  const simplePayload = async (rows: (string | number)[][]) => ({ fileName: "simple.xlsx", base64: (await simpleWorkbook(rows)).toString("base64") });
+  const simpleData = await simplePayload([
+    ["IntakeAlpha", "One", "", "", "Simple Training College", 2, "OLD SCHOLAR", ""],
+    ["IntakeBeta", "Two", "", "", "SIMPLE-SCHOOL", "First Year", "NEW SCHOLAR", ""],
+    ["IntakeGamma", "Three", "", "", "Simple Training College", "3rd Year", "Continuing", "Import course"],
+  ]);
+  const simplePreview = await ok<ImportPreview>(request("staff", "/api/v1/imports/stage", simpleData));
+  assert.equal(simplePreview.ready, true, JSON.stringify(simplePreview));
+  assert.equal(simplePreview.workingYear, "IMPORT-YEAR");
+  assert.equal(simplePreview.rows[0].intake?.classification, "continuing");
+  assert.equal(simplePreview.rows[1].intake?.yearLevel, "1");
+  assert.ok(simplePreview.rows[0].notices?.some(n => n.includes("Course needed")));
+  const beforeSimple = await count();
+  await root.query("CREATE TRIGGER fail_simple_confirmation BEFORE INSERT ON import_confirmations FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Test rollback'");
+  assert.equal((await confirm(simplePreview)).statusCode, 500);
+  assert.equal(await count(), beforeSimple);
+  const [[intakeCount]] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM scholar_intakes");
+  assert.equal(intakeCount.n, 0);
+  await root.query("DROP TRIGGER fail_simple_confirmation");
+  const simpleResult = await ok<ImportResult>(confirm(simplePreview));
+  assert.ok(simpleResult.continuingRosterId);
+  assert.deepEqual(await ok(confirm(simplePreview)), simpleResult);
+  const [pendingEntries] = await root.execute<RowDataPacket[]>("SELECT scholar_id FROM continuing_roster_entries WHERE batch_id=?", [simpleResult.continuingRosterId]);
+  assert.equal(pendingEntries.length, 2);
+  const [[decisions]] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM continuing_roster_decisions");
+  assert.equal(decisions.n, 0);
+  const incompleteId = simpleResult.items[1].id;
+  const incomplete = await ok<import("../server/scholars/model.js").ScholarDetail>(request("staff", `/api/v1/scholars/${incompleteId}`));
+  assert.equal(incomplete.placement?.provisional, true); assert.equal(incomplete.placement?.course, null); assert.equal(incomplete.placement?.school, "Simple Training College");
+  const [[annual]] = await root.execute<RowDataPacket[]>("SELECT id,status,operational_status FROM scholarship_records WHERE scholar_id=?", [incompleteId]);
+  assert.equal(annual.status, "applicant"); assert.equal(annual.operational_status, null);
+  const [[events]] = await root.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM qualification_events WHERE scholarship_id=? AND action<>'create'", [annual.id]);
+  assert.equal(events.n, 0);
+  const rejectedValidation = await request("coordinator", `/api/v1/scholarships/${annual.id}/qualification/validate`, { expectedVersion: 1, effectiveOn: day, priorQualificationConfirmed: true });
+  assert.equal(rejectedValidation.statusCode, 409, rejectedValidation.body);
+  assert.equal(rejectedValidation.json().error.code, "ACADEMIC_RECORD_REQUIRED");
+  const [[stillIncomplete]] = await root.execute<RowDataPacket[]>("SELECT status FROM scholarship_records WHERE id=?", [annual.id]);
+  assert.equal(stillIncomplete.status, "applicant");
+  const ambiguousSchool = await config("schools", { code: "AMBIGUOUS-A", name: "Ambiguous College" });
+  await config("schools", { code: "AMBIGUOUS-B", name: "Ambiguous College" });
+  const ambiguousData = await simplePayload([["AmbiguousPerson", "Six", "", "", "Ambiguous College", "First Year", "New", ""]]);
+  const ambiguous = await ok<ImportPreview>(request("staff", "/api/v1/imports/stage", ambiguousData));
+  assert.equal(ambiguous.ready, false); assert.ok(ambiguous.rows[0].errors.some(e => e.includes("ambiguous")));
+  const mappedAmbiguous = await ok<ImportPreview>(request("staff", "/api/v1/imports/stage", { ...ambiguousData, mappings: [{ kind: "schools", supplied: "Ambiguous College", id: ambiguousSchool.id }] }));
+  assert.equal(mappedAmbiguous.ready, true);
+  const secondUpload = await ok<ImportPreview>(request("staff", "/api/v1/imports/stage", simpleData)); assert.equal(secondUpload.ready, false); assert.ok(secondUpload.rows.some(r => r.warnings.length));
+  const unresolvedData = await simplePayload([["ResolveOnly", "Four", "", "", "Unknown college", 1, "New", "Typed Import Degree"], ["ResolveAgain", "Five", "", "", "Unknown college", 1, "New", ""]]);
+  const unmatched = await ok<ImportPreview>(request("staff", "/api/v1/imports/stage", unresolvedData));
+  assert.equal(unmatched.unresolved?.length, 0); assert.equal(unmatched.ready, true);
+  assert.ok(unmatched.rows[0].notices?.some(n=>n.includes("will be saved")));
+  const typedResult=await ok<ImportResult>(confirm(unmatched));
+  assert.equal(typedResult.items.length,2);
+  assert.deepEqual(await ok(confirm(unmatched)),typedResult);
+  const [[typedSchool]]=await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM schools WHERE name='Unknown college'");
+  assert.equal(typedSchool.n,1);
+  const resolved = await ok<ImportPreview>(request("staff", "/api/v1/imports/stage", { ...await simplePayload([["MappedNewPerson", "Seven", "", "", "Unknown college", 1, "New", ""]]), mappings: [{ kind: "schools", supplied: "Unknown college", id: simpleSchool.id }] }));
+  assert.equal(resolved.ready, true);
+  await root.execute("UPDATE system_settings SET version=version+1 WHERE id=?", [working.id]);
+  expectError(await confirm(resolved), 409, "IMPORT_STALE");
+  const registry = await ok<import("../server/scholars/model.js").ScholarList>(request("staff", "/api/v1/scholars?sort=yearLevel&direction=asc&limit=1"));
+  assert.equal(registry.items[0].placement?.yearLevel, "1");
+  const nextPage = await ok<import("../server/scholars/model.js").ScholarList>(request("staff", "/api/v1/scholars?sort=yearLevel&direction=asc&limit=1&offset=1"));
+  assert.notEqual(registry.items[0].id, nextPage.items[0].id);
+  const bySchool = await ok<import("../server/scholars/model.js").ScholarList>(request("staff", "/api/v1/scholars?sort=school&direction=desc"));
+  assert.equal(bySchool.items.at(-1)?.placement?.school, null);
+  const eligibility = await ok<import("../server/scholars/registry-eligibility.js").RegistryEligibility>(request("staff", `/api/v1/scholars/eligibility?ids=${incompleteId}`));
+  assert.equal(eligibility.periodId, null); assert.equal(eligibility.periods.length, 0);
+  expectError(await request("system_admin", `/api/v1/scholars/eligibility?ids=${incompleteId}`), 403, "PERMISSION_DENIED");
+  pass("Simple import preserves incomplete intake, creates New validation and pending Continuing roster atomically; reference resolution, retries, working-year fencing, registry sorting and no-period permissions pass");
+  {
+    const approvedSelection = { reference: "Synthetic approved AY list", effectiveOn: day };
+    const approvedPayload = { ...await simplePayload([
+      ["ApprovedIntake", "Freshperson", "", "", "SIMPLE-SCHOOL", 1, "NEW SCHOLAR", "Import course"],
+      ["ApprovedIntake", "Returningperson", "", "", "SIMPLE-SCHOOL", 2, "OLD SCHOLAR", "Import course"],
+    ]), approvedSelection };
+    expectError(await request("staff", "/api/v1/imports/stage", approvedPayload), 403, "PERMISSION_DENIED");
+    expectError(await request("system_admin", "/api/v1/imports/stage", approvedPayload), 403, "PERMISSION_DENIED");
+    const stageKey = randomUUID();
+    const approvedPreview = await ok<ImportPreview>(request("coordinator", "/api/v1/imports/stage", approvedPayload, stageKey));
+    assert.equal(approvedPreview.ready, true);
+    assert.deepEqual(approvedPreview.rows[0].approvedSelection, approvedSelection);
+    expectError(await request("coordinator", "/api/v1/imports/stage", { ...approvedPayload, approvedSelection: { ...approvedSelection, reference: "Different approval" } }, stageKey), 409, "IDEMPOTENCY_CONFLICT");
+    const missingCourse = await ok<ImportPreview>(request("coordinator", "/api/v1/imports/stage", { ...await simplePayload([["IncompleteApproved", "Person", "", "", "SIMPLE-SCHOOL", 2, "Old", ""]]), approvedSelection }));
+    assert.equal(missingCourse.ready, false);
+    assert.ok(missingCourse.rows[0].errors.some(e => e.includes("complete academic details")));
+    const confirmationKey = randomUUID();
+    const confirmApproved = () => request("coordinator", `/api/v1/imports/${approvedPreview.id}/confirm`, { hash: approvedPreview.hash, confirm: true }, confirmationKey);
+    const countBefore = await count();
+    const [[priorBaseline]] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM participations");
+    await root.query("CREATE TRIGGER fail_approved_confirmation BEFORE INSERT ON import_confirmations FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Test approved rollback'");
+    assert.equal((await confirmApproved()).statusCode, 500);
+    assert.equal(await count(), countBefore);
+    const [[afterBaseline]] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM participations");
+    assert.equal(afterBaseline.n, priorBaseline.n);
+    await root.query("DROP TRIGGER fail_approved_confirmation");
+    const selected = await ok<ImportResult>(confirmApproved());
+    assert.equal(selected.selectedCount, 2);
+    assert.deepEqual(await ok(confirmApproved()), selected);
+    assert.equal(await count(), countBefore + 2);
+    for (const item of selected.items) {
+      const [annualRows]: [RowDataPacket[], unknown] = await root.execute<RowDataPacket[]>("SELECT id,status,version,operational_status FROM scholarship_records WHERE scholar_id=? AND academic_year_id=?", [item.id, year.id]);
+      const approvedAnnual: RowDataPacket = annualRows[0];
+      assert.equal(approvedAnnual.status, "selected"); assert.equal(approvedAnnual.version, 3); assert.equal(approvedAnnual.operational_status, null);
+      const [approvedEvents]: [RowDataPacket[], unknown] = await root.execute<RowDataPacket[]>("SELECT action,reference_text FROM qualification_events WHERE scholarship_id=? ORDER BY resulting_version", [approvedAnnual.id]);
+      assert.deepEqual(approvedEvents.map(e => e.action), ["create", "validate", "select"]);
+      assert.ok(approvedEvents.every(e => e.reference_text === approvedSelection.reference));
+    }
+    const [[decision]] = await root.execute<RowDataPacket[]>("SELECT decision FROM continuing_roster_decisions WHERE batch_id=?", [selected.continuingRosterId!]);
+    assert.equal(decision.decision, "accepted");
+    pass("Coordinator approved-list import selects New and Old scholars with audited provenance; Staff/Admin denied, incomplete records blocked, rollback and retry preserved");
+  }
+  if (process.argv.includes("--large") || process.argv.includes("--large-approved")) {
+    const approvedMode = process.argv.includes("--large-approved");
+    const largeRole = approvedMode ? "coordinator" : "staff";
+    const largeStart = performance.now();
+    const largePayload = { ...await simplePayload(Array.from({ length: 1500 }, (_, i) =>
+      [`VolumeSurname${i}`, `Synthetic${randomBytes(12).toString("hex")}`, "", "", "SIMPLE-SCHOOL", 2, "Old", "Import course"])), ...(approvedMode ? { approvedSelection: { reference: "Synthetic approved volume roster", effectiveOn: day } } : {}) };
+    const largePreview = await ok<ImportPreview>(request(largeRole, "/api/v1/imports/stage", largePayload));
+    const largeKey = randomUUID();
+    const confirmLarge = () => request(largeRole, `/api/v1/imports/${largePreview.id}/confirm`, { hash: largePreview.hash, confirm: true }, largeKey);
+    assert.equal(largePreview.rows.length, 1500);
+    assert.equal(largePreview.ready, true, JSON.stringify(largePreview.rows.filter(r => r.errors.length || r.warnings.length).slice(0, 2)));
+    const stageMs = Math.round(performance.now() - largeStart);
+    const beforeLarge = await count();
+    await root.query("CREATE TRIGGER fail_large_confirmation BEFORE INSERT ON import_confirmations FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Test rollback'");
+    const rollbackStart = performance.now();
+    assert.equal((await confirmLarge()).statusCode, 500);
+    assert.equal(await count(), beforeLarge);
+    const [[rolledBack]] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM scholars WHERE last_name LIKE 'VolumeSurname%'");
+    assert.equal(rolledBack.n, 0);
+    await root.query("DROP TRIGGER fail_large_confirmation");
+    const rollbackMs = Math.round(performance.now() - rollbackStart);
+    const confirmStart = performance.now();
+    const largeResult = await ok<ImportResult>(confirmLarge());
+    if (approvedMode) {
+      assert.equal(largeResult.selectedCount, 1500);
+      const [[selected]] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id WHERE s.last_name LIKE 'VolumeSurname%' AND r.status='selected' AND r.operational_status IS NULL");
+      assert.equal(selected.n, 1500);
+    }
+    assert.equal(largeResult.items.length, 1500);
+    assert.ok(largeResult.continuingRosterId);
+    assert.ok(largeResult.items.every(i => i.academicRecordId));
+    assert.equal(await count(), beforeLarge + 1500);
+    const [[largeRoster]] = await root.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM continuing_roster_entries WHERE batch_id=?", [largeResult.continuingRosterId]);
+    assert.equal(largeRoster.n, 1500);
+    const confirmMs = Math.round(performance.now() - confirmStart);
+    assert.deepEqual(await ok(confirmLarge()), largeResult);
+    assert.equal(await count(), beforeLarge + 1500);
+    pass(`1500-row ${approvedMode ? "approved" : "ordinary"} import: academic records and roster, full rollback and safe retry; stage=${stageMs}ms rollback=${rollbackMs}ms confirm=${confirmMs}ms`);
+  }
   if (process.argv.includes("--browser")) {
     writeFileSync(
       "output/playwright/import-good.xlsx",
-      await workbook([
-        {
-          firstName: "Browser",
-          lastName: "Import",
-          academicYearCode: "IMPORT-YEAR",
-        },
-      ]),
+      await simpleWorkbook([["BrowserImport", "New", "", "", "Simple Training College", 1, "New", ""], ["BrowserImport", "Continuing", "", "", "Simple Training College", "2nd Year", "Old", ""]]),
     );
     writeFileSync(
       "output/playwright/import-bad.xlsx",

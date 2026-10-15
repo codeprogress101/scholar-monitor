@@ -51,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -289,7 +289,9 @@ try {
     "barangay",
     "displayName",
     "entryYear",
+    "graduation",
     "id",
+    "placement",
     "scholarId",
   ]);
   assert.ok(!results.body.includes(fields.contact.email));
@@ -806,6 +808,36 @@ try {
   pass(
     "Pagination, academic-year filtering, CSRF and immutable-ID/runtime grants are verified",
   );
+  // Large fixture is owned by this disposable database, never the working registry.
+  const fixtureIds: string[]=[];
+  for(let index=0;index<1500;index++) {
+    const id=randomUUID(); fixtureIds.push(id);
+    await admin.execute("INSERT INTO scholars(id,first_name,middle_name,last_name,suffix,academic_year_id,created_at,updated_at) VALUES(?,?,'','Registry Fixture','',?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",[id,String(index).padStart(4,"0"),year.id]);
+    await admin.execute("INSERT INTO scholar_identifiers(scholar_id,entry_year,sequence_no) VALUES(?,2090,?)",[id,index+1]);
+    await admin.execute("INSERT INTO scholar_contacts(scholar_id,email,phone,address_line) VALUES(?,'','','')",[id]);
+    const prior=randomUUID();
+    if(index%2) await admin.execute("INSERT INTO scholarship_records(id,scholar_id,academic_year_id,status,version,last_effective_on,created_at,updated_at) VALUES(?,?,?,'selected',1,CURRENT_DATE,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",[prior,id,year.id]);
+    await admin.execute("INSERT INTO scholarship_records(id,scholar_id,academic_year_id,status,continuing_from_scholarship_id,version,last_effective_on,created_at,updated_at) VALUES(?,?,?,?,?,1,CURRENT_DATE,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",[randomUUID(),id,nextYear.id,index%2?"continuing":"selected",index%2?prior:null]);
+  }
+  for(const limit of [25,50,100]) {
+    const found:string[]=[];
+    for(let offset=0;offset<750;offset+=limit) {
+      const result=await request("staff",`/api/v1/scholars?q=Registry%20Fixture&scope=all&scholarshipYearId=${nextYear.id}&classification=continuing&limit=${limit}&offset=${offset}`);
+      assert.equal(result.statusCode,200,result.body);
+      const page=result.json();assert.equal(page.total,750);assert.equal(page.items.length,Math.min(limit,750-offset));
+      assert.ok(page.items.every((r:ScholarDetail)=>r.academicYear.id===year.id && r.placement?.classification==="continuing" && r.placement.academicYearId===nextYear.id));
+      found.push(...page.items.map((r:ScholarDetail)=>r.id));
+    }
+    assert.equal(new Set(found).size,750);
+    const again=(await request("staff",`/api/v1/scholars?q=Registry%20Fixture&scope=all&scholarshipYearId=${nextYear.id}&classification=continuing&limit=${limit}`)).json();
+    assert.deepEqual(again.items.map((r:ScholarDetail)=>r.id),found.slice(0,limit));
+  }
+  const total=(await request("staff",`/api/v1/scholars?q=Registry%20Fixture&scope=all&scholarshipYearId=${nextYear.id}&limit=100`)).json();assert.equal(total.total,1500);
+  const byId=(await request("staff","/api/v1/scholars?q=LDSS-2090-00001&scope=all")).json();assert.equal(byId.total,1);
+  const oldParameter=(await request("staff",`/api/v1/scholars?q=Registry%20Fixture&scope=all&academicYearId=${nextYear.id}`)).json();assert.equal(oldParameter.total,0);
+  const profileForYear=(await request("staff",`/api/v1/scholars/${fixtureIds[1]}?contextAcademicYearId=${nextYear.id}`)).json();
+  assert.equal(profileForYear.placement.academicYearId,nextYear.id);assert.equal(profileForYear.placement.classification,"continuing");
+  pass("1,500 scholars: exact annual-membership/classification counts, stable 25/50/100 pagination, permanent-ID search and registration-year compatibility");
   console.log(
     `All ${passed} scholar scenarios passed in an isolated disposable database.`,
   );

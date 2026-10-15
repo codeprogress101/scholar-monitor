@@ -1,8 +1,10 @@
+import FocusedDialog from "./FocusedDialog";
 import RoutineEvidence from "./RoutineEvidence";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
 import type { Access } from "../server/authorization/policy";
+import type { DraftValidation } from "../server/masterlists/model";
 import type {
   WorkflowView,
   MasterlistAction,
@@ -39,14 +41,18 @@ export default function MasterlistWorkflow({
   session,
   access,
   disabled,
+  validation,
   onChanged,
+  proposalKind="standalone",
 }: {
   id: string;
   version: number;
   session: Session;
   access: Access;
   disabled: boolean;
+  validation: DraftValidation;
   onChanged: () => void;
+  proposalKind?: "standalone" | "addition" | "consolidation";
 }) {
   const [view, setView] = useState<WorkflowView | null>(null),
     [loading, setLoading] = useState(true),
@@ -55,12 +61,13 @@ export default function MasterlistWorkflow({
     [notice, setNotice] = useState(""),
     [revision, setRevision] = useState(0),
     [action, setAction] = useState<MasterlistAction | null>(null);
+  const [uncertain,setUncertain]=useState(false);
   const [fields, setFields] = useState({
     reason: "",
     reference: "",
     effectiveOn: "",
   });
-  const pending = useRef<{ signature: string; key: string } | null>(null),
+  const pending = useRef<{ signature: string; key: string; path:string; body:object } | null>(null),
     busy = useRef(false);
   useEffect(() => {
     let active = true;
@@ -96,29 +103,32 @@ export default function MasterlistWorkflow({
     };
     const path = `masterlists/${id}/${action}`,
       signature = JSON.stringify({ path, body });
-    if (pending.current?.signature !== signature)
-      pending.current = { signature, key: crypto.randomUUID() };
+    if (!uncertain && pending.current?.signature !== signature)
+      pending.current = { signature, key: crypto.randomUUID(), path, body };
+    if (!pending.current) return;
     busy.current = true;
     setSaving(true);
     setError("");
     setNotice("");
     try {
-      await request(path, {
-        body,
+      await request(pending.current.path, {
+        body: pending.current.body,
         csrf: session.csrfToken,
         key: pending.current.key,
       });
       pending.current = null;
+      setUncertain(false);
       setAction(null);
       setNotice("Masterlist workflow command saved.");
       setLoading(true);
       setRevision((n) => n + 1);
       onChanged();
     } catch (e) {
+      setUncertain(!(e instanceof ApiError) || e.status >= 500);
       setError(
         e instanceof ApiError
           ? e.message
-          : "Result unconfirmed. Retry the same command safely or refresh the masterlist.",
+          : "Result unconfirmed. Retry the same action before leaving this masterlist.",
       );
     } finally {
       busy.current = false;
@@ -127,12 +137,12 @@ export default function MasterlistWorkflow({
   }
   return (
     <section
-      className="border rounded p-3 mb-3"
+      className="masterlist-workflow"
       aria-label="Masterlist workflow"
     >
-      <h3 className="h5">Verification and official release</h3>
+      <h3 className="h5">Review & approval</h3>
       {loading && <p role="status">Loading workflow...</p>}
-      {error && (
+      {error && !action && (
         <p className="alert alert-danger" role="alert">
           {error}
         </p>
@@ -144,14 +154,7 @@ export default function MasterlistWorkflow({
       )}
       {view && (
         <>
-          <p>
-            <strong>Status: {title(view.status)}</strong> · Revision{" "}
-            {view.version}
-          </p>
-          <p>
-            Draft → For verification → Submitted for approval → Approved →
-            Published → Locked
-          </p>
+          <p>{view.status === "submitted_for_approval" ? "Awaiting Coordinator approval." : view.status === "approved" ? "Approved. A Coordinator can now review and publish." : view.status === "draft" || view.status === "for_verification" ? "Review membership and resolve blockers before the next step." : "Official membership and publication history are preserved."}</p>
           <div className="d-flex flex-wrap gap-2 mb-3">
             {(actions[view.status] ?? [])
               .filter((a) =>
@@ -160,13 +163,15 @@ export default function MasterlistWorkflow({
               .map((a) => (
                 <button
                   type="button"
-                  className="btn btn-sm configuration-primary"
+                  className={a === "return-draft" ? "btn btn-sm btn-outline-secondary" : "btn btn-sm configuration-primary"}
                   key={a}
                   disabled={
                     disabled ||
                     saving ||
                     loading ||
+                    view.version !== version ||
                     !!action ||
+                    (["submit-verification", "submit-approval", "approve", "publish"].includes(a) && !validation.valid) ||
                     (view.periodUnavailable && a !== "lock")
                   }
                   onClick={() => {
@@ -177,25 +182,28 @@ export default function MasterlistWorkflow({
                     setNotice("");
                   }}
                 >
-                  {labels[a]}
+                  {a==="publish"&&proposalKind==="consolidation"?"Publish consolidated revision":labels[a]}{["approve", "publish", "lock", "return-draft"].includes(a) ? " · Coordinator" : ""}
                 </button>
               ))}
           </div>
+          {view.status === "draft" && !validation.valid && <p className="text-muted">{validation.count === 0 ? "Add a scholar to enable submission." : "Resolve the items marked Needs attention before submitting."}</p>}
+          <details className="secondary-details"><summary>Approval steps and permissions</summary><p>Draft → For verification → Submitted for approval → Approved → Published → Locked.</p><p>Staff and Coordinators prepare and review. Coordinator approval and publication remain required. A Coordinator may approve their own prepared submission under the existing policy.</p></details>
           {action && (
+            <FocusedDialog title={action === "publish" && proposalKind === "consolidation" ? "Publish consolidated revision" : labels[action]} busy={saving || uncertain} onClose={()=>setAction(null)}>
             <form onSubmit={submit}>
-              <fieldset disabled={disabled || saving || loading}>
-                <legend className="h6">{labels[action]}</legend>
+              <fieldset disabled={disabled || saving || loading || uncertain}>
+                <legend className="visually-hidden">{action === "publish" && proposalKind === "consolidation" ? "Publish consolidated revision" : labels[action]}</legend>
                 {action === "submit-approval" && (
                   <p>
                     Confirm that all candidate records have been verified
-                    against the referenced records. A different Coordinator must
+                    against the referenced records. The Coordinator must
                     approve this submission.
                   </p>
                 )}
                 {action === "publish" && (
                   <p>
-                    Publication preserves the official snapshot and activates
-                    every included scholar for this academic year. Publication
+                    <strong>{proposalKind==="standalone"?"This publishes an independent masterlist. ":proposalKind==="consolidation"?"This publishes a consolidated revision without reactivating scholars. ":"This publishes a combined revision of the attached official list. "}</strong>
+                    {proposalKind==="consolidation"?"Both original publications, activation dates, statuses and payments remain unchanged. ":"Publication preserves the official snapshot and activates newly added scholars for this academic year. Existing activations remain unchanged. "}Publication
                     cannot be returned to Draft; corrections require amendments.
                   </p>
                 )}
@@ -211,7 +219,7 @@ export default function MasterlistWorkflow({
                       className="form-label"
                       htmlFor={`publish-date-${id}`}
                     >
-                      Activation effective date
+                      {proposalKind==="consolidation"?"Consolidation effective date":"Activation effective date"}
                     </label>
                     <input
                       className="form-control mb-3"
@@ -263,28 +271,30 @@ export default function MasterlistWorkflow({
                 ))}</RoutineEvidence>
                 <div className="d-flex flex-wrap gap-2">
                   <button type="submit" className="btn configuration-primary">
-                    {saving ? "Saving..." : "Confirm workflow action"}
+                    {saving ? "Saving..." : action === "publish" && proposalKind === "consolidation" ? "Publish consolidated revision" : labels[action]}
                   </button>
                   <button
                     type="button"
                     className="btn btn-outline-secondary"
                     onClick={() => setAction(null)}
                   >
-                    Cancel workflow action
+                    Cancel
                   </button>
                 </div>
               </fieldset>
-            </form>
+              {error && <p role="alert" className="alert alert-danger">{error}</p>}
+              {uncertain && <button type="submit" className="btn configuration-primary" disabled={saving}>Retry the same action</button>}
+            </form></FocusedDialog>
           )}
           {view.publication && (
             <div className="alert alert-success mt-3">
-              <strong>Official snapshot preserved</strong>
+              <strong>Official list preserved</strong><details><summary>Publication record & download</summary>
               <p>
                 Published by {view.publication.actorName} ·{" "}
                 {new Date(view.publication.publishedAt).toLocaleString()}
                 <br />
-                {view.publication.snapshot.lineage
-                  ? "Amendment effective"
+                  {view.publication.snapshot.lineage
+                    ? view.publication.snapshot.lineage.kind === "consolidation" ? "Consolidation effective" : view.publication.snapshot.lineage.kind === "addition" ? "Combined revision effective" : "Amendment effective"
                   : "Activation effective"}{" "}
                 {view.publication.effectiveOn} ·{" "}
                 {view.publication.snapshot.entries.length}{" "}
@@ -304,7 +314,7 @@ export default function MasterlistWorkflow({
                 <code style={{ overflowWrap: "anywhere" }}>
                   {view.publication.hash}
                 </code>
-              </details>
+              </details></details>
             </div>
           )}
           {view.events.length > 0 && (

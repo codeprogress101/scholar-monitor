@@ -8,7 +8,13 @@ export type ScholarFields = {
   barangayId: string | null;
   contact: { email: string; phone: string; addressLine: string };
 };
+export type RegistryPlacement = {
+ academicYearId: string; schoolId: string | null; school: string | null; courseId: string | null; course: string | null; yearLevel: string | null;
+ classification: "new" | "continuing" | null; provisional: boolean; scholarshipStanding?: string;
+};
 export type ScholarSummary = {
+  placement?: RegistryPlacement | null;
+  graduation?: import("../status/graduation.js").Graduation | null;
   id: string;
   scholarId: string;
   displayName: string;

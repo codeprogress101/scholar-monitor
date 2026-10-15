@@ -7,11 +7,9 @@ import { effectiveEligibility } from "../server/eligibility/override-state.js";
 import type { EligibilityAssessment } from "../server/eligibility/model.js";
 import type { EligibilityOverride } from "../server/eligibility/override-model.js";
 describe("eligibility override decisions", () => {
-  it("requires separate review even for a requester with approval permission", () => {
+  it("allows the authorized Coordinator to decide their own submitted request", () => {
     for (const action of ["approve", "reject"] as const)
-      expect(() => overrideTransition(action, "pending", true)).toThrow(
-        "separate Coordinator",
-      );
+      expect(overrideTransition(action, "pending", true)).toBe(action === "approve" ? "approved" : "rejected");
     expect(() => overrideTransition("submit-review", "draft", false)).toThrow(
       "Only the requester",
     );

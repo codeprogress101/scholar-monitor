@@ -44,7 +44,7 @@ export async function testOpenPaymentCorrection(c: Context, batch: OvrBatch) {
   const data = {
     paymentId: p.id,
     outcome: "paid",
-    amount: "1500.25",
+    amount: "5000.00",
     effectiveOn: p.effectiveOn,
     remarks: "Corrected disbursement receipt",
   };
@@ -74,14 +74,17 @@ export async function testOpenPaymentCorrection(c: Context, batch: OvrBatch) {
   assert.deepEqual((await read()).payments, v.payments);
   assert.equal((await read()).batch.revision, batch.revision);
   await save("correct", "staff", data);
-  assert.equal((await read()).reconciliation.paidTotal, "1500.25");
+  assert.equal((await read()).reconciliation.paidTotal, "5000.00");
   assert.deepEqual((await read()).originalPayments, v.originalPayments);
-  await save("correct", "staff", {
+  assert.equal((await cmd("correct", "staff", {...data,outcome:"not_paid",amount:"0.00",remarks:"No receipt occurred"})).statusCode,423);
+  await save("request", "staff", {
     ...data,
-    outcome: "not_paid",
+    outcome: "not_paid", unpaidReason: "review",
     amount: "0.00",
     remarks: "Reversed erroneous paid status",
   });
+  assert.equal((await read()).reconciliation.paidTotal, "5000.00", "Pending reversal leaves the paid outcome effective");
+  await save("approve", "coordinator", {correctionId:(await read()).paymentCorrections[0].id});
   assert.equal((await read()).reconciliation.paidTotal, "0.00");
   const result = await save("correct", "staff", data);
   assert.equal((await read()).paymentCorrections.length, 3);
@@ -97,7 +100,7 @@ export async function testClosedPaymentCorrection(c: Context, id: string) {
   const data = {
     paymentId: p.id,
     outcome: "paid",
-    amount: "1750.50",
+    amount: "5000.00",
     effectiveOn: p.effectiveOn,
     remarks: "Approved additional receipt evidence",
   };
@@ -109,9 +112,9 @@ export async function testClosedPaymentCorrection(c: Context, id: string) {
   await save("request", "coordinator", data);
   let pending = (await read()).paymentCorrections[0];
   assert.equal(
-    (await cmd("approve", "coordinator", { correctionId: pending.id })).json()
+    (await cmd("approve", "staff", { correctionId: pending.id })).json()
       .error.code,
-    "SEPARATE_APPROVER_REQUIRED",
+    "PERMISSION_DENIED",
   );
   const [staff] = await c.admin.query<RowDataPacket[]>(
     "SELECT id FROM users WHERE email='staff@example.invalid'",
@@ -216,7 +219,7 @@ export async function testClosedPaymentCorrection(c: Context, id: string) {
     "IDEMPOTENCY_CONFLICT",
   );
   const final = await read();
-  assert.equal(final.reconciliation.paidTotal, "1750.50");
+  assert.equal(final.reconciliation.paidTotal, "5000.00");
   assert.deepEqual(final.batch.closure, v.batch.closure);
   assert.deepEqual(final.originalPayments, v.originalPayments);
   assert.deepEqual(final.finalization, v.finalization);

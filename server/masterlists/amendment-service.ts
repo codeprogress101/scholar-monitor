@@ -1,4 +1,7 @@
+import { lineage } from "./revisions.js";
+import { requirePlacementPolicy } from "../academic/placement-policy.js";
 import { randomUUID } from "node:crypto";
+import {resolvePlacementReferences} from "../academic/references.js";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
@@ -19,23 +22,6 @@ const decode = <T>(v: string | T): T =>
   typeof v === "string" ? (JSON.parse(v) as T) : v;
 function fail(code: string, message: string): never {
   throw new AuthError(409, code, message);
-}
-async function lineage(db: PoolConnection, id: string) {
-  const [own] = await db.execute<RowDataPacket[]>(
-    "SELECT root_id,revision FROM masterlist_amendment_versions WHERE masterlist_id=? FOR UPDATE",
-    [id],
-  );
-  const rootId = (own[0]?.root_id ?? id) as string;
-  const [versions] = await db.execute<RowDataPacket[]>(
-    "SELECT v.masterlist_id,v.revision,DATE_FORMAT(p.published_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS published_at FROM masterlist_amendment_versions v JOIN masterlist_publications p ON p.masterlist_id=v.masterlist_id WHERE v.root_id=? ORDER BY v.revision DESC FOR UPDATE",
-    [rootId],
-  );
-  return {
-    rootId,
-    revision: Number(own[0]?.revision ?? 0),
-    latestId: (versions[0]?.masterlist_id ?? rootId) as string,
-    versions,
-  };
 }
 async function base(db: PoolConnection, id: string) {
   const row = await header(db, id),
@@ -167,6 +153,8 @@ async function prepare(
         remarks: "",
       }),
     );
+    const [[policyAcademic]] = await db.execute<RowDataPacket[]>("SELECT id FROM academic_records WHERE scholar_id=? AND academic_year_id=?",[before.snapshot.scholarId,state.snapshot.academicYearId]);
+    await requirePlacementPolicy(db,policyAcademic.id,before.snapshot.scholarId,current.placement,placement,input.effectiveOn);
     // Only the supported fields are changed; preserved reference labels remain historical.
     after.snapshot.placement = placement;
     await destinations(db, before, after);
@@ -256,9 +244,10 @@ export class MasterlistAmendmentService {
         const row = await header(db, id),
           chain = await lineage(db, id);
         const [roots] = await db.execute<RowDataPacket[]>(
-          "SELECT DATE_FORMAT(published_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS published_at FROM masterlist_publications WHERE masterlist_id=?",
-          [chain.rootId],
+          "SELECT masterlist_id,DATE_FORMAT(published_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS published_at FROM masterlist_publications WHERE masterlist_id IN (?,?)",
+          [chain.rootId,chain.historyRootId],
         );
+        const [sourceHistory]=await db.execute<RowDataPacket[]>("SELECT r.masterlist_id,r.revision,r.kind,DATE_FORMAT(p.published_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS published_at FROM masterlist_revisions r JOIN masterlist_publications p ON p.masterlist_id=r.masterlist_id WHERE r.root_id=?",[chain.historyRootId]);
         const [requests] = await db.execute<RowDataPacket[]>(
           "SELECT q.*,DATE_FORMAT(q.effective_on,'%Y-%m-%d') AS effective_date,DATE_FORMAT(q.created_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS created_time,d.decision,d.actor_name AS decider,d.reason AS decision_reason,d.reference_text AS decision_reference,DATE_FORMAT(d.occurred_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS decision_time,v.masterlist_id AS published_id FROM masterlist_amendments q LEFT JOIN masterlist_amendment_decisions d ON d.amendment_id=q.id LEFT JOIN masterlist_amendment_versions v ON v.amendment_id=q.id WHERE q.masterlist_id=? ORDER BY q.created_at DESC,q.id",
           [id],
@@ -273,21 +262,19 @@ export class MasterlistAmendmentService {
             !row.locked_at &&
             !row.archived_at,
           versions: [
-            ...(roots.length
-              ? [
-                  {
-                    id: chain.rootId,
+            ...roots.map(root=>({
+                    id: root.masterlist_id,
                     label: "1.0",
-                    publishedAt: roots[0].published_at,
-                  },
-                ]
-              : []),
-            ...chain.versions
+                    kind: "original",
+                    publishedAt: root.published_at,
+                  })),
+            ...[...sourceHistory.filter(v=>!chain.versions.some(c=>c.masterlist_id===v.masterlist_id)),...chain.versions]
               .slice()
               .reverse()
               .map((v) => ({
                 id: v.masterlist_id,
                 label: `1.${v.revision}`,
+                kind: v.kind,
                 publishedAt: v.published_at,
               })),
           ],
@@ -362,6 +349,9 @@ export class MasterlistAmendmentService {
           publishedId: string | null = null;
         let details: object;
         if (proposal) {
+          const refs=await resolvePlacementReferences(db,{schoolId:proposal.schoolId ?? "",courseId:proposal.courseId ?? "",schoolName:proposal.schoolName,courseName:proposal.courseName},actor,requestId);
+          if(refs.schoolId) proposal.schoolId=refs.schoolId;
+          if(refs.courseId) proposal.courseId=refs.courseId;
           const state = await base(db, id),
             data = await prepare(db, state, proposal);
           target = randomUUID();
@@ -411,12 +401,6 @@ export class MasterlistAmendmentService {
                 "This amendment already has a decision.",
               );
             if (action === "approve") {
-              if (q.actor_id === actor)
-                throw new AuthError(
-                  403,
-                  "SELF_APPROVAL_DENIED",
-                  "A different Coordinator must approve this amendment.",
-                );
               await recheck(db, q);
             }
             if (action === "cancel" && q.actor_id !== actor)
@@ -531,6 +515,7 @@ export class MasterlistAmendmentService {
                 rootId: state.chain.rootId,
                 parentId: q.masterlist_id,
                 amendmentId: id,
+                kind: "amendment",
                 versionLabel: label,
               },
             };
@@ -557,6 +542,7 @@ export class MasterlistAmendmentService {
                 academicChangeId,
               ],
             );
+            await db.execute("INSERT INTO masterlist_revisions(masterlist_id,parent_id,root_id,revision,kind) VALUES(?,?,?,?,'amendment')", [publishedId, q.masterlist_id, state.chain.rootId, revision]);
             await db.execute(
               "INSERT INTO masterlist_workflow_events (id,masterlist_id,action,from_status,to_status,resulting_version,actor_id,actor_name,reason,reference_text,snapshot,occurred_at) VALUES (?,?,'amendment-publish','approved_amendment','locked',2,?,?,?,?,?,UTC_TIMESTAMP(6))",
               [

@@ -47,6 +47,7 @@ export const parseStatusRequest = (raw: unknown) =>
         ...detail,
       })
       .strict()
+      .refine(value => value.reasonCode !== "GRADUATION" || (value.toStatus === "graduated" && value.kind === "change"), { path: ["reasonCode"], message: "Graduation requires the Graduated status. Use Recording correction when reversing an incorrect decision." })
       .refine(
         (value) =>
           value.kind === "correction"
@@ -60,7 +61,7 @@ export const parseStatusRequest = (raw: unknown) =>
     raw,
   );
 export const parseStatusDecision = (raw: unknown) =>
-  parse(z.object(detail).strict(), raw);
+  parse(z.object({ ...detail, finalSemesterId: z.uuid().optional() }).strict(), raw);
 export function validateStatusEdge(
   from: OperationalStatus | null,
   to: OperationalStatus,

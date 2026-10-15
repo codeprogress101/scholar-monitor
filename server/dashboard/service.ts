@@ -6,6 +6,7 @@ import { REPORTS, type ReportKind } from "../reports/model.js";
 import { readOperationalReport } from "../reports/service.js";
 import { currentPayout } from "../payouts/service.js";
 import type { EligibilityView } from "../eligibility/model.js";
+import { cohortReads } from "../eligibility/cohort-reads.js";
 
 export function parseDashboard(raw: unknown) {
   const result = z.object({ cycleId: z.uuid() }).strict().safeParse(raw);
@@ -22,7 +23,7 @@ export class DashboardService {
   constructor(private authorization: AuthorizationService) {}
   async read(actor: string, raw: unknown) {
     const q = parseDashboard(raw);
-    return this.authorization.withPermission(
+    return this.authorization.readSnapshot(
       actor,
       "configuration.read",
       async (db, access) => {
@@ -39,11 +40,12 @@ export class DashboardService {
           "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
         );
         const cycle = await currentPayout(db, q.cycleId);
+        const reads = await cohortReads(db, cycle.academicYearId, cycle.semesterId, cycle.id);
         const cards = [];
         const assessments = new Map<string, EligibilityView>();
         for (const kind of kinds) {
           const report = await readOperationalReport(
-            db,
+            reads,
             {
               kind,
               cycleId: cycle.id,

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { validationDetails } from "../validation-details.js";
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
+import { documentTypeSchema } from "./document-evidence.js";
 import type { RequirementStatus, RequirementAction } from "./workflow-model.js";
 const text = (min: number, max: number) =>
   z
@@ -25,16 +26,22 @@ const schemas = {
     .object({
       ...common,
       action: z.literal("verify"),
+      effectiveOn: common.effectiveOn.optional(),
+      attestation: z.literal("all-five-checked").optional(),
       document: z
         .object({
           scholarId: z.uuid(),
           scholarVersion: z.number().int().min(1),
           academicYearId: z.uuid(),
           semesterId: z.uuid(),
-          schoolId: z.uuid(),
-          courseId: z.uuid(),
+          schoolId: z.uuid().nullable(),
+          courseId: z.uuid().nullable(),
           academicVersion: z.number().int().min(0),
           definitionVersionId: z.uuid(),
+          coverageId: z.uuid().optional(),
+          entrantCardId: z.uuid().optional(),
+          semesterRevision: z.number().int().positive().optional(),
+          predecessorSourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         })
         .strict(),
       checks: z
@@ -59,6 +66,8 @@ const schemas = {
     .object({
       ...common,
       action: z.literal("resubmit"),
+      documentType: documentTypeSchema.optional(),
+      entrantCardId: z.uuid().optional(),
       physicalReference: text(1, 300).nullable(),
       storageLocation: text(1, 300),
     })
@@ -69,6 +78,9 @@ export function parseRequirementWorkflow(
   action: RequirementAction,
   raw: unknown,
 ) {
+  if (action === "verify" && raw && typeof raw === "object" && "attestation" in raw && raw.attestation === "all-five-checked" && !("checks" in raw)) {
+    raw = { ...raw, checks: {identity:true,period:true,placement:true,applicability:true,validity:true} };
+  }
   const result = z
     .discriminatedUnion("action", [
       schemas["send-for-verification"],
@@ -106,14 +118,14 @@ export function requirementTransition(
     ["submitted", "resubmitted"].includes(from)
   )
     return "for_verification";
-  if (action === "verify" && from === "for_verification") return "verified";
+  if (action === "verify" && ["submitted", "resubmitted", "for_verification", "verified"].includes(from)) return "verified";
   if (
     action === "return-for-correction" &&
-    ["for_verification", "verified"].includes(from)
+    ["submitted", "resubmitted", "for_verification", "verified"].includes(from)
   )
     return "for_correction";
   if (action === "resubmit" && from === "for_correction") return "resubmitted";
-  if (action === "reject" && from === "for_verification") return "rejected";
+  if (action === "reject" && ["submitted", "resubmitted", "for_verification"].includes(from)) return "rejected";
   throw new AuthError(
     409,
     "INVALID_STATE_TRANSITION",

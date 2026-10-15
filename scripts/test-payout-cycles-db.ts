@@ -1,3 +1,4 @@
+import { testSubmissionWindows } from "./test-submission-window-scenarios.js";
 import { currentPayout } from "../server/payouts/service.js";
 import type { PayoutCycle } from "../server/payouts/model.js";
 import type { VerificationContext } from "../server/requirements/workflow-model.js";
@@ -50,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -308,7 +309,6 @@ try {
   );
   for (const extra of [
     { fields: { ...fields, targetDate: "" } },
-    { fields: { ...fields, requirements: [] } },
     {
       fields: {
         ...fields,
@@ -328,13 +328,18 @@ try {
       "VALIDATION_FAILED",
     );
   expectError(
+    await request("system_admin", path, { ...create, code: "NO-SHARED-SETUP", fields: { ...fields, requirements: [] } }),
+    409,
+    "SOURCE_CHANGED",
+  );
+  expectError(
     await request("system_admin", path, {
       ...create,
       code: "WRONG-POLICY",
       fields: {
         ...fields,
         requirements: [
-          { definitionVersionId: definitions.SEMESTER.id, allowWaiver: true },
+          { definitionVersionId: randomUUID(), allowWaiver: true },
         ],
       },
     }),
@@ -770,10 +775,11 @@ try {
   pass(
     "Payout generation rejects mismatched semester context; commands require CSRF and matching endpoint actions",
   );
-  await new AuthorizationService(runtime).withPermission(
-    accounts.get("staff")!.id,
-    "configuration.read",
-    async (db) => {
+  const staleConnection=await runtime.getConnection();
+  try {
+      const db=staleConnection;
+      await db.beginTransaction();
+      await db.query("SELECT id FROM payout_cycles LIMIT 1");
       b = (await ok(mutate(b, "configure", { fields }))).json<PayoutCycle>();
       await db.query(
         "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
@@ -781,8 +787,7 @@ try {
       const observed = await currentPayout(db, b.id);
       assert.equal(observed.version, b.version);
       assert.equal(observed.targetDate, day);
-    },
-  );
+  } finally {await staleConnection.rollback();staleConnection.release();}
   const configRace = await Promise.all([
     mutate(b, "configure", {
       fields: { ...fields, name: "Concurrent name one" },
@@ -808,6 +813,7 @@ try {
       fields: { ...fields, name: "Browser payout cycle" },
     }),
   );
+  await testSubmissionWindows({ admin, runtime, actor: accounts.get("coordinator")!.id, staffId: accounts.get("staff")!.id, request });
   console.log(
     `All ${passed} payout scenarios passed in an isolated disposable database.`,
   );

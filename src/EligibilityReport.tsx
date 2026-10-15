@@ -25,7 +25,7 @@ export default function EligibilityReport({
     } | null>(null),
     [offset, setOffset] = useState(0),
     [reload, setReload] = useState(0),
-    [selected, setSelected] = useState<string | null>(null),
+    [selected, setSelected] = useState<string | null>(() => new URLSearchParams(window.location.hash.split("?")[1]).get("annual")),
     [error, setError] = useState("");
   useEffect(() => {
     const c = new AbortController();
@@ -84,7 +84,7 @@ export default function EligibilityReport({
       )}
       {!data ? (
         <p>Loading report...</p>
-      ) : (
+      ) : !selected ? (
         <>
           <p>{data.total} annual records</p>
           {data.items.map((row) => (
@@ -104,12 +104,12 @@ export default function EligibilityReport({
                   Approved override is stale and is not applied.
                 </p>
               )}
-              <EligibilityResult assessment={row.current} />
+              <details><summary>Eligibility checks</summary><EligibilityResult assessment={row.current} />
               <p>
                 {row.latest
                   ? `Saved revision ${row.latest.revision}: ${row.stale ? "stale" : "matches sources"}`
                   : "Not yet saved"}
-              </p>
+              </p></details>
               <button
                 className="btn btn-outline-secondary"
                 onClick={() => setSelected(row.current.sources.scholarship.id)}
@@ -141,7 +141,8 @@ export default function EligibilityReport({
             </button>
           </div>
         </>
-      )}
+      ) : null}
+      {selected && <button type="button" className="btn btn-outline-secondary mb-3" onClick={() => setSelected(null)}>Back to eligibility list</button>}
       {selected && (
         <EligibilityPanel
           key={selected}

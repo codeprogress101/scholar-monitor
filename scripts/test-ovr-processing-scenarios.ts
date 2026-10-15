@@ -22,7 +22,21 @@ export async function testProcessing(
     assert.equal(r.statusCode, 200, r.body);
     return r.json<OvrDetail>();
   };
+  const pendingBatch = async (role: string) => {
+    const r = await c.request(role, `/api/v1/notifications?mode=pending&type=payroll&source=${batch.id}`);
+    assert.equal(r.statusCode, 200, r.body);
+    return r.json().items.some((n: { sourceId: string }) => n.sourceId === batch.id);
+  };
   const original = (await read()).finalization;
+  const blockedCycleClose = async () => {
+    const response = await c.request("coordinator", `/api/v1/payout-cycles/${c.cycleId}/close`, {
+      action: "close", expectedVersion: c.cycleVersion,
+      reason: "Attempt premature cycle closure", reference: "CLOSE-TEST",
+    });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error.code, "PAYOUT_CYCLE_UNFINISHED");
+  };
+  await blockedCycleClose();
   const cmd = (
     action: string,
     role = "coordinator",
@@ -92,6 +106,8 @@ export async function testProcessing(
   await save("submit");
   await save("mark-processed", "staff");
   assert.equal(batch.state, "processed");
+  assert.equal(await pendingBatch("staff"), true);
+  await blockedCycleClose();
   assert.deepEqual((await read()).finalization, original);
   pass("Processing uses the frozen roster even after live source changes");
   await deny(
@@ -112,8 +128,10 @@ export async function testProcessing(
   const paid = {
     scholarshipId: members[0].scholarshipId,
     outcome: "paid",
-    amount: "1234.56",
+    amount: "5000.00",
     remarks: "Synthetic paid receipt",
+    reason: "",
+    reference: "",
   };
   await deny(
     "payments",
@@ -123,6 +141,9 @@ export async function testProcessing(
     "PAYMENT_NOT_IN_ROSTER",
   );
   for (const amount of [
+    "1000.00",
+    "4999.99",
+    "5000.01",
     "0.00",
     "-1.00",
     "1.001",
@@ -141,7 +162,7 @@ export async function testProcessing(
   await deny(
     "payments",
     "staff",
-    { ...paid, outcome: "not_paid", amount: "0.00", remarks: "" },
+    { ...paid, outcome: "not_paid", unpaidReason: "review", amount: "0.00", remarks: "" },
     422,
     "VALIDATION_FAILED",
   );
@@ -181,7 +202,7 @@ export async function testProcessing(
   assert.deepEqual(results.map((r) => r.statusCode).sort(), [200, 409]);
   batch = results.find((r) => r.statusCode === 200)!.json<OvrBatch>();
   assert.equal(batch.revision, revision + 1);
-  await deny("payments", "staff", paid, 409, "PAYMENT_ALREADY_RECORDED");
+  await deny("payments", "staff", paid, 409, "STIPEND_ALREADY_PAID");
   await deny(
     "close",
     "coordinator",
@@ -191,14 +212,17 @@ export async function testProcessing(
   );
   await save("payments", "staff", {
     scholarshipId: members[1].scholarshipId,
-    outcome: "not_paid",
+    outcome: "not_paid", unpaidReason: "review",
     amount: "0.00",
     remarks: "Scholar did not collect payment",
   });
   const reconciled = (await read()).reconciliation;
   assert.equal(reconciled.complete, true);
-  assert.equal(reconciled.paidTotal, "1234.56");
+  assert.equal(reconciled.paidTotal, "5000.00");
   assert.equal(reconciled.notPaid, 1);
+  assert.equal(await pendingBatch("staff"), false);
+  assert.equal(await pendingBatch("coordinator"), true);
+  pass("Completed outcomes hand off to Coordinator closure without a Staff payment task");
   pass(
     "Concurrent outcomes serialize; duplicates rejected and exact totals reconciled",
   );
@@ -221,6 +245,7 @@ export async function testProcessing(
   const closed = await c.request("coordinator", `${base}/close`, body, key);
   assert.equal(closed.statusCode, 200, closed.body);
   batch = closed.json<OvrBatch>();
+  assert.equal(await pendingBatch("coordinator"), false);
   assert.deepEqual(
     (await c.request("coordinator", `${base}/close`, body, key)).json(),
     batch,

@@ -1,4 +1,8 @@
+import FocusedDialog from "./FocusedDialog";
+import { readAdminView, useAdminView } from "./admin-view-state";
+import SignatoryFields from "./SignatoryFields";
 import RoutineEvidence from "./RoutineEvidence";
+import WorkingCalendar from "./WorkingCalendar";
 import ErrorNotice from "./ErrorNotice";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
@@ -9,7 +13,6 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  X,
 } from "lucide-react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
@@ -26,6 +29,7 @@ import {
 } from "../server/configuration/model";
 import { configurationRequest as request } from "./configuration-api";
 
+const SETUP_KINDS = CONFIG_KINDS.filter(kind=>kind!=="schools" && kind!=="courses");
 type Editor = { action: ConfigCommand["action"]; record?: ConfigRecord };
 const blank: ConfigFields = {
   code: "",
@@ -33,6 +37,7 @@ const blank: ConfigFields = {
   startsOn: "",
   endsOn: "",
   academicYearId: "",
+  termKind: null,
   valueType: "text",
   value: "",
 };
@@ -50,14 +55,24 @@ async function allYears(signal: AbortSignal) {
   }
 }
 export default function ConfigurationPage({ session }: { session: Session }) {
-  const [kind, setKind] = useState<ConfigKind>("academic-years");
+  const viewKey = `admin-configuration:${session.user.id}`;
+  const [saved] = useState(() => {
+    const stored = readAdminView(viewKey, {category:"academic-years", query:"", archived:false, offset:0});
+    const category = new URLSearchParams(window.location.hash.split("?")[1]).get("category");
+    return category && category !== stored.category ? {...stored, query:"", offset:0} : stored;
+  });
+  const [kind, setKind] = useState<ConfigKind>(() => {
+    const category = new URLSearchParams(window.location.hash.split("?")[1]).get("category") ?? saved.category;
+    return SETUP_KINDS.find(value => value === category) ?? "academic-years";
+  });
   const [list, setList] = useState<ConfigList | null>(null);
   const [years, setYears] = useState<ConfigRecord[]>([]);
   const [canManage, setCanManage] = useState(false);
-  const [includeArchived, setIncludeArchived] = useState(false);
-  const [search, setSearch] = useState(""),
-    [query, setQuery] = useState("");
-  const [offset, setOffset] = useState(0),
+  const [calendarReady, setCalendarReady] = useState(false);
+  const [includeArchived, setIncludeArchived] = useState<boolean>(saved.archived);
+  const [search, setSearch] = useState(saved.query),
+    [query, setQuery] = useState(saved.query);
+  const [offset, setOffset] = useState(saved.offset),
     [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false);
@@ -68,7 +83,8 @@ export default function ConfigurationPage({ session }: { session: Session }) {
     [reason, setReason] = useState("");
   const pending = useRef<{ signature: string; key: string } | null>(null);
   const busy = useRef(false);
-  const editorPanel = useRef<HTMLDivElement>(null);
+  const [uncertain, setUncertain] = useState(false);
+  useAdminView(viewKey, {category:kind, query, archived:includeArchived, offset}, !loading);
   useEffect(() => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -79,7 +95,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
         `configuration/${kind}?includeArchived=${includeArchived}&q=${encodeURIComponent(query)}&offset=${offset}`,
         { signal: controller.signal },
       ),
-      kind === "semesters" ? allYears(controller.signal) : Promise.resolve([]),
+      isPeriod(kind) ? allYears(controller.signal) : Promise.resolve([]),
     ])
       .then(([access, data, parents]) => {
         if (!active) return;
@@ -109,15 +125,6 @@ export default function ConfigurationPage({ session }: { session: Session }) {
       controller.abort();
     };
   }, [kind, includeArchived, query, offset, revision]);
-  useEffect(() => {
-    if (editor) {
-      editorPanel.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-      editorPanel.current?.focus({ preventScroll: true });
-    }
-  }, [editor]);
   function resetView() {
     setEditor(null);
     setError("");
@@ -139,15 +146,17 @@ export default function ConfigurationPage({ session }: { session: Session }) {
             startsOn: row.startsOn ?? "",
             endsOn: row.endsOn ?? "",
             academicYearId: row.academicYearId ?? "",
+            termKind: row.termKind ?? null,
             valueType: row.valueType ?? "text",
             value: row.value ?? "",
           }
-        : blank,
+        : { ...blank, academicYearId: years.find(y => y.working && !y.locked && !y.archived)?.id ?? "" },
     );
     setReason("");
     setError("");
     setNotice("");
     pending.current = null;
+    setUncertain(false);
     setEditor({ action, record: row });
   }
   async function save(event: FormEvent) {
@@ -158,7 +167,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
       data.startsOn = fields.startsOn;
       data.endsOn = fields.endsOn;
     }
-    if (kind === "semesters") data.academicYearId = fields.academicYearId;
+    if (kind === "semesters") { data.academicYearId = fields.academicYearId; data.termKind = fields.termKind; }
     if (kind === "settings") {
       data.valueType = fields.valueType;
       data.value = fields.value;
@@ -183,17 +192,18 @@ export default function ConfigurationPage({ session }: { session: Session }) {
         csrf: session.csrfToken,
         key: pending.current.key,
       });
+      setUncertain(false);
       setEditor(null);
       setNotice(`${result.name} saved.`);
       setLoading(true);
-      setList(null);
       setRevision((value) => value + 1);
       pending.current = null;
     } catch (failure) {
+      setUncertain(!(failure instanceof ApiError) || failure.status >= 500);
       setError(
         failure instanceof ApiError
           ? failure
-          : "The result could not be confirmed. Retry the same changes to safely check the result, or refresh the list.",
+          : "The result could not be confirmed. Retry the same changes to safely check the result, without changing or closing this form.",
       );
     } finally {
       busy.current = false;
@@ -205,11 +215,11 @@ export default function ConfigurationPage({ session }: { session: Session }) {
   }
   const editing = editor && ["create", "update"].includes(editor.action);
   return (
-    <>
+    <section className="admin-workspace">
       <div className="page-heading">
         <div>
           <div className="eyebrow">PROGRAM FOUNDATION</div>
-          <h1>Reference configuration</h1>
+          <h1>System configuration</h1>
           <p>
             Maintain the shared lists and academic periods used across scholar
             records.
@@ -225,7 +235,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
         </button>
       </div>
       <div className="configuration-tabs" aria-label="Reference categories">
-        {CONFIG_KINDS.map((item) => (
+        {SETUP_KINDS.map((item) => (
           <button
             className={item === kind ? "selected" : ""}
             aria-pressed={item === kind}
@@ -238,12 +248,15 @@ export default function ConfigurationPage({ session }: { session: Session }) {
               setOffset(0);
               setQuery("");
               setSearch("");
+              window.history.replaceState(null, "", `#configuration?category=${item}`);
             }}
           >
             {CONFIG_LABELS[item]}
           </button>
         ))}
       </div>
+      {kind === "academic-years" && !loading && <WorkingCalendar session={session} years={years} canManage={canManage} revision={revision} onReady={setCalendarReady} onSaved={refresh} />}
+      <p className="small">{kind === "academic-years" ? "Use one working academic year for both semesters. Earlier years stay available for historical records." : kind === "semesters" ? "Create the first and second semesters under the same academic year, with dates inside that year." : kind === "schools" || kind === "courses" ? "Add each choice once. Staff selects it when recording a scholar's academic details." : "Maintain the shared choices used by the workspace."}</p>
       <div className="configuration-toolbar">
         <form
           onSubmit={(event) => {
@@ -291,11 +304,11 @@ export default function ConfigurationPage({ session }: { session: Session }) {
         {canManage && (
           <button
             className="btn configuration-primary"
-            disabled={saving || loading}
+            disabled={saving || loading || (kind === "academic-years" && !calendarReady)}
             onClick={() => open("create")}
           >
             <Plus size={17} />
-            Add record
+            {kind === "academic-years" ? "Add academic year" : "Add record"}
           </button>
         )}
       </div>
@@ -324,29 +337,8 @@ export default function ConfigurationPage({ session }: { session: Session }) {
         </p>
       )}
       {editor && (
-        <div
-          className="info-panel configuration-editor"
-          ref={editorPanel}
-          tabIndex={-1}
-        >
-          <div className="section-heading">
-            <h2>
-              {editor.action === "create"
-                ? "Add record"
-                : editor.action === "update"
-                  ? "Edit record"
-                  : `${editor.action[0].toUpperCase() + editor.action.slice(1)} record`}
-            </h2>
-            <button
-              type="button"
-              className="icon-button"
-              disabled={saving}
-              onClick={() => setEditor(null)}
-              aria-label="Close editor"
-            >
-              <X size={20} />
-            </button>
-          </div>
+        <FocusedDialog title={editor.action === "create" ? `Add ${kind === "academic-years" ? "academic year" : kind === "semesters" ? "semester" : "record"}` : `${editor.action === "update" ? "Edit" : editor.action[0].toUpperCase()+editor.action.slice(1)} ${editor.record?.name ?? "record"}`} busy={saving || uncertain} onClose={() => setEditor(null)}>
+          <ErrorNotice error={error} />
           {!editing && (
             <p>
               <strong>
@@ -370,8 +362,8 @@ export default function ConfigurationPage({ session }: { session: Session }) {
               lock.
             </div>
           )}
-          <form onSubmit={save}>
-            <fieldset disabled={saving}>
+          <form id="configuration-editor-form" onSubmit={save}>
+            <fieldset disabled={saving || uncertain}>
               <div className="row g-3">
                 {editing && (
                   <>
@@ -426,7 +418,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                           {years
                             .filter(
                               (year) =>
-                                (!year.archived && !year.locked) ||
+                                (year.working !== false && !year.archived && !year.locked) ||
                                 year.id === fields.academicYearId,
                             )
                             .map((year) => (
@@ -442,6 +434,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                         </small>
                       </div>
                     )}
+                    {kind === "semesters" && <label className="col-md-6 form-label">Semester identity<select className="form-select" value={fields.termKind ?? ""} onChange={event => setFields(f => ({ ...f, termKind: (event.target.value || null) as ConfigFields["termKind"] }))}><option value="">Needs review</option><option value="first">First semester</option><option value="second">Second semester</option><option value="other">Summer / other</option></select></label>}
                     {isPeriod(kind) && (
                       <>
                         <div className="col-md-6">
@@ -480,7 +473,8 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                         </div>
                       </>
                     )}
-                    {kind === "settings" && (
+                    {kind === "settings" && fields.code === "PAYROLL_SIGNATORIES" && <SignatoryFields value={fields.value ?? ""} onChange={value=>change("value",value)} />}
+                    {kind === "settings" && fields.code !== "PAYROLL_SIGNATORIES" && (
                       <>
                         <div className="col-md-4">
                           <label className="form-label" htmlFor="config-type">
@@ -551,7 +545,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                     ? "Saving…"
                     : editor.action === "lock"
                       ? "Lock period"
-                      : "Save changes"}
+                      : editor.action === "archive" ? "Archive record" : editor.action === "restore" ? "Restore record" : editor.action === "create" ? "Add record" : "Save changes"}
                 </button>
                 <button
                   className="btn btn-outline-secondary"
@@ -563,12 +557,13 @@ export default function ConfigurationPage({ session }: { session: Session }) {
               </div>
             </fieldset>
           </form>
-        </div>
+          {uncertain && <div role="alert"><p>Result unconfirmed. Retry the same action before leaving.</p><button form="configuration-editor-form" className="btn configuration-primary" disabled={saving}>Retry the same action</button></div>}
+        </FocusedDialog>
       )}
       {loading && (
         <p role="status">Loading {CONFIG_LABELS[kind].toLowerCase()}…</p>
       )}
-      {!loading && list && (
+      {list && (
         <section
           className="info-panel configuration-list"
           aria-label={CONFIG_LABELS[kind]}
@@ -629,7 +624,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                             <span>to {row.endsOn}</span>
                           </>
                         ) : kind === "settings" ? (
-                          row.value
+                          row.code === "PAYROLL_SIGNATORIES" ? "Four payroll certification names and designations" : row.value
                         ) : row.archived ? (
                           "Retained for history"
                         ) : (
@@ -642,7 +637,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                             ? "Locked"
                             : row.archived
                               ? "Archived"
-                              : "Active"}
+                              : row.working ? "Working year" : row.working === false ? "Other year / history" : "Active"}
                         </span>
                         {row.parentUnavailable && (
                           <small>Academic year unavailable</small>
@@ -664,7 +659,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                                     Edit
                                   </button>
                                 )}
-                                <button
+                                {row.code !== "PAYROLL_SIGNATORIES" && <button
                                   className="btn btn-sm btn-outline-secondary"
                                   disabled={saving}
                                   onClick={() =>
@@ -677,7 +672,7 @@ export default function ConfigurationPage({ session }: { session: Session }) {
                                 >
                                   <Archive size={14} />
                                   {row.archived ? "Restore" : "Archive"}
-                                </button>
+                                </button>}
                                 {isPeriod(kind) && !row.archived && (
                                   <button
                                     className="btn btn-sm btn-outline-secondary"
@@ -729,6 +724,6 @@ export default function ConfigurationPage({ session }: { session: Session }) {
           </div>
         </section>
       )}
-    </>
+    </section>
   );
 }

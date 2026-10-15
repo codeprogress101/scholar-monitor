@@ -47,7 +47,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -481,6 +481,21 @@ try {
   pass(
     "No generic history overwrite/delete, runtime mutation grants, or CSRF bypass exists",
   );
+  const typedPersonResponse=await request("staff","/api/v1/scholars",{expectedVersion:0,reason:"Typed placement fixture",fields:{firstName:"Typed",lastName:"Placement",academicYearId:nextYear.id,contact:{}}});
+  assert.equal(typedPersonResponse.statusCode,200,typedPersonResponse.body);
+  const typedPath=`/api/v1/scholars/${typedPersonResponse.json().id}/academic-records`;
+  const typedBody={...body(nextYear.id),schoolId:"",courseId:"",schoolName:"Typed New College",courseName:"Typed New Degree"};
+  const typedKey=randomUUID();
+  const typed=await request("staff",typedPath,typedBody,typedKey);
+  assert.equal(typed.statusCode,200,typed.body);
+  assert.equal((await request("staff",typedPath,typedBody,typedKey)).statusCode,200);
+  const [[typedCount]]=await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM schools WHERE name='Typed New College'");
+  assert.equal(typedCount.n,1);
+  const failed=await request("staff",typedPath,{...typedBody,schoolName:"Must Roll Back School"});
+  assert.equal(failed.statusCode,409,failed.body);
+  const [[rolledBack]]=await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM schools WHERE name='Must Roll Back School'");
+  assert.equal(rolledBack.n,0);
+  pass("Typed school/course creation is atomic, audited and safe to retry without Administrator preconfiguration");
   if (process.argv.includes("--browser"))
     await config("schools", {
       code: "BROWSER-SCHOOL",

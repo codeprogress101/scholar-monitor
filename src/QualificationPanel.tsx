@@ -1,4 +1,6 @@
 import RoutineEvidence from "./RoutineEvidence";
+import { academicYears, newRecordYear } from "./academic-year-options";
+import { receivingToday } from "./receiving-selection";
 import RequirementInstances from "./RequirementInstances";
 import StatusPanel from "./StatusPanel";
 import {
@@ -12,6 +14,7 @@ import type { Access } from "../server/authorization/policy";
 import type { ConfigRecord } from "../server/configuration/model";
 import {
   STATUS_LABELS,
+  ADMISSION_LABELS,
   type QualificationAction,
   type QualificationDetail,
   type QualificationResult,
@@ -21,6 +24,7 @@ import { ApiError, type Session } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
 const labels: Record<QualificationAction | "create", string> = {
   create: "Create annual record",
+  validate: "Validate scholar",
   "exam-passed": "Record exam passed",
   qualify: "Confirm qualification",
   select: "Select scholar",
@@ -36,16 +40,27 @@ export default function QualificationPanel({
   session,
   access,
   years,
+  initialYearId = "",
+  registrationYearId = "",
+  onYearChange,
   showRequirements = true,
+  graduated = false,
 }: {
   scholarId: string;
   session: Session;
   access: Access;
   years: ConfigRecord[];
+  initialYearId?: string;
+  registrationYearId?: string;
+  onYearChange?: (yearId: string) => void;
   showRequirements?: boolean;
+  graduated?: boolean;
 }) {
   const [records, setRecords] = useState<ScholarshipRecord[]>([]),
     [detail, setDetail] = useState<QualificationDetail | null>(null);
+  const [currentYears, setCurrentYears] = useState(years);
+  const formRef = useRef<HTMLFormElement>(null);
+  const restoredYear = useRef(false);
   const [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
@@ -71,14 +86,23 @@ export default function QualificationPanel({
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    request<{ items: ScholarshipRecord[] }>(
+    Promise.all([request<{ items: ScholarshipRecord[] }>(
       `scholars/${scholarId}/scholarships`,
       { signal: controller.signal },
-    )
-      .then((data) => {
+    ), academicYears(controller.signal)])
+      .then(async ([data, freshYears]) => {
         if (active) {
           setRecords(data.items);
+          setCurrentYears(freshYears);
           setError("");
+          if (!restoredYear.current && initialYearId) {
+            const selected = data.items.find(r => r.academicYearId === initialYearId);
+            if (selected) {
+              const row = await request<QualificationDetail>(`scholarships/${selected.id}`, { signal: controller.signal });
+              if (active) setDetail(row);
+            }
+          }
+          if (active) restoredYear.current = true;
         }
       })
       .catch((error) => {
@@ -92,7 +116,10 @@ export default function QualificationPanel({
       controller.abort();
       invalidateOpen();
     };
-  }, [scholarId, revision, invalidateOpen]);
+  }, [scholarId, revision, invalidateOpen, initialYearId]);
+  useEffect(() => {
+    if (action) { formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); formRef.current?.querySelector<HTMLSelectElement | HTMLInputElement>("select, input")?.focus({ preventScroll: true }); }
+  }, [action]);
   async function open(id: string) {
     const token = ++generation.current;
     setLoading(true);
@@ -101,7 +128,7 @@ export default function QualificationPanel({
     setAction(null);
     try {
       const row = await request<QualificationDetail>("scholarships/" + id);
-      if (token === generation.current) setDetail(row);
+      if (token === generation.current) { setDetail(row); onYearChange?.(row.academicYearId); }
     } catch (error) {
       if (token === generation.current) setError(failureMessage(error));
     } finally {
@@ -109,21 +136,16 @@ export default function QualificationPanel({
     }
   }
   function begin(next: QualificationAction | "create") {
+    generation.current++;
+    if (next === "create") setDetail(null);
     setAction(next);
     setReason("");
     setReference("");
-    setYearId("");
+    setYearId(newRecordYear(currentYears, records.map(r => r.academicYearId), initialYearId, registrationYearId));
     setError("");
     setNotice("");
     pending.current = null;
-    setEffectiveOn(
-      new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Asia/Manila",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(new Date()),
-    );
+    setEffectiveOn(receivingToday());
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -138,6 +160,7 @@ export default function QualificationPanel({
       reason,
       reference,
       ...(action === "create" ? { academicYearId: yearId } : {}),
+      ...(action === "validate" ? { priorQualificationConfirmed: true } : {}),
     };
     const signature = JSON.stringify({ path, body });
     if (pending.current?.signature !== signature)
@@ -153,8 +176,9 @@ export default function QualificationPanel({
         key: pending.current.key,
       });
       pending.current = null;
+      onYearChange?.(action === "create" ? yearId : detail!.academicYearId);
       setAction(null);
-      setNotice(`${STATUS_LABELS[result.status]} recorded.`);
+      setNotice(`${ADMISSION_LABELS[result.status]} recorded.`);
       setDetail(null);
       try {
         setDetail(
@@ -174,17 +198,17 @@ export default function QualificationPanel({
       setSaving(false);
     }
   }
-  const choices = years.filter(
+  const choices = currentYears.filter(
     (year) =>
+      year.working !== false &&
       !year.archived &&
       !year.locked &&
       !records.some((record) => record.academicYearId === year.id),
   );
   const commands: QualificationAction[] = [];
   if (detail && !detail.periodUnavailable) {
-    if (canPrepare && detail.status === "applicant")
-      commands.push("exam-passed");
-    if (canApprove && detail.status === "exam_passed") commands.push("qualify");
+    if (canPrepare && ["applicant", "exam_passed"].includes(detail.status))
+      commands.push("validate");
     if (canApprove && detail.status === "qualified") commands.push("select");
     if (
       canApprove &&
@@ -200,7 +224,7 @@ export default function QualificationPanel({
       <div className="section-heading">
         <div>
           <div className="eyebrow">ANNUAL SCHOLARSHIP</div>
-          <h3>Qualification records</h3>
+          <h3>Scholarship validation & selection</h3>
         </div>
         <button
           type="button"
@@ -218,8 +242,7 @@ export default function QualificationPanel({
         </button>
       </div>
       <p>
-        Applicant → Exam Passed → Qualified → Selected. Selection does not make
-        a scholar Active or eligible for payout.
+        Validate the previously qualified scholar, then the Coordinator selects them. Masterlist publication and semester compliance follow separately.
       </p>
       {error && (
         <div className="alert alert-danger" role="alert">
@@ -238,23 +261,24 @@ export default function QualificationPanel({
             type="button"
             key={row.id}
             className="btn btn-outline-secondary"
-            disabled={loading || saving}
+            disabled={loading || saving || Boolean(action)}
             onClick={() => open(row.id)}
           >
-            {row.yearCode}: {STATUS_LABELS[row.status]}
+            {row.yearCode}: {ADMISSION_LABELS[row.status]}
           </button>
         ))}
         {canPrepare && !error && (
           <button
             type="button"
             className="btn configuration-primary"
-            disabled={loading || saving || !choices.length}
+            disabled={loading || saving || Boolean(action) || !choices.length}
             onClick={() => begin("create")}
           >
             Add academic year record
           </button>
         )}
       </div>
+      {!loading && !error && !choices.length && <p className="alert alert-info">No additional academic year is available. Open an existing record above; a scholar can have only one scholarship record per year.</p>}
       {!loading && !error && !records.length && (
         <p>
           No annual qualification records yet. A permanent scholar profile does
@@ -264,7 +288,7 @@ export default function QualificationPanel({
       {detail && (
         <div className="mb-3">
           <h4>
-            {detail.yearCode}: {STATUS_LABELS[detail.status]}
+            {detail.yearCode}: {ADMISSION_LABELS[detail.status]}
           </h4>
           <p>
             Effective {detail.lastEffectiveOn} · Version {detail.version}
@@ -275,12 +299,16 @@ export default function QualificationPanel({
               changes are blocked.
             </p>
           )}
-          {detail.status === "selected" && (
+          {detail.status === "selected" && !graduated && (
             <p className="alert alert-info">
-              Selection alone does not activate this record. See operational
-              status below.
+              Selected for masterlist preparation. Add this scholar to a draft for {detail.yearCode}, then complete review and publication to activate the scholarship.
+              {" "}<a href="#masterlists">Open Masterlists</a>
             </p>
           )}
+          {detail.status === "continuing" && <p className="alert alert-info">
+            {detail.continuingFromScholarshipId ? "Continuing from the prior academic year. Admission does not need to be repeated." : "Continuing admission accepted from a reviewed roster."}
+            {" "}Confirm this year's academic details and complete official masterlist publication before payroll.
+          </p>}
           {detail.status === "not_selected" && (
             <p className="alert alert-info">
               Not Selected is terminal for this academic year. Normal commands
@@ -288,8 +316,8 @@ export default function QualificationPanel({
             </p>
           )}
           {!canApprove &&
-            ["exam_passed", "qualified"].includes(detail.status) && (
-              <p>A Coordinator must record the next qualification decision.</p>
+            detail.status === "qualified" && (
+              <p className="alert alert-warning"><strong>Coordinator action required: Select scholar.</strong> <a href="#admissions">Open Admission review</a> to review multiple scholars.</p>
             )}
           {!action && (
             <div className="d-flex flex-wrap gap-2">
@@ -301,7 +329,7 @@ export default function QualificationPanel({
                   disabled={saving || loading}
                   onClick={() => begin(command)}
                 >
-                  {labels[command]}
+                  {labels[command]}{["qualify", "select", "not-select"].includes(command) ? " · Coordinator" : " · Staff / Coordinator"}
                 </button>
               ))}
             </div>
@@ -309,9 +337,11 @@ export default function QualificationPanel({
         </div>
       )}
       {action && (
-        <form onSubmit={submit} className="border rounded p-3 mb-3">
+        <form ref={formRef} onSubmit={submit} className="border rounded p-3 mb-3">
           <fieldset disabled={saving || loading}>
             <legend className="h5">{labels[action]}</legend>
+            {action === "create" && <p>Add this already-qualified scholar for validation. School, course and year level are recorded under Academic records.</p>}
+            {action === "validate" && <label className="d-block mb-3"><input type="checkbox" required /> I checked that this scholar already passed the LGU qualifying examination and completed qualification outside this system.</label>}
             {action === "not-select" && (
               <p className="alert alert-warning">
                 This ends qualification for this academic year. It cannot be
@@ -415,12 +445,12 @@ export default function QualificationPanel({
         />
       )}
       {detail && (
-        <div>
-          <h4>Qualification history</h4>
+        <details className="secondary-details">
+          <summary>Qualification history ({detail.events.length})</summary>
           <ol className="ps-3">
             {detail.events.map((event) => (
               <li key={event.id} className="mb-3">
-                <strong>{STATUS_LABELS[event.toStatus]}</strong> —{" "}
+                <strong>{event.action === "validate" ? "Validated — prior qualification confirmed" : STATUS_LABELS[event.toStatus]}</strong> —{" "}
                 {event.effectiveOn}
                 <div>
                   {event.actorName} ·{" "}
@@ -431,7 +461,7 @@ export default function QualificationPanel({
               </li>
             ))}
           </ol>
-        </div>
+        </details>
       )}
     </section>
   );

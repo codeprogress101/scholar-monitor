@@ -90,8 +90,8 @@ export async function testProfile(
     true,
   );
   const [requirements] = await c.admin.execute<RowDataPacket[]>(
-    "SELECT COUNT(*) AS n FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholarship_records r ON r.id=c.scholarship_record_id WHERE r.scholar_id=?",
-    [id],
+    "SELECT COUNT(*) AS n FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholarship_records r ON r.id=c.scholarship_record_id WHERE r.scholar_id=? OR EXISTS(SELECT 1 FROM scholar_semesters owner WHERE owner.id=c.scholar_semester_id AND owner.scholar_id=?)",
+    [id,id],
   );
   assert.equal(staff.totals.requirements, requirements[0].n);
   const audit = await get("staff", "?category=audit&limit=100");

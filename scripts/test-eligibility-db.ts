@@ -1,5 +1,8 @@
+import { testAutomaticPayroll } from "./test-automatic-payroll-scenarios.js";
+import { testMainPayroll } from "./test-main-payroll-scenarios.js";
 import { testAudit } from "./test-audit-scenarios.js";
 import { testDashboard } from "./test-dashboard-scenarios.js";
+import type { Dashboard } from "../server/dashboard/service.js";
 import { createDatabase } from "../server/database.js";
 import { testReports } from "./test-report-scenarios.js";
 import { testProfile } from "./test-profile-scenarios.js";
@@ -65,7 +68,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -105,6 +108,7 @@ try {
     "staff",
     "coordinator",
     "unassigned",
+    ...(process.argv.includes("--snapshot-performance") ? ["performance_1","performance_2","performance_3","performance_4","performance_5"] : []),
   ] as const) {
     const email = role + "@example.invalid",
       id = await auth.createAccount(
@@ -121,7 +125,7 @@ try {
     if (role !== "unassigned")
       await roles.setRoles({
         email,
-        roles: [role],
+        roles: [role.startsWith("performance_") ? "staff" : role as "system_admin" | "staff" | "coordinator"],
         expectedVersion: 2,
         requestId: randomUUID(),
         operator: "test-operator",
@@ -296,6 +300,17 @@ try {
   const path = `/api/v1/payout-cycles/${cycle.id}/scholarships/${annual.id}/eligibility`;
   const view = async () =>
     (await ok(request("staff", path))).json<EligibilityView>();
+  if (process.argv.includes("--dashboard")) {
+    const [before] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM requirement_instances");
+    const initial = (await ok(request("staff", `/api/v1/dashboard?cycleId=${cycle.id}`))).json<Dashboard>();
+    assert.equal(initial.cards.find(c => c.kind === "missing")?.counts.not_generated, cycle.requirements.length);
+    const sources = (await view()).current.sources;
+    assert.equal(sources.checklist, null);
+    assert.ok(sources.requirements.every(r => r.instanceId === null && r.status === null));
+    const [after] = await root.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM requirement_instances");
+    assert.deepEqual(after, before, "Reading Not Generated must not provision document instances");
+    pass("Dashboard Not Generated traces missing checklist/instances without provisioning records");
+  }
   const payload = (v: EligibilityView) => ({
     expectedRevision: v.latest?.revision ?? 0,
     expectedSourceHash: v.current.sourceHash,
@@ -532,6 +547,9 @@ try {
     cycleVersion: cycle.version,
     annualId: annual.id,
   };
+  if (process.argv.includes("--automatic-payroll")) await testAutomaticPayroll(ovrContext);
+  if (process.argv.includes("--main-payroll")) await testMainPayroll({ admin, runtime, actor: accounts.get("coordinator")!.id, request });
+  if (!process.argv.includes("--browser-release")) {
   const ovrTests = process.argv.includes("--ovr")
     ? await testOvrScenarios(ovrContext)
     : null;
@@ -1056,12 +1074,14 @@ try {
       ).json(),
       ovrTests.created,
     );
-    await ok(
-      request("coordinator", `/api/v1/payout-cycles/${cycle.id}/close`, {
+    expectError(
+      await request("coordinator", `/api/v1/payout-cycles/${cycle.id}/close`, {
         action: "close",
         expectedVersion: cycle.version + 1,
         ...evidence,
       }),
+      409,
+      "PAYOUT_CYCLE_UNFINISHED",
     );
     expectError(
       await request("staff", ovrTests.base, {
@@ -1072,7 +1092,7 @@ try {
       "PAYOUT_NOT_OPEN",
     );
     pass(
-      "F21 CSRF, locked/closed payout guards and exact historical command retries are enforced",
+      "F21 locked payout guards, unfinished-batch closure protection and exact historical retries are enforced",
     );
   }
   if (ovrTests && process.argv.includes("--browser")) {
@@ -1209,6 +1229,7 @@ try {
       assert.deepEqual(after[field], before[field], `Previous semester ${field} changed`);
     }
     pass("F36 New semester checklist preserves previous paid roster, outcomes, corrections and finalization history");
+  }
   }
   console.log(
     `All ${passed} eligibility scenarios passed in an isolated disposable database.`,

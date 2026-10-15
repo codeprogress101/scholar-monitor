@@ -1,3 +1,4 @@
+import PlacementInput, {placementValue} from "./PlacementInput";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Session } from "./auth-api";
 import type { Access } from "../server/authorization/policy";
@@ -36,11 +37,19 @@ export default function MasterlistAmendments({
   session,
   access,
   onOpen,
+  initialScholarId = "",
+  openInitialRequest = false,
+  onPublished,
+  onSaved,
 }: {
   detail: DraftDetail;
   session: Session;
   access: Access;
   onOpen: (id: string) => void;
+  initialScholarId?: string;
+  openInitialRequest?: boolean;
+  onPublished?: (id: string) => void;
+  onSaved?: () => void;
 }) {
   const [view, setView] = useState<AmendmentView | null>(null),
     [schools, setSchools] = useState<ConfigRecord[]>([]),
@@ -55,8 +64,8 @@ export default function MasterlistAmendments({
     id: string;
   }>(null);
   const [fields, setFields] = useState({
-    scholarId: "",
-    kind: "year_level_correction" as AmendmentKind,
+    scholarId: initialScholarId,
+    kind: (initialScholarId ? "course_shift" : "year_level_correction") as AmendmentKind,
     schoolId: "",
     courseId: "",
     yearLevel: "",
@@ -67,6 +76,7 @@ export default function MasterlistAmendments({
   });
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
+  const initialOpened=useRef(false);
   const can = (permission: string) =>
     access.permissions.some((p) => p.code === permission);
   useEffect(() => {
@@ -84,6 +94,12 @@ export default function MasterlistAmendments({
           setView(v);
           setSchools(s);
           setCourses(c);
+          const firstLoad=!initialOpened.current;
+          initialOpened.current=true;
+          if(openInitialRequest && initialScholarId && firstLoad && v.canRequest && !v.requests.some(q=>q.scholarId===initialScholarId && (!q.decision || (q.decision.action==="approve" && !q.publishedId))) && access.permissions.some(p=>p.code==="masterlists.amendments.request")) {
+            initialOpened.current=true;
+            setForm({action:"request",id:detail.id});
+          }
         }
       })
       .catch((e) => {
@@ -101,12 +117,12 @@ export default function MasterlistAmendments({
       active = false;
       controller.abort();
     };
-  }, [detail.id, detail.version, revision]);
+  }, [detail.id, detail.version, revision, initialScholarId, openInitialRequest, access.permissions]);
   function open(action: NonNullable<typeof form>["action"], id = detail.id) {
     setForm({ action, id });
     setFields({
-      scholarId: "",
-      kind: "year_level_correction",
+      scholarId: initialScholarId,
+      kind: initialScholarId ? "course_shift" : "year_level_correction",
       schoolId: "",
       courseId: "",
       yearLevel: "",
@@ -122,13 +138,14 @@ export default function MasterlistAmendments({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!form || busy.current) return;
+    const destination=(kind:"school"|"course",value:string,items:ConfigRecord[])=>Object.fromEntries(Object.entries(placementValue(value,items,kind)).filter(([,v])=>v!==""));
     const specific =
       fields.kind === "school_transfer"
-        ? { schoolId: fields.schoolId }
+        ? destination("school",fields.schoolId,schools)
         : fields.kind === "course_shift"
-          ? { courseId: fields.courseId }
+          ? destination("course",fields.courseId,courses)
           : fields.kind === "both"
-            ? { schoolId: fields.schoolId, courseId: fields.courseId }
+            ? {...destination("school",fields.schoolId,schools),...destination("course",fields.courseId,courses)}
             : fields.kind === "year_level_correction"
               ? { yearLevel: fields.yearLevel }
               : fields.kind === "award_number"
@@ -172,6 +189,8 @@ export default function MasterlistAmendments({
       );
       setLoading(true);
       setRevision((n) => n + 1);
+      onSaved?.();
+      if (result.masterlistId) (onPublished ?? onOpen)(result.masterlistId);
     } catch (e) {
       setError(
         e instanceof ApiError
@@ -192,7 +211,7 @@ export default function MasterlistAmendments({
     >
       <h3 className="h5">Amendments and official versions</h3>
       <p>
-        Correct one scholar per amendment. A different Coordinator approves
+        Correct one scholar per amendment. The Coordinator approves
         before publication creates a new locked version. Original releases and
         scholarship status remain unchanged.
       </p>
@@ -223,7 +242,7 @@ export default function MasterlistAmendments({
                 disabled={saving || loading || !!form || v.id === detail.id}
                 onClick={() => onOpen(v.id)}
               >
-                Open version {v.label}
+                Open version {v.label}{v.kind === "addition" ? " · Combined publication" : v.kind === "consolidation" ? " · Consolidated publication" : ""}
               </button>
             ))}
           </div>
@@ -254,7 +273,7 @@ export default function MasterlistAmendments({
                 disabled={saving || loading || !!form || !view.canRequest}
                 onClick={() => open("request")}
               >
-                Request official amendment
+                {initialScholarId ? "Request another change" : "Request official amendment"}
               </button>
             )}
           </div>
@@ -278,6 +297,7 @@ export default function MasterlistAmendments({
                       id={`amend-scholar-${detail.id}`}
                       className="form-select mb-3"
                       required
+                      disabled={Boolean(initialScholarId)}
                       value={fields.scholarId}
                       onChange={(e) =>
                         setFields({ ...fields, scholarId: e.target.value })
@@ -339,30 +359,7 @@ export default function MasterlistAmendments({
                       .filter((f) => f.show)
                       .map(({ key, label, items }) => (
                         <div key={key} className="mb-3">
-                          <label
-                            className="form-label"
-                            htmlFor={`amend-${key}-${detail.id}`}
-                          >
-                            {label}
-                          </label>
-                          <select
-                            className="form-select"
-                            id={`amend-${key}-${detail.id}`}
-                            required
-                            value={fields[key]}
-                            onChange={(e) =>
-                              setFields({ ...fields, [key]: e.target.value })
-                            }
-                          >
-                            <option value="">Select active reference</option>
-                            {items
-                              .filter((i) => !i.archived)
-                              .map((i) => (
-                                <option key={i.id} value={i.id}>
-                                  {i.code} - {i.name}
-                                </option>
-                              ))}
-                          </select>
+                          <PlacementInput id={`amend-${key}-${detail.id}`} label={label} items={items} value={fields[key]} onChange={value=>setFields({...fields,[key]:value})}/>
                         </div>
                       ))}
                     {fields.kind === "year_level_correction" && (
@@ -500,8 +497,8 @@ export default function MasterlistAmendments({
               </fieldset>
             </form>
           )}
-          {view.requests.map((q) => (
-            <article className="border rounded p-3 mb-3" key={q.id}>
+          {view.requests.filter(q=>!initialScholarId || q.scholarId===initialScholarId).map((q) => (
+            <article id={`request-${q.id}`} className="border rounded p-3 mb-3" key={q.id}>
               <h4 className="h6">
                 {labels[q.kind]} -{" "}
                 {q.publishedId
@@ -564,8 +561,7 @@ export default function MasterlistAmendments({
                               saving ||
                               loading ||
                               !!form ||
-                              !view.canRequest ||
-                              q.actorId === access.userId
+                              !view.canRequest 
                             }
                             onClick={() => open("approve", q.id)}
                           >

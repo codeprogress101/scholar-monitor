@@ -1,3 +1,10 @@
+import PayrollReprocessing from "./PayrollReprocessing";
+import PayrollFormLinks from "./PayrollFormLinks";
+import AutomaticPayrollDraft from "./AutomaticPayrollDraft";
+import SavedPayrollTable from "./SavedPayrollTable";
+import { useActionForm } from "./use-action-form";
+import PayrollCandidates from "./PayrollCandidates";
+import { payrollSelection, rememberPayroll } from "./payroll-navigation";
 import RoutineEvidence from "./RoutineEvidence";
 import ErrorNotice from "./ErrorNotice";
 import PaymentCorrections from "./PaymentCorrections";
@@ -22,14 +29,16 @@ export default function OvrDrafts({
   session: Session;
   permissions: string[];
 }) {
+  const focusTreasury=useRef(false);
   const [list, setList] = useState<{
+      managed?: boolean;
       cycle: PayoutCycle;
       items: OvrBatch[];
       total: number;
     } | null>(null),
     [offset, setOffset] = useState(0),
     [reload, setReload] = useState(0),
-    [selected, setSelected] = useState<string | null>(null),
+    [selected, updateSelected] = useState<string | null>(() => payrollSelection("cycle") === cycleId ? payrollSelection("batch") : null),
     [detail, setDetail] = useState<OvrDetail | null>(null),
     [error, setError] = useState<string | ApiError>(""),
     [notice, setNotice] = useState(""),
@@ -54,15 +63,25 @@ export default function OvrDrafts({
   >([]);
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
+  const setSelected = (id: string | null) => { rememberPayroll(cycleId, id); updateSelected(id); };
   const message = (e: unknown) =>
     e instanceof ApiError
       ? e
-      : "Could not confirm the OVR result. Refresh or retry the same command safely.";
+      : "Could not confirm the Payroll result. Refresh or retry the same command safely.";
+  const actionForm = useActionForm(action);
+  useEffect(() => {
+    const followLink = () => {
+      const next = payrollSelection("batch");
+      if(payrollSelection("cycle") === cycleId && next !== selected) {updateSelected(next);setDetail(null);setAction(null);}
+    };
+    window.addEventListener("hashchange",followLink);
+    return () => window.removeEventListener("hashchange",followLink);
+  },[cycleId,selected]);
   useEffect(() => {
     const c = new AbortController();
     let active = true;
     const timeout = window.setTimeout(() => c.abort(), 15000);
-    request<{ cycle: PayoutCycle; items: OvrBatch[]; total: number }>(
+    request<{ managed?: boolean; cycle: PayoutCycle; items: OvrBatch[]; total: number }>(
       `payout-cycles/${cycleId}/ovr-batches?offset=${offset}&limit=25`,
       { signal: c.signal },
     )
@@ -99,6 +118,12 @@ export default function OvrDrafts({
     };
   }, [selected, reload]);
   useEffect(() => {
+    if (!selected || action || saving || detail?.batch.state !== "draft") return;
+    const refreshDraft = () => { if (document.visibilityState === "visible") setReload(n => n + 1); };
+    window.addEventListener("focus", refreshDraft);
+    return () => window.removeEventListener("focus", refreshDraft);
+  }, [selected, action, saving, detail?.batch.state]);
+  useEffect(() => {
     if (action !== "add") return;
     const c = new AbortController();
     let active = true;
@@ -120,6 +145,7 @@ export default function OvrDrafts({
       window.clearTimeout(timeout);
     };
   }, [action, cycleId, search, candidateOffset, reload]);
+  useEffect(()=>{if(detail && focusTreasury.current){document.getElementById("treasury-search")?.focus();focusTreasury.current=false;}},[detail]);
   function refresh() {
     setDetail(null);
     setList(null);
@@ -144,6 +170,7 @@ export default function OvrDrafts({
         expectedRevision: action === "create" ? 0 : detail!.batch.revision,
         reason: String(f.get("reason")),
         reference: String(f.get("reference")),
+        ...((detail?.managed ?? detail?.automatic) ? { expectedSourceHash: (detail!.managed ?? detail!.automatic)!.sourceHash } : {}),
         ...(action === "create"
           ? {
               code: String(f.get("code")),
@@ -182,12 +209,12 @@ export default function OvrDrafts({
             ? "Draft validation passed. This batch is not finalized."
             : "Draft validation recorded issues. Review the roster below."
           : action === "finalize"
-            ? "OVR finalized. Membership and source evidence are frozen."
+            ? "Payroll finalized. Membership and source evidence are frozen."
             : action === "submit-review"
-              ? "OVR submitted for Coordinator review."
+              ? "Payroll submitted for Coordinator review."
               : action === "return-to-draft"
-                ? "OVR returned to Draft for corrections."
-                : "OVR draft change saved.",
+                ? "Payroll returned to Draft for corrections."
+                : "Payroll draft change saved.",
       );
       refresh();
     } catch (e) {
@@ -205,11 +232,11 @@ export default function OvrDrafts({
   return (
     <section
       className="card p-3 my-3"
-      aria-label="OVR draft batches"
+      aria-label="Payroll draft batches"
       style={{ overflowWrap: "anywhere" }}
     >
       <div className="d-flex justify-content-between flex-wrap gap-2">
-        <h2>OVR batches{list ? `: ${list.cycle.code}` : ""}</h2>
+        <h2>{selected ? "Selected payroll" : "Payroll batches"}</h2>
         <button
           className="btn btn-outline-secondary"
           disabled={saving}
@@ -218,18 +245,13 @@ export default function OvrDrafts({
             refresh();
           }}
         >
-          Refresh OVR drafts
+          Refresh
         </button>
       </div>
-      <p>
-        Build a payout roster from current eligible records. Documents, status,
-        official membership and unresolved overrides are checked again when
-        adding and validating entries. Draft validation does not finalize a
-        batch or authorize payment.
-      </p>
+      <p className="muted-line">{list?.managed ? "Choose a batch to review candidates and preview payroll." : "Legacy payroll is read-only. View history and original documents, or ask the Coordinator to review conversion to numbered payroll."}</p>
       <ErrorNotice error={error} />
       {!!issues.length && (
-        <ul aria-label="OVR validation errors">
+        <ul aria-label="Payroll validation errors">
           {issues.map((i, n) => (
             <li key={n}>
               {i.scholarshipId
@@ -242,19 +264,11 @@ export default function OvrDrafts({
       )}
       {notice && <p role="status">{notice}</p>}
       {!list ? (
-        <p>Loading OVR batches...</p>
+        <p>Loading Payroll batches...</p>
       ) : (
         <>
-          {list.cycle.state === "open" && !list.cycle.periodUnavailable && (
-            <button
-              className="btn configuration-primary align-self-start"
-              disabled={saving}
-              onClick={() => choose("create")}
-            >
-              Create OVR draft
-            </button>
-          )}
-          <ul className="my-3">
+          {!list.managed && <p role="status">New financial processing requires a numbered payroll. Historical corrections remain controlled and audited.</p>}
+          {!selected && <ul className="batch-list my-3">
             {list.items.map((b) => (
               <li key={b.id}>
                 <button
@@ -269,14 +283,14 @@ export default function OvrDrafts({
                     setReload((n) => n + 1);
                   }}
                 >
-                  Open OVR {b.code}
+                  Open Payroll {b.code}
                 </button>{" "}
                 — {b.name} ({b.state}, revision {b.revision})
               </li>
             ))}
-          </ul>
-          {!list.items.length && <p>No OVR batches for this cycle.</p>}
-          <div className="d-flex gap-2">
+          </ul>}
+          {!list.items.length && <p>No Payroll batches for this cycle.</p>}
+          <div className="d-flex gap-2" hidden={!!selected || list.total <= 25}>
             <button
               className="btn btn-outline-secondary"
               disabled={!offset || saving}
@@ -300,21 +314,28 @@ export default function OvrDrafts({
           </div>
         </>
       )}
+      {selected && <button className="btn btn-outline-secondary back-link" disabled={saving} onClick={() => { setSelected(""); setDetail(null); setAction(null); }}>Back to batches</button>}
       {selected && !detail && <p>Loading selected batch...</p>}
       {detail && (
         <section
           className="border-top mt-3 pt-3"
-          aria-label="Selected OVR draft"
+          aria-label="Selected Payroll draft"
         >
           <h3>
             {detail.batch.code} — {detail.batch.name}
           </h3>
           <p>
             {detail.batch.state} · revision {detail.batch.revision} ·{" "}
-            {detail.entries.length}{" "}
-            {detail.entries.length === 1 ? "entry" : "entries"}
+            {detail.managed ? `${detail.managed.form.rows.length} included in this draft` : `${detail.automatic?.form.rows.length ?? detail.entries.length} entries`}
           </p>
+          {(detail.managed || detail.finalization?.snapshot.payrollForm) && <PayrollCandidates detail={detail} session={session} canDefer={permissions.includes("ovr.finalize")} onSaved={refresh} />}
+          {detail.automatic && <AutomaticPayrollDraft detail={detail} />}
+          <PayrollReprocessing detail={detail} session={session} canManage={permissions.includes("ovr.finalize")} onSaved={refresh} />
+          {detail.finalization?.snapshot.legacyPayrollForm && <PayrollFormLinks batchId={detail.batch.id} draft={false} />}
+          {detail.finalization && <SavedPayrollTable detail={detail} />}
+          <details><summary>Source checks</summary>
           <p
+            hidden={Boolean(detail.automatic || detail.managed || detail.finalization?.snapshot.payrollForm)}
             className={`alert ${detail.validation.valid ? "alert-success" : "alert-warning"}`}
           >
             {detail.validation.valid
@@ -322,7 +343,7 @@ export default function OvrDrafts({
               : "Current sources need attention."}{" "}
             Checked {new Date(detail.validation.checkedAt).toLocaleString()}.
           </p>
-          {!!detail.validation.issues.length && (
+          {!detail.automatic && !detail.managed && !detail.finalization?.snapshot.payrollForm && !!detail.validation.issues.length && (
             <ul>
               {detail.validation.issues.map((i, n) => (
                 <li key={n}>
@@ -334,38 +355,42 @@ export default function OvrDrafts({
               ))}
             </ul>
           )}
+          </details>
           {detail.canEdit ? (
             <div className="d-flex gap-2 flex-wrap">
               <button
                 className="btn configuration-primary"
-                disabled={saving}
+                disabled={saving || Boolean(detail.automatic && !detail.automatic.form.rows.length) || Boolean(detail.managed && (!detail.managed.cutoffReached || detail.managed.pendingCount || !detail.managed.form.rows.length))}
                 onClick={() => choose("submit-review")}
               >
-                Submit OVR for review
+                Submit Payroll for review
               </button>
               <button
                 className="btn btn-outline-primary"
                 disabled={saving}
+                hidden={Boolean(detail.managed || detail.automatic)}
                 onClick={() => choose("add")}
               >
-                Add OVR entry
+                Add Payroll entry
               </button>
               <button
                 className="btn btn-outline-primary"
                 disabled={saving}
+                hidden={Boolean(detail.managed || detail.automatic)}
                 onClick={() => choose("validate")}
               >
                 Record draft validation
               </button>
             </div>
           ) : (
-            <p>
+            <p hidden={Boolean(detail.finalization)}>
               Membership changes require a Draft batch and an open, available
               payout cycle.
             </p>
           )}
           {detail.batch.state === "review" && (
-            <section aria-label="OVR review">
+            <section aria-label="Payroll review">
+              <p className="alert alert-warning"><strong>Coordinator action required: review and finalize this payroll.</strong> The Coordinator may finalize their own submitted batch. This approves the batch; it does not record payment.</p>
               <p>
                 Submitted by {detail.batch.submission?.actorName}. Membership is
                 locked during review.
@@ -379,26 +404,26 @@ export default function OvrDrafts({
                       disabled={saving}
                       onClick={() => choose("return-to-draft")}
                     >
-                      Return OVR to Draft
+                      Return Payroll to Draft
                     </button>
                     <button
                       className="btn btn-success"
                       disabled={
-                        saving ||
-                        detail.batch.submission?.actorId === session.user.id
+                        saving
                       }
                       onClick={() => choose("finalize")}
                     >
-                      Finalize OVR
+                      Finalize Payroll
                     </button>
                   </div>
                 )}
             </section>
           )}
+          {detail.finalization && <><details><summary>Finalization details</summary>
           {detail.finalization && (
             <section
               className="alert alert-info"
-              aria-label="Finalized OVR snapshot"
+              aria-label="Finalized Payroll snapshot"
             >
               <h4>Original finalized roster</h4>
               <p>
@@ -428,18 +453,23 @@ export default function OvrDrafts({
               </details>
             </section>
           )}
+          </details>
+          <details open={detail.batch.state !== "closed"}><summary>Payment processing</summary>
           {detail.finalization && (
             <OvrProcessingPanel
-              key={`${detail.batch.id}-${detail.batch.revision}`}
+              key={`processing-${detail.batch.id}-${detail.batch.revision}`}
+              onTreasurySaved={()=>{focusTreasury.current=true;refresh();}}
               detail={detail}
               session={session}
               permissions={permissions}
               onSaved={refresh}
             />
           )}
-          {detail.finalization && (
+          </details>
+          <details><summary>Amendments and payment corrections</summary>
+          {detail.finalization && !detail.finalization.snapshot.payrollForm && (
             <OvrAmendments
-              key={`${detail.batch.id}-${detail.batch.revision}`}
+              key={`amendments-${detail.batch.id}-${detail.batch.revision}`}
               detail={detail}
               session={session}
               permissions={permissions}
@@ -448,13 +478,16 @@ export default function OvrDrafts({
           )}
           {!!detail.payments.length && (
             <PaymentCorrections
-              key={`${detail.batch.id}-${detail.batch.revision}`}
+              key={`payment-corrections-${detail.batch.id}-${detail.batch.revision}`}
               detail={detail}
               session={session}
               permissions={permissions}
               onSaved={refresh}
             />
           )}
+          </details>
+          </>}
+          <details><summary>Entry evidence</summary>
           {detail.entries.map((entry) => (
             <article
               className="border rounded p-3 my-3"
@@ -468,7 +501,7 @@ export default function OvrDrafts({
                 Added at revision {entry.addedRevision}:{" "}
                 {entry.evidence.effective.label}.
               </p>
-              <p>
+              <p hidden={Boolean(detail.finalization?.snapshot.payrollForm)}>
                 Current assessment:{" "}
                 {
                   detail.validation.entries.find(
@@ -476,7 +509,7 @@ export default function OvrDrafts({
                   )?.evidence.effective.label
                 }
               </p>
-              {detail.canEdit && (
+              {detail.canEdit && !detail.managed && !detail.automatic && (
                 <button
                   className="btn btn-outline-danger"
                   disabled={saving}
@@ -488,8 +521,9 @@ export default function OvrDrafts({
               )}
             </article>
           ))}
+          </details>
           <details>
-            <summary>OVR draft history</summary>
+            <summary>Payroll draft history</summary>
             {detail.history.map((h) => (
               <p key={h.revision}>
                 Revision {h.revision}: {h.action}, {h.actorName},{" "}
@@ -505,10 +539,10 @@ export default function OvrDrafts({
         </section>
       )}
       {action && (
-        <form
+        <form ref={actionForm}
           onSubmit={submit}
           className="border-top mt-3 pt-3"
-          aria-label="OVR draft command"
+          aria-label="Payroll draft command"
           key={`${action}-${removeId}`}
         >
           <fieldset
@@ -516,23 +550,23 @@ export default function OvrDrafts({
           >
             <legend>
               {action === "create"
-                ? "Create OVR draft"
+                ? "Create Payroll draft"
                 : action === "add"
-                  ? "Add OVR entry"
+                  ? "Add Payroll entry"
                   : action === "remove"
-                    ? "Remove OVR entry"
+                    ? "Remove Payroll entry"
                     : action === "submit-review"
-                      ? "Submit OVR for review"
+                      ? "Submit Payroll for review"
                       : action === "return-to-draft"
-                        ? "Return OVR to Draft"
+                        ? "Return Payroll to Draft"
                         : action === "finalize"
-                          ? "Finalize OVR"
+                          ? "Finalize Payroll"
                           : "Record draft validation"}
             </legend>
             {action === "create" && (
               <>
                 <label className="form-label d-block">
-                  OVR batch code
+                  Payroll batch code
                   <input
                     name="code"
                     className="form-control"
@@ -542,7 +576,7 @@ export default function OvrDrafts({
                   />
                 </label>
                 <label className="form-label d-block">
-                  OVR batch name
+                  Payroll batch name
                   <input
                     name="name"
                     className="form-control"
@@ -573,7 +607,7 @@ export default function OvrDrafts({
                     setReload((n) => n + 1);
                   }}
                 >
-                  Search OVR candidates
+                  Search Payroll candidates
                 </button>
                 <label className="form-label d-block">
                   Scholarship record
@@ -602,7 +636,7 @@ export default function OvrDrafts({
                 ) : (
                   <p>
                     {candidates.total} matching records. Adding always rechecks
-                    the OVR rules.
+                    the Payroll rules.
                   </p>
                 )}
                 <div className="d-flex flex-wrap gap-2 mb-3">
@@ -633,8 +667,8 @@ export default function OvrDrafts({
                 </div>
               </>
             )}
-            <RoutineEvidence routine={action !== "return-to-draft"}><label className="form-label d-block">
-              OVR action reason
+            <RoutineEvidence routine={action !== "return-to-draft" && action !== "remove"}><label className="form-label d-block">
+              Payroll action reason
               <input
                 name="reason"
                 className="form-control"
@@ -644,7 +678,7 @@ export default function OvrDrafts({
               />
             </label>
             <label className="form-label d-block">
-              OVR action reference
+              Payroll action reference
               <input
                 name="reference"
                 className="form-control"
@@ -656,15 +690,15 @@ export default function OvrDrafts({
             <div className="d-flex gap-2 flex-wrap">
               <button className="btn configuration-primary">
                 {action === "finalize"
-                  ? "Confirm OVR finalization"
-                  : "Confirm OVR action"}
+                  ? "Confirm Payroll finalization"
+                  : "Confirm Payroll action"}
               </button>
               <button
                 type="button"
                 className="btn btn-outline-secondary"
                 onClick={() => setAction(null)}
               >
-                Dismiss OVR form
+                Dismiss Payroll form
               </button>
             </div>
           </fieldset>

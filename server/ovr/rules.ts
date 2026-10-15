@@ -21,7 +21,7 @@ export function requireDraft(state: string) {
     throw new AuthError(
       409,
       "OVR_NOT_DRAFT",
-      "Only a Draft OVR can change membership or record a draft validation.",
+      "Only a Draft Payroll can change membership or record a draft validation.",
     );
 }
 export function ovrEvidence(view: EligibilityView): OvrEvidence {
@@ -41,9 +41,11 @@ export function ovrEligibilityIssues(view: EligibilityView): OvrIssue[] {
     s = view.current.sources;
   const add = (code: string, message: string) =>
     issues.push({ code, message, scholarshipId: s.scholarship.id });
+  if (s.reservedSemester) add("SEMESTER_ALREADY_ALLOCATED", "An ordinary allocation already reserves this scholar and semester.");
+  for (const reason of s.semesterPayroll?.reasons ?? []) add(reason.code, reason.message);
   if (!view.effective.eligible) add("NOT_ELIGIBLE", view.effective.label);
-  if (s.scholarship.status !== "active")
-    add("INVALID_STATUS", "An OVR entry requires Active scholarship status.");
+  if (s.scholarship.status !== "active" && !(s.scholarship.status === "graduated" && s.finalSemesterGraduation && s.finalSemesterGraduation.semesterId === s.cycle.semesterId))
+    add("INVALID_STATUS", "An Payroll entry requires Active scholarship status.");
   if (!s.official.valid)
     add(
       "OFFICIAL_MEMBERSHIP_REQUIRED",

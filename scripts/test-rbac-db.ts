@@ -47,6 +47,7 @@ const password = "A long synthetic testing passphrase!";
 const origin = "http://127.0.0.1:3003";
 // Expected authority is independent of the seeded SQL; assert every permission for every role.
 const staff: PermissionCode[] = [
+  "continuing.prepare",
   "scholars.read",
   "scholars.export",
   "scholars.create",
@@ -70,6 +71,9 @@ const staff: PermissionCode[] = [
 const expected: Record<RoleCode | "unassigned", PermissionCode[]> = {
   staff,
   coordinator: [
+    "continuing.approve",
+    "semesters.configure",
+    "payroll.windows.manage",
     ...staff.filter((code) => code !== "audit.view_limited"),
     "academic.changes.approve",
     "requirements.waive",
@@ -103,7 +107,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -238,7 +242,7 @@ try {
     );
   }
   pass(
-    "148 direct API permission decisions match the complete role matrix; forged browser roles and actor IDs have no authority",
+    `${PERMISSION_CODES.length * Object.keys(expected).length} direct API permission decisions match the complete role matrix; forged browser roles and actor IDs have no authority`,
   );
   pass(
     "Staff cannot approve masterlists; Coordinator can; System Administrator cannot finalize OVR",

@@ -1,7 +1,7 @@
+import { readAdminView, useAdminView } from "./admin-view-state";
 import { useEffect, useState } from "react";
-import { Check, RefreshCw, ShieldCheck } from "lucide-react";
+import { RefreshCw, ShieldCheck } from "lucide-react";
 import { ApiError, type Session } from "./auth-api";
-import ExcelExport from "./ExcelExport";
 import type {
   Access,
   Permission,
@@ -31,6 +31,8 @@ async function readAccess<T>(path: string, signal: AbortSignal): Promise<T> {
   return body;
 }
 export default function AccessPage({ session }: { session: Session }) {
+  const viewKey = `admin-access:${session.user.id}`;
+  const [query, setQuery] = useState(() => readAdminView(viewKey,{query:""}).query);
   const [access, setAccess] = useState<Access | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [error, setError] = useState("");
@@ -81,11 +83,10 @@ export default function AccessPage({ session }: { session: Session }) {
     setError("");
     setRefresh((value) => value + 1);
   }
-  const groups = [
-    ...new Set(access?.permissions.map((permission) => permission.category)),
-  ];
+  useAdminView(viewKey, {query}, !loading);
+  const permissions = access?.permissions.filter(p => `${p.label} ${p.category} ${p.code}`.toLowerCase().includes(query.trim().toLowerCase())) ?? [];
   return (
-    <>
+    <section className="admin-workspace">
       <div className="page-heading">
         <div>
           <div className="eyebrow">YOUR ACCOUNT</div>
@@ -101,9 +102,6 @@ export default function AccessPage({ session }: { session: Session }) {
           Refresh access
         </button>
       </div>
-      {access?.permissions.some((p) => p.code === "audit.export") && (
-        <ExcelExport kind="audit" session={session} />
-      )}
       {loading && <p role="status">Loading your permissions…</p>}
       {error && (
         <div className="alert alert-danger" role="alert">
@@ -138,43 +136,16 @@ export default function AccessPage({ session }: { session: Session }) {
               )}
             </div>
           </section>
-          <div className="notice access-notice">
-            <ShieldCheck size={21} />
-            <div>
-              <strong>Permissions follow your role.</strong>
-              <span>
-                Scholarship approvals require a Coordinator assignment.
-                Capabilities below become available as their modules are
-                implemented.
-              </span>
-            </div>
-          </div>
-          <div className="row g-4">
-            {groups.map((group) => (
-              <section className="col-md-6" key={group}>
-                <div className="info-panel access-group">
-                  <h2>{group}</h2>
-                  <ul>
-                    {access.permissions
-                      .filter((permission) => permission.category === group)
-                      .map((permission) => (
-                        <li key={permission.code}>
-                          <Check size={16} />
-                          <span>{permission.label}</span>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              </section>
-            ))}
-          </div>
+          <p className="text-muted">Account and role changes use local administration commands.</p>
+          <section aria-label="Your permissions">
+            <label className="admin-search">Search permissions<input type="search" className="form-control" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Find an action or category" /></label>
+            <p role="status">{permissions.length} permitted actions</p>
+            <div className="table-responsive"><table className="table admin-table"><thead><tr><th>Action</th><th>Category</th></tr></thead><tbody>{permissions.map(p=><tr key={p.code}><td>{p.label.replace(/\bOVR\b/g,"Payroll")}</td><td>{p.category}</td></tr>)}</tbody></table></div>
+            {!permissions.length && <p>No permissions match this search.</p>}
+          </section>
           {catalog && (
-            <section
-              className="info-panel access-catalog"
-              aria-labelledby="role-directory"
-            >
-              <div className="eyebrow">ADMINISTRATION</div>
-              <h2 id="role-directory">Role directory</h2>
+            <details className="secondary-details access-catalog">
+              <summary>Role directory</summary>
               <p>
                 Review the authority assigned to each role. Account and role
                 changes currently use the local administration commands.
@@ -184,7 +155,7 @@ export default function AccessPage({ session }: { session: Session }) {
                   <div className="col-lg-4" key={role.code}>
                     <h3>{role.label}</h3>
                     <p>{role.description}</p>
-                    <ul>
+                    <details><summary>Allowed actions</summary><ul>
                       {catalog.permissions
                         .filter((permission) =>
                           catalog.grants.some(
@@ -194,16 +165,16 @@ export default function AccessPage({ session }: { session: Session }) {
                           ),
                         )
                         .map((permission) => (
-                          <li key={permission.code}>{permission.label}</li>
+                          <li key={permission.code}>{permission.label.replace(/\bOVR\b/g, "Payroll")}</li>
                         ))}
-                    </ul>
+                    </ul></details>
                   </div>
                 ))}
               </div>
-            </section>
+            </details>
           )}
         </>
       )}
-    </>
+    </section>
   );
 }

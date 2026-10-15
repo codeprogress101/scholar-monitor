@@ -24,7 +24,7 @@ const fields = z
           .object({ definitionVersionId: z.uuid(), allowWaiver: z.boolean() })
           .strict(),
       )
-      .min(1)
+      .min(0)
       .max(100)
       .refine(
         (items) =>

@@ -1,4 +1,5 @@
 import { validationDetails } from "../validation-details.js";
+import {placementReferences,hasPlacementReferences} from "./references.js";
 import { z } from "zod";
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
@@ -21,8 +22,7 @@ export function parseAcademicChange(raw: unknown) {
     .object({
       expectedVersion: z.number().int().min(0),
       kind: z.enum(CHANGE_KINDS),
-      schoolId: z.uuid(),
-      courseId: z.uuid(),
+      ...placementReferences,
       yearLevel: text(1, 60),
       effectiveOn: z.iso
         .date()
@@ -35,6 +35,7 @@ export function parseAcademicChange(raw: unknown) {
       remarks: text(0, 1000),
     })
     .strict()
+    .refine(hasPlacementReferences, "Provide school and course details.")
     .safeParse(raw);
   if (!parsed.success)
     throw new AuthError(

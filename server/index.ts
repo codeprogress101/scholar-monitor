@@ -12,6 +12,10 @@ try {
       ? { clientRoot: fileURLToPath(new URL("../client/", import.meta.url)) }
       : {}),
   });
+  if(config.DB_USER){
+    const readiness=await app.inject({method:"GET",url:"/api/v1/ready"});
+    if(readiness.statusCode!==200){await app.close();throw new Error("Release schema or required configuration is unavailable. Complete the reviewed migration rehearsal before starting this release.");}
+  }
   await app.listen({ host: config.HOST, port: config.PORT });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {

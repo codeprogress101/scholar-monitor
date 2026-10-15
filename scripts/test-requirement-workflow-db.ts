@@ -1,3 +1,5 @@
+import { RequirementWorkflowService } from "../server/requirements/workflow-service.js";
+import { testSemesterCoverage } from "./test-semester-coverage-scenarios.js";
 import type { VerificationContext } from "../server/requirements/workflow-model.js";
 import "dotenv/config";
 import assert from "node:assert/strict";
@@ -48,7 +50,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -222,6 +224,11 @@ try {
     "PERIOD",
     "ARCHIVE",
     "BROWSER",
+    "DIRECT",
+    "QUICK-COR",
+    "QUICK-COG",
+    "PREVIEW-COR",
+    "PREVIEW-COG",
   ]) {
     const d = (
       await ok(
@@ -286,8 +293,11 @@ try {
     (await list())
       .find((c) => c.id === checklist.id)!
       .items.find((i) => i.code === code)!;
-  for (const code of ["COR", "COG", "ROLLBACK", "PERIOD", "BROWSER"])
+  for (const code of ["COR", "COG", "ROLLBACK", "PERIOD", "BROWSER", "DIRECT"])
     await ok(request("staff", receiptPath(code), body));
+  const notificationList = async (role: string, mode="pending") => (await ok(request(role,`/api/v1/notifications?mode=${mode}&type=document`))).json<import("../server/notifications/service.js").NoticeList>();
+  assert.ok((await notificationList("staff")).items.some(n=>n.sourceId===instance("DIRECT").id));
+  assert.equal((await notificationList("system_admin")).total,0);
   for (const role of ["system_admin", "unassigned"]) {
     expectError(
       await request(
@@ -357,16 +367,89 @@ try {
       validity: true,
     },
   });
+  for (const code of ["QUICK-COR","QUICK-COG"]) {
+    const verification = command("verify",1,{document:evidence(await ctx(code)).document,attestation:"all-five-checked"});
+    const combined = {receipt:{...body,receivedOn:undefined},verification:{...verification,effectiveOn:undefined}}, url=actionPath(code,"receive-and-verify"), key=randomUUID();
+    for(const role of ["system_admin","unassigned"]) expectError(await request(role,url,combined),403,"PERMISSION_DENIED");
+    for(const permission of ["requirements.receive","requirements.verify"]){
+      await admin.execute("DELETE FROM role_permissions WHERE role_code='staff' AND permission_code=?",[permission]);
+      try{expectError(await request("staff",url,combined),403,"PERMISSION_DENIED");}finally{await admin.execute("INSERT INTO role_permissions(role_code,permission_code) VALUES('staff',?)",[permission]);}
+    }
+
+    expectError(await request("staff",url,{...combined,verification:{...verification,attestation:false}}),422,"VALIDATION_FAILED");
+    expectError(await request("staff",url,{...combined,verification:{...verification,document:{...evidence(await ctx(code)).document,scholarId:randomUUID()}}}),409,"REQUIREMENT_WRONG_SCHOLAR");
+    assert.equal((await current(code)).status,"not_submitted");
+    for(const event of ["requirements.received","requirements.workflow"]){
+      await admin.query(`CREATE TRIGGER fail_combined BEFORE INSERT ON audit_logs FOR EACH ROW BEGIN IF NEW.event_type='${event}' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'; END IF; END`);
+      try{assert.equal((await request("staff",url,combined,key)).statusCode,500);}finally{await admin.query("DROP TRIGGER fail_combined");}
+      assert.equal((await current(code)).receipt,null);
+      assert.equal((await current(code)).status,"not_submitted");
+    }
+    const race=await Promise.all([request("staff",url,combined,key),request("coordinator",url,combined)]);
+    assert.equal(race.filter(r=>r.statusCode===200).length,1);
+    const winner=race.find(r=>r.statusCode===200)!;
+    if(race[0].statusCode===200)assert.deepEqual((await ok(request("staff",url,combined,key))).json(),winner.json());
+    if(race[0].statusCode===200) {
+      const retryInstance=(await current(code)).id;
+      const NativeDate=Date;
+      const nextDay=NativeDate.now()+86400000;
+      try {
+        globalThis.Date=class extends NativeDate { constructor(value?:string|number){super(value ?? nextDay);} static now(){return nextDay;} } as DateConstructor;
+        const retry=await new RequirementWorkflowService(new AuthorizationService(runtime!)).receiveAndVerify(accounts.get("staff")!.id,retryInstance,key,combined,randomUUID());
+        assert.deepEqual(retry,winner.json());
+      } finally {globalThis.Date=NativeDate;}
+    }
+    const final=await current(code);
+    assert.equal(final.status,"verified");assert.equal(final.receipt!.receivedOn,day);
+    assert.equal(final.history.at(-1)!.details.attestation,"all-five-checked");
+    assert.equal(final.history.length,2);
+  }
+  pass("Combined receipt/verification enforces attestation and roles, rolls back both audit failures, rejects wrong identity, serializes races and preserves separate evidence");
+  const directBody = command("verify", 1, evidence(await ctx("DIRECT")));
+  for (const role of ["system_admin", "unassigned"]) expectError(await request(role, actionPath("DIRECT", "verify"), directBody), 403, "PERMISSION_DENIED");
+  const directKey = randomUUID();
+  await admin.query("CREATE TRIGGER fail_direct_review BEFORE INSERT ON audit_logs FOR EACH ROW BEGIN IF NEW.event_type='requirements.workflow' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'; END IF; END");
+  try { assert.equal((await request("staff", actionPath("DIRECT", "verify"), directBody, directKey)).statusCode, 500); }
+  finally { await admin.query("DROP TRIGGER fail_direct_review"); }
+  assert.equal((await current("DIRECT")).status, "submitted");
+  assert.equal((await current("DIRECT")).history.length, 0);
+  await ok(request("staff", actionPath("DIRECT", "verify"), directBody, directKey));
+  await ok(request("staff", actionPath("DIRECT", "verify"), directBody, directKey));
+  let direct = await current("DIRECT");
+  assert.equal(direct.status, "verified");
+  assert.equal(direct.history.length, 2);
+  assert.equal(direct.history[0].action, "send-for-verification");
+  assert.equal(direct.history[0].details.automaticRouting, true);
+  assert.equal(direct.history[0].fromStatus, "submitted");
+  assert.equal(direct.history[1].action, "verify");
+  await ok(request("staff", actionPath("DIRECT", "return-for-correction"), command("return-for-correction", 3, { correctionOf: direct.history[1].id })));
+  assert.ok((await notificationList("staff")).items.some(n=>n.sourceId===instance("DIRECT").id && n.state==="for_correction"));
+  await ok(request("staff", actionPath("DIRECT", "resubmit"), command("resubmit", 4, { physicalReference: null, storageLocation: "Synthetic corrected folder" })));
+  await ok(request("coordinator", actionPath("DIRECT", "verify"), command("verify", 5, evidence(await ctx("DIRECT")))));
+  assert.ok(!(await notificationList("staff")).items.some(n=>n.sourceId===instance("DIRECT").id));
+  assert.ok((await notificationList("staff","updates")).items.some(n=>n.sourceId===instance("DIRECT").id && n.action==="verify"));
+  pass("Document pending verification/correction uses Staff authority; Coordinator verification notifies receiver");
+  direct = await current("DIRECT");
+  assert.equal(direct.status, "verified");
+  assert.equal(direct.history.at(-2)!.fromStatus, "resubmitted");
+  assert.equal(direct.history.at(-1)!.action, "verify");
+  assert.ok(direct.receipt);
+  pass("Staff and Coordinator verify directly after receipt/resubmission with explicit checks, immutable history and safe retries");
+  const priorYear = await config("academic-years", { code: "COVERAGE-OLD", name: "Previous coverage year", startsOn: later(-400), endsOn: later(-100) });
+  const priorSem = await config("semesters", { code: "COVERAGE-OLD-SEM", name: "Previous completed semester", academicYearId: priorYear.id, startsOn: later(-200), endsOn: later(-101) });
+  const priorSchool = await config("schools", { code: "COVERAGE-OLD-SCHOOL", name: "Previous school" });
+  await ok(request("staff", `/api/v1/scholars/${person.id}/academic-records`, { academicYearId: priorYear.id, schoolId: priorSchool.id, courseId: course.id, yearLevel: "First year", reason: "Synthetic prior document placement", reference: "TEST" }));
+  await testSemesterCoverage({ admin, request, scholarId: person.id, semesterId: sem.id, priorSemesterId: priorSem.id, priorYearId: priorYear.id, corDefinition: instance("COR").definitionVersionId, cogDefinition: instance("COG").definitionVersionId, actorId: accounts.get("coordinator")!.id, day });
   const corContext = await ctx("COR"),
     corEvidence = evidence(corContext);
   expectError(
     await request(
       "staff",
       actionPath("COR", "verify"),
-      command("verify", 1, corEvidence),
+      command("verify", 1, { ...corEvidence, checks: { ...corEvidence.checks, validity: false } }),
     ),
-    409,
-    "INVALID_STATE_TRANSITION",
+    422,
+    "VALIDATION_FAILED",
   );
   expectError(
     await request("staff", actionPath("COR", "send-for-verification"), {
@@ -544,6 +627,9 @@ try {
   ).json<{ id: string; version: number }>();
   let cor = await current("COR");
   assert.equal(cor.status, "verified");
+  assert.equal(cor.receiptEvidence?.current?.sourceId, originalReceipt!.id);
+  assert.equal(cor.receiptEvidence?.current?.receivedOn, originalReceipt!.receivedOn);
+  assert.equal(cor.receiptEvidence?.current?.recordedAt, originalReceipt!.recordedAt);
   assert.equal(cor.satisfiesNormalRequirement, true);
   assert.equal(cor.history.at(-1)!.actorName, "Synthetic coordinator");
   assert.equal(
@@ -620,10 +706,10 @@ try {
     await request(
       "staff",
       actionPath("COR", "verify"),
-      command("verify", 5, corEvidence),
+      command("verify", 5, { ...corEvidence, checks: { ...corEvidence.checks, identity: false } }),
     ),
-    409,
-    "INVALID_STATE_TRANSITION",
+    422,
+    "VALIDATION_FAILED",
   );
   await ok(
     request(
@@ -643,6 +729,12 @@ try {
   assert.equal(cor.history.length, 6);
   assert.equal(cor.satisfiesNormalRequirement, true);
   assert.deepEqual(cor.receipt, originalReceipt);
+  const replacementReceipt = cor.history.find((e) => e.action === "resubmit")!;
+  assert.deepEqual(cor.receiptEvidence, { current: {
+    source: "resubmission", sourceId: replacementReceipt.id, version: replacementReceipt.version,
+    receivedOn: replacementReceipt.details.receipt!.receivedOn, physicalPrecision: "date",
+    recordedAt: replacementReceipt.recordedAt, recordedBy: replacementReceipt.actorName,
+  }, issue: null });
   assert.equal(
     cor.history.find((e) => e.action === "resubmit")!.details.receipt!
       .storageLocation,
@@ -754,6 +846,20 @@ try {
   pass(
     "Concurrent transitions have one winner and audit failures roll back event/state/receipt before safe retry",
   );
+  const beforeRecheck = await current("ROLLBACK");
+  expectError(await request("staff", actionPath("ROLLBACK", "verify"), command("verify", beforeRecheck.version, evidence(await ctx("ROLLBACK")))), 409, "VERIFICATION_CURRENT");
+  // Synthetic identity revision makes verification stale; no physical resubmission occurred.
+  await admin.execute("UPDATE scholars SET version=version+1 WHERE id=?", [(await ctx("ROLLBACK")).scholarId]);
+  const recheck = command("verify", beforeRecheck.version, evidence(await ctx("ROLLBACK"))), recheckKey = randomUUID();
+  expectError(await request("system_admin", actionPath("ROLLBACK", "verify"), recheck), 403, "PERMISSION_DENIED");
+  const rechecked = (await ok(request("staff", actionPath("ROLLBACK", "verify"), recheck, recheckKey))).json();
+  assert.deepEqual((await ok(request("staff", actionPath("ROLLBACK", "verify"), recheck, recheckKey))).json(), rechecked);
+  const afterRecheck = await current("ROLLBACK");
+  assert.equal(afterRecheck.history.at(-1)!.correctionOf, beforeRecheck.history.at(-1)!.id);
+  assert.deepEqual(afterRecheck.receiptEvidence, beforeRecheck.receiptEvidence);
+  assert.equal(afterRecheck.version, beforeRecheck.version + 1);
+  assert.deepEqual(afterRecheck.history.slice(0, -1), beforeRecheck.history);
+  pass("Stale verification recheck preserves original custody and prior events, links changed evidence, enforces roles and safely retries without fake resubmission");
   for (const sql of [
     "EXPLAIN UPDATE requirement_workflow_events SET to_status=to_status WHERE 1=0",
     "EXPLAIN DELETE FROM requirement_workflow_events WHERE 1=0",

@@ -4,6 +4,7 @@ export function registerConfiguration(
   app: FastifyInstance,
   service: ConfigurationService,
 ) {
+  app.get("/api/v1/academic-calendar", { config: { permission: "configuration.read" } }, request => service.calendar(request.authSession!.user.id));
   app.get<{ Params: { kind: string } }>(
     "/api/v1/configuration/:kind",
     { config: { permission: "configuration.read" } },

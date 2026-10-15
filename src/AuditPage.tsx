@@ -1,3 +1,5 @@
+import FocusedDialog from "./FocusedDialog";
+import { readAdminView, useAdminView } from "./admin-view-state";
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
@@ -16,9 +18,11 @@ const defaults = () => ({
   requestId: "",
 });
 export default function AuditPage({ session }: { session: Session }) {
-  const [filters, setFilters] = useState(defaults),
-    [applied, setApplied] = useState(defaults);
-  const [offset, setOffset] = useState(0),
+  const viewKey = `admin-audit:${session.user.id}`;
+  const [saved] = useState(()=>readAdminView(viewKey,{...defaults(),offset:0}));
+  const [filters, setFilters] = useState(()=>({...defaults(),...Object.fromEntries(Object.keys(defaults()).map(k=>[k,saved[k as keyof ReturnType<typeof defaults>]]))})),
+    [applied, setApplied] = useState(filters);
+  const [offset, setOffset] = useState(saved.offset),
     [reload, setReload] = useState(0);
   const [access, setAccess] = useState<Access | null>(null),
     [data, setData] = useState<AuditList | null>(null),
@@ -27,16 +31,7 @@ export default function AuditPage({ session }: { session: Session }) {
     [detailError, setDetailError] = useState(""),
     [selected, setSelected] = useState("");
   const generation = useRef(0);
-  const detailPanel = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (selected) {
-      detailPanel.current?.scrollIntoView({
-        block: "start",
-        behavior: "smooth",
-      });
-      detailPanel.current?.focus({ preventScroll: true });
-    }
-  }, [selected]);
+  useAdminView(viewKey, {...applied, offset}, !!data);
   const canRead = access?.permissions.some(
     (p) => p.code === "audit.view_all" || p.code === "audit.view_limited",
   );
@@ -106,7 +101,7 @@ export default function AuditPage({ session }: { session: Session }) {
     }
   }
   return (
-    <section aria-labelledby="audit-title">
+    <section className="admin-workspace" aria-labelledby="audit-title">
       <header className="d-flex justify-content-between gap-3 mb-4">
         <div>
           <p className="eyebrow">Accountability</p>
@@ -216,7 +211,7 @@ export default function AuditPage({ session }: { session: Session }) {
                 <table className="table" style={{ minWidth: 700 }}>
                   <thead>
                     <tr>
-                      <th scope="col">Time</th>
+                      <th scope="col">Time (Manila)</th>
                       <th scope="col">Event</th>
                       <th scope="col">Action</th>
                       <th scope="col">Actor role at event</th>
@@ -226,7 +221,7 @@ export default function AuditPage({ session }: { session: Session }) {
                   <tbody>
                     {data.items.map((e) => (
                       <tr key={e.id}>
-                        <td>{new Date(e.occurredAt).toLocaleString()}</td>
+                        <td>{new Date(e.occurredAt).toLocaleString("en-PH",{timeZone:"Asia/Manila"})}</td>
                         <td>{e.eventType}</td>
                         <td>{e.action}</td>
                         <td>
@@ -277,25 +272,7 @@ export default function AuditPage({ session }: { session: Session }) {
             </div>
           )}
           {selected && (
-            <article
-              ref={detailPanel}
-              tabIndex={-1}
-              className="card p-3 mt-3"
-              aria-label="Audit event details"
-            >
-              <div className="d-flex justify-content-between">
-                <h2>Event details</h2>
-                <button
-                  className="btn btn-outline-secondary"
-                  onClick={() => {
-                    generation.current++;
-                    setSelected("");
-                    setDetail(null);
-                  }}
-                >
-                  Close details
-                </button>
-              </div>
+            <FocusedDialog title="Event details" onClose={()=>{generation.current++;setSelected("");setDetail(null);}}>
               {detailError ? (
                 <p role="alert" className="alert alert-danger">
                   {detailError}
@@ -304,19 +281,22 @@ export default function AuditPage({ session }: { session: Session }) {
                 <p>Loading event...</p>
               ) : (
                 <>
+                  <dl className="admin-facts">
+                    <div><dt>Action</dt><dd>{detail.action}</dd></div>
+                    <div><dt>Event</dt><dd>{detail.eventType}</dd></div>
+                    <div><dt>Time (Manila)</dt><dd>{new Date(detail.occurredAt).toLocaleString("en-PH",{timeZone:"Asia/Manila"})}</dd></div>
+                    <div><dt>Actor ID</dt><dd>{detail.actorId ?? detail.actorKind}</dd></div>
+                    <div><dt>Reason</dt><dd>{detail.reason ?? "Not recorded"}</dd></div>
+                  </dl>
+                  <details><summary>Technical details</summary>
                   <dl className="text-break">
                     {Object.entries({
-                      Event: detail.eventType,
-                      Action: detail.action,
-                      Time: new Date(detail.occurredAt).toLocaleString(),
-                      "Actor ID": detail.actorId ?? detail.actorKind,
                       "Roles at event":
                         detail.actorRoles?.join(", ") ??
                         "Not recorded for historical event",
                       "Record type": detail.entityType,
                       "Record ID": detail.entityId,
                       "Request ID": detail.requestId,
-                      Reason: detail.reason ?? "Not recorded",
                       "From state": detail.context.fromState ?? "Not recorded",
                       "To state": detail.context.toState ?? "Not recorded",
                       "Academic year ID":
@@ -334,6 +314,7 @@ export default function AuditPage({ session }: { session: Session }) {
                       </div>
                     ))}
                   </dl>
+                  </details>
                   <details>
                     <summary>Recorded change and supporting evidence</summary>
                     <p>
@@ -352,7 +333,7 @@ export default function AuditPage({ session }: { session: Session }) {
                   </details>
                 </>
               )}
-            </article>
+            </FocusedDialog>
           )}
           {access?.permissions.some((p) => p.code === "audit.export") && (
             <ExcelExport session={session} kind="audit" />

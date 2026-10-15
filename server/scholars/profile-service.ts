@@ -1,3 +1,4 @@
+import { lineage } from "../masterlists/revisions.js";
 import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
@@ -265,11 +266,7 @@ export class ScholarProfileService {
           );
           const effectiveIds = new Set<string>();
           for (const a of activations) {
-            const chain = await rows(
-              "SELECT masterlist_id FROM masterlist_amendment_versions WHERE root_id=? ORDER BY revision DESC LIMIT 1 LOCK IN SHARE MODE",
-              [a.masterlist_id],
-            );
-            effectiveIds.add(chain[0]?.masterlist_id ?? a.masterlist_id);
+            effectiveIds.add((await lineage(db, a.masterlist_id)).latestId);
           }
           for (const r of publications) {
             const snapshot = decode<OfficialSnapshot>(r.snapshot),
@@ -313,7 +310,7 @@ export class ScholarProfileService {
               add(
                 "payout",
                 `${b.id}-${h.revision}`,
-                `OVR ${h.action}`,
+                `Payroll ${h.action}`,
                 `${b.code}: ${h.state} (batch lifecycle event)`,
                 h.recordedAt,
                 h.actorName,
@@ -329,7 +326,7 @@ export class ScholarProfileService {
               id: b.id,
               category: "payout",
               label: b.code,
-              detail: `OVR ${batch.state}; ${member ? "in effective frozen roster" : "historical or draft membership"}`,
+              detail: `Payroll ${batch.state}; ${member ? "in effective frozen roster" : "historical or draft membership"}`,
               version: batch.revision,
               current: member,
               at: batch.recordedAt,
@@ -342,7 +339,7 @@ export class ScholarProfileService {
                 "payout",
                 p.id,
                 "Original payment",
-                `${b.code}: ${p.outcome} ${p.amount}; effective ${p.effectiveOn}. ${p.reference} — ${p.remarks}`,
+                `${b.code}: ${p.outcome} ${p.amount}; effective ${p.effectiveOn ?? "actual payment date unknown"}. ${p.reference} — ${p.remarks}`,
                 p.recordedAt,
                 p.actorName,
                 p.revision,

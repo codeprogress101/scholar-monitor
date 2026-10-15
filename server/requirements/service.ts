@@ -19,6 +19,7 @@ function view(r: RowDataPacket): RequirementVersion {
     code: r.code,
     revision: r.revision,
     name: r.name,
+    documentKind: r.document_kind ?? null,
     instructions: r.instructions,
     appliesTo: r.applies_to,
     semesterId: r.semester_id,
@@ -221,6 +222,7 @@ export class RequirementService {
           input.action === "archive"
             ? {
                 name: before!.name,
+                documentKind: before!.documentKind,
                 instructions: before!.instructions,
                 appliesTo: before!.appliesTo,
                 semesterId: before!.semesterId,
@@ -268,7 +270,7 @@ export class RequirementService {
             [definitionId, code],
           );
         await db.execute(
-          "INSERT INTO requirement_definition_versions(id,definition_id,revision,name,instructions,applies_to,semester_id,semester_code,semester_name,effective_from,effective_until,active,reason,reference_text,actor_id,actor_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))",
+          "INSERT INTO requirement_definition_versions(id,definition_id,revision,name,instructions,applies_to,semester_id,semester_code,semester_name,effective_from,effective_until,active,reason,reference_text,actor_id,actor_name,document_kind,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))",
           [
             versionId,
             definitionId,
@@ -288,6 +290,7 @@ export class RequirementService {
             input.reference,
             actor,
             users[0].full_name,
+            fields.documentKind === undefined ? before?.documentKind ?? null : fields.documentKind,
           ],
         );
         const [saved] = await db.execute<RowDataPacket[]>(

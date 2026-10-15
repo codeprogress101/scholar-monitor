@@ -12,6 +12,8 @@ export function registerOvrProcessing(
     "mark-processed",
     "record-payment",
     "close",
+    "hold",
+    "release-hold",
   ] as const)
     app.post<{ Params: { id: string } }>(
       `/api/v1/ovr-batches/:id/${action === "record-payment" ? "payments" : action}`,

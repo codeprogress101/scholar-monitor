@@ -25,6 +25,8 @@ const schema = z
       .default("ldss_scholar_monitor_dev"),
     DB_USER: z.string().min(1).optional(),
     DB_PASSWORD: z.string().optional(),
+    BACKUP_STATUS_FILE: z.string().min(1).optional(),
+    TRUST_LOOPBACK_PROXY: z.enum(["true", "false"]).default("false").transform(value => value === "true"),
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(120).default(30),
     SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(24).default(8),
   })

@@ -17,12 +17,14 @@ const suites = [
   [
     "Finalization, payments and corrections",
     "scripts/test-eligibility-db.ts",
-    "--payments",
+    "--main-payroll",
+    "--reprocessing",
   ],
   [
     "Roster amendment approval races",
     "scripts/test-eligibility-db.ts",
-    "--amendments",
+    "--main-payroll",
+    "--legacy-containment",
   ],
 ];
 for (const [label, ...args] of suites) {

@@ -47,7 +47,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -292,6 +292,19 @@ try {
     1,
   );
   const first = await ok(provision());
+  // An open financial cycle can outlive its semester. It stays available for
+  // explicit historical work, but must not displace current receiving.
+  try {
+    await root.execute("UPDATE semesters SET starts_on=?,ends_on=? WHERE id=?", [later(-25), later(-1), sem.id]);
+    const historical = (await periods()).items.find(p => p.id === cycle.id);
+    assert.ok(historical);
+    assert.equal(historical.preferred, false);
+    assert.equal(historical.canProvision, true);
+  } finally {
+    await root.execute("UPDATE semesters SET starts_on=?,ends_on=? WHERE id=?", [day, later(100), sem.id]);
+  }
+  assert.equal((await periods()).items.find(p => p.id === cycle.id)?.preferred, true);
+  pass("Open payout in an ended semester stays accessible but is not the default receiving period");
   const repeated = await Promise.all([provision(), provision(), provision()]);
   for (const response of repeated)
     assert.equal(response.statusCode, 200, response.body);
@@ -574,6 +587,12 @@ try {
     await finished;
     await fixture.close();
   }
+  const retained = (await list()).items;
+  const newWorking = await config("academic-years", { code: "WORKING-OTHER", name: "Working year for navigation", startsOn: day, endsOn: later(300) });
+  await config("settings", { code: "LDSS_WORKING_ACADEMIC_YEAR", name: "Working academic year", valueType: "text", value: newWorking.id });
+  assert.equal((await periods()).items.some(p => p.preferred || p.canProvision), false);
+  assert.deepEqual((await list()).items, retained);
+  pass("Designated working year excludes other calendars from daily receiving while saved document history remains intact");
   await ok(
     request("system_admin", `/api/v1/configuration/academic-years/${year.id}`, {
       action: "lock",

@@ -1,3 +1,7 @@
+import PlacementPolicyReview from "./PlacementPolicyReview";
+import PlacementInput, {placementValue} from "./PlacementInput";
+import ScholarOfficialChange from "./ScholarOfficialChange";
+import { useActionForm } from "./use-action-form";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Session } from "./auth-api";
 import type { Access } from "../server/authorization/policy";
@@ -36,6 +40,7 @@ export default function AcademicChanges({
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true);
+  const [officialChange,setOfficialChange]=useState(false);
   const [form, setForm] = useState<null | {
     action: "request" | "approve" | "reject" | "cancel";
     target: string;
@@ -56,6 +61,7 @@ export default function AcademicChanges({
     canApprove = access.permissions.some(
       (p) => p.code === "academic.changes.approve",
     );
+  const actionForm = useActionForm(form);
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -88,8 +94,8 @@ export default function AcademicChanges({
     if (!view) return;
     setFields({
       kind: "course_shift",
-      schoolId: view.current.schoolId,
-      courseId: view.current.courseId,
+      schoolId: view.current.school.name,
+      courseId: view.current.course.name,
       yearLevel: view.current.yearLevel,
       effectiveOn: "",
       reason: "",
@@ -106,7 +112,7 @@ export default function AcademicChanges({
     if (!form || !view || saving.current) return;
     const body =
       form.action === "request"
-        ? { ...fields, expectedVersion: view.version }
+        ? { ...fields, ...(fields.schoolId===view.current.school.name ? {schoolId:view.current.schoolId} : placementValue(fields.schoolId,schools,"school")), ...(fields.courseId===view.current.course.name ? {courseId:view.current.courseId} : placementValue(fields.courseId,courses,"course")), expectedVersion: view.version }
         : { reason: fields.reason, reference: fields.reference };
     const path =
       form.action === "request"
@@ -145,8 +151,9 @@ export default function AcademicChanges({
   return (
     <div className="border-top mt-3 pt-3">
       <h5>Placement changes</h5>
-      <p>
-        A different Coordinator approves each request. Year-level corrections
+      {view && canApprove && <PlacementPolicyReview id={id} view={view} schools={schools} courses={courses} session={session}/>}
+      <p className="alert alert-info py-2">
+        The Coordinator approves each request. Year-level corrections
         are recorded separately from transfers and shifts.
       </p>
       {error && (
@@ -179,19 +186,24 @@ export default function AcademicChanges({
           <button
             className="btn btn-sm configuration-primary"
             type="button"
-            disabled={busy || loading || !view || view.unavailable || !!form}
-            onClick={() => open("request")}
+            disabled={busy || loading || !view || (view.unavailable && view.blockedReason !== "official_membership") || !!form}
+            onClick={() => view?.officialMasterlist ? setOfficialChange(true) : open("request")}
           >
-            Request academic change
+            Record transfer / course shift
           </button>
         )}
       </div>
+      {officialChange && view?.officialMasterlist && <><button type="button" className="btn btn-sm btn-outline-secondary" onClick={()=>setOfficialChange(false)}>Close official change workflow</button><ScholarOfficialChange masterlistId={view.officialMasterlist.id} scholarId={view.scholarId} session={session} access={access} onSaved={()=>{setRevision(n=>n+1);onSaved();}}/></>}
       {view?.unavailable && (
-        <p>
-          Placement changes are unavailable for this locked, archived, or
-          official record. Changes to approved or published membership require a
-          masterlist amendment.
-        </p>
+        <div className="alert alert-info">
+          {view.blockedReason === "year_locked" ? <p>This academic year is locked. Academic changes are closed for both Staff and Coordinator.</p>
+            : view.blockedReason === "year_archived" ? <p>This academic year is archived. Its academic records are retained as history.</p>
+            : view.officialMasterlist ? <>
+              <p>This scholar belongs to the {view.officialMasterlist.status} masterlist <strong>{view.officialMasterlist.title}</strong>. Correct this official record through a masterlist amendment.</p>
+              <p>{view.officialMasterlist.status === "published" ? "The Coordinator must lock this published masterlist first (not the academic year). Then request, approve and publish the correction under Official versions & amendments." : view.officialMasterlist.status === "approved" ? "Complete publication and lock the masterlist before requesting an official amendment." : "Staff can request the amendment. The Coordinator can request and approve it, then publish the corrected version."} Earlier published versions remain in history.</p>
+              <a className="btn btn-sm btn-outline-primary" href={`#masterlists?draft=${encodeURIComponent(view.officialMasterlist.id)}&amendments=1`}>Open masterlist correction workflow</a>
+            </> : <><p>This scholarship has an operational standing, so direct academic changes are protected. Review its official masterlist before correcting the placement.</p><a href="#masterlists">Review masterlists</a></>}
+        </div>
       )}
       {view && (
         <p>
@@ -202,7 +214,7 @@ export default function AcademicChanges({
         </p>
       )}
       {form && view && (
-        <form onSubmit={submit} className="border rounded p-3 mb-3">
+        <form ref={actionForm} onSubmit={submit} className="border rounded p-3 mb-3">
           <fieldset disabled={busy || loading}>
             <legend className="h6">
               {form.action === "request"
@@ -234,8 +246,8 @@ export default function AcademicChanges({
                         setFields({
                           ...fields,
                           kind: e.target.value,
-                          schoolId: view.current.schoolId,
-                          courseId: view.current.courseId,
+                          schoolId: view.current.school.name,
+                          courseId: view.current.course.name,
                           yearLevel: view.current.yearLevel,
                         })
                       }
@@ -268,32 +280,7 @@ export default function AcademicChanges({
                     .filter((f) => f.enabled)
                     .map(({ key, label, items }) => (
                       <div className="col-md-6" key={key}>
-                        <label className="form-label" htmlFor={`${key}-${id}`}>
-                          {label}
-                        </label>
-                        <select
-                          id={`${key}-${id}`}
-                          className="form-select"
-                          required
-                          value={fields[key]}
-                          onChange={(e) =>
-                            setFields({ ...fields, [key]: e.target.value })
-                          }
-                        >
-                          <option value="">Select {label.toLowerCase()}</option>
-                          {!items.some((i) => i.id === view.current[key]) && (
-                            <option value={view.current[key]}>
-                              Current historical reference
-                            </option>
-                          )}
-                          {items
-                            .filter((i) => !i.archived)
-                            .map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.code} - {i.name}
-                              </option>
-                            ))}
-                        </select>
+                        <PlacementInput id={`${key}-${id}`} label={label} items={items} value={fields[key]} onChange={value=>setFields({...fields,[key]:value})}/>
                       </div>
                     ))}
                   {fields.kind === "year_level_correction" && (
@@ -399,11 +386,11 @@ export default function AcademicChanges({
       )}
       {view?.requests.length === 0 && <p>No academic changes recorded.</p>}
       {view?.requests.map((q) => (
-        <article className="border rounded p-3 mb-2" key={q.id}>
-          <h6>
+        <details id={`request-${q.id}`} className="border rounded p-3 mb-2" key={q.id} open={!q.decision || new URLSearchParams(window.location.hash.split("?")[1]).get("request") === q.id}>
+          <summary>
             {kinds[q.kind as keyof typeof kinds]} ·{" "}
             {q.decision?.action ?? "Pending approval"}
-          </h6>
+          </summary>
           <p>
             <strong>Before:</strong> {placement(q.before)}
             <br />
@@ -449,8 +436,7 @@ export default function AcademicChanges({
                         loading ||
                         !!form ||
                         view.unavailable ||
-                        q.expectedVersion !== view.version ||
-                        q.actorId === access.userId
+                        q.expectedVersion !== view.version 
                       }
                       onClick={() => open("approve", q.id)}
                     >
@@ -477,7 +463,7 @@ export default function AcademicChanges({
               </div>
             </>
           )}
-        </article>
+        </details>
       ))}
     </div>
   );

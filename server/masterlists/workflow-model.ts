@@ -12,7 +12,11 @@ export type OfficialSnapshot = {
   lineage?: {
     rootId: string;
     parentId: string;
-    amendmentId: string;
+    amendmentId?: string;
+    kind?: "amendment" | "addition" | "consolidation";
+    sourcePublicationId?: string;
+    sourcePublicationHash?: string;
+    sourceDraftId?: string;
     versionLabel: string;
   };
   masterlistId: string;

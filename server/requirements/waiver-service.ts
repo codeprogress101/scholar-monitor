@@ -1,3 +1,5 @@
+import { requireActiveDocument } from "./reused-source.js";
+import { semesterRequirementContext } from "./semester-context.js";
 import { guardPayoutRequirement } from "../payouts/service.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -12,7 +14,7 @@ import {
 } from "./waiver-validation.js";
 async function base(db: PoolConnection, id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=s.academic_year_id WHERE i.id=? FOR UPDATE",
+    "SELECT c.scholar_semester_id,s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=s.academic_year_id WHERE i.id=? FOR UPDATE",
     [id],
   );
   if (!rows.length)
@@ -21,6 +23,8 @@ async function base(db: PoolConnection, id: string) {
       "REQUIREMENT_NOT_FOUND",
       "Requirement instance not found.",
     );
+  await requireActiveDocument(db, id, rows[0].scholar_semester_id);
+  await semesterRequirementContext(db, id, rows[0].scholar_semester_id);
   return rows[0];
 }
 function openPeriod(r: RowDataPacket) {

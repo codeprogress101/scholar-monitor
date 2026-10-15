@@ -2,6 +2,7 @@ import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { randomUUID } from "node:crypto";
 import { AuthError, normalizeEmail } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
+import { snapshotConnection } from "./read-snapshot.js";
 import {
   ROLE_CODES,
   isPermission,
@@ -74,6 +75,33 @@ export class AuthorizationService {
   async access(id: string) {
     return this.transaction((db) => this.snapshot(db, id));
   }
+  /** Authorize and read one consistent snapshot. All mutations still use the shared guard. */
+  async readSnapshot<T>(id: string, permission: PermissionCode | null, run: (db: PoolConnection,actor: Access)=>Promise<T>) {
+    if(!this.pool)throw new AuthError(503,"AUTHORIZATION_UNAVAILABLE","Access permissions are temporarily unavailable.");
+    const db=await this.pool.getConnection();
+    try{
+      await db.query("SET time_zone = '+00:00'");
+      await db.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      await db.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
+      const connection=snapshotConnection(db),actor=await this.snapshot(connection,id);
+      if(permission && !actor.permissions.some(p=>p.code===permission))throw new AuthError(403,"PERMISSION_DENIED","Your account does not have permission for this action.");
+      const result=await run(connection,actor);
+      await db.commit();
+      // Recheck revocation after the expensive projection, using this same pooled
+      // connection to avoid pool starvation. Never return data after a revoked role.
+      await db.beginTransaction();
+      const current=await this.snapshot(db,id);
+      if(current.version!==actor.version || JSON.stringify(current.permissions)!==JSON.stringify(actor.permissions))throw new AuthError(403,"PERMISSION_CHANGED","Access changed while loading this page. Refresh your session.");
+      await db.commit();
+      return result;
+    }catch(e){await db.rollback();throw e;}finally{db.release();}
+  }
+  async withAccess<T>(id: string, run: (db: PoolConnection, actor: Access) => Promise<T>) {
+    return this.transaction(async db => {
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+      return run(db, await this.snapshot(db, id));
+    });
+  }
   async catalog() {
     return this.transaction(async (db) => {
       const [roles] = await db.query<(RowDataPacket & Role)[]>(
@@ -102,6 +130,9 @@ export class AuthorizationService {
     run: (db: PoolConnection, actor: Access) => Promise<T>,
   ) {
     return this.transaction(async (db) => {
+      // Take the shared business lock before user locks and consistent reads.
+      // Payment/correction races must see the preceding commit, without a user-lock inversion.
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
       const actor = await this.snapshot(db, id);
       if (
         !isPermission(permission) ||

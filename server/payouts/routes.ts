@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { PayoutService } from "./service.js";
 import { AuthError } from "../auth/service.js";
 export function registerPayouts(app: FastifyInstance, service: PayoutService) {
+  app.get<{ Params: { id: string } }>("/api/v1/semesters/:id/document-sources", { config: { permission: "configuration.read" } }, r => service.documentSources(r.authSession!.user.id, r.params.id));
   app.get(
     "/api/v1/payout-cycles",
     { config: { permission: "configuration.read" } },

@@ -13,6 +13,9 @@ export function registerRequirementWorkflow(
     { config: { permission: "requirements.verify" } },
     (r) => service.context(r.authSession!.user.id, r.params.id),
   );
+  app.post<{Params:{id:string}}>("/api/v1/requirement-instances/:id/receive-and-verify",
+    {bodyLimit:8192,config:{permission:"requirements.receive"}},
+    r=>service.receiveAndVerify(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
   for (const action of REQUIREMENT_ACTIONS)
     app.post<{ Params: { id: string } }>(
       `/api/v1/requirement-instances/:id/${action}`,

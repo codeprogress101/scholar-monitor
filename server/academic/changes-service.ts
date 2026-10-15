@@ -1,4 +1,6 @@
+import { requirePlacementPolicy } from "./placement-policy.js";
 import { randomUUID } from "node:crypto";
+import {resolvePlacementReferences} from "./references.js";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
@@ -32,10 +34,11 @@ export async function academicCurrent(db: PoolConnection, id: string) {
     [id],
   );
   const [official] = await db.execute<RowDataPacket[]>(
-    "SELECT e.id FROM masterlist_entries e JOIN masterlist_versions m ON m.id=e.masterlist_id WHERE e.scholar_id=? AND m.academic_year_id=? AND e.removed_at IS NULL AND m.status IN ('approved','published','locked') LIMIT 1 FOR UPDATE",
+    "SELECT m.id,m.title,m.status FROM masterlist_entries e JOIN masterlist_versions m ON m.id=e.masterlist_id WHERE e.scholar_id=? AND m.academic_year_id=? AND e.removed_at IS NULL AND m.status IN ('approved','published','locked') ORDER BY m.created_at DESC,m.id DESC LIMIT 1 FOR UPDATE",
     [row.scholar_id, row.academic_year_id],
   );
   row.official_membership = official.length > 0;
+  row.official_masterlist = official[0] ?? null;
   const latest = revisions[0];
   const placement: Placement = latest
     ? json(latest.after_value)
@@ -83,6 +86,7 @@ async function validate(
       "Effective date cannot precede the latest approved academic change.",
     );
   validatePlacementChange(state.placement, input);
+  await requirePlacementPolicy(db,state.row.id,state.row.scholar_id,state.placement,input,input.effectiveOn);
   const after = { ...state.placement };
   for (const [table, key, snapshot] of [
     ["schools", "schoolId", "school"],
@@ -128,9 +132,12 @@ export class AcademicChangesService {
           [id],
         );
         return {
+          scholarId: state.row.scholar_id,
           current: state.placement,
           version: state.version,
           effectiveOn: state.effectiveOn,
+          blockedReason: state.row.locked_at ? "year_locked" : state.row.archived_at ? "year_archived" : state.row.official_membership ? "official_membership" : state.row.operational_status ? "activated_scholarship" : null,
+          officialMasterlist: state.row.official_masterlist,
           unavailable: Boolean(
             state.row.locked_at ||
             state.row.archived_at ||
@@ -201,6 +208,7 @@ export class AcademicChangesService {
             outcome: prior[0].outcome as string,
           };
         }
+        if (proposal) Object.assign(proposal, await resolvePlacementReferences(db,proposal,actor,requestId));
         const [users] = await db.execute<RowDataPacket[]>(
           "SELECT full_name FROM users WHERE id=?",
           [actor],
@@ -231,7 +239,7 @@ export class AcademicChangesService {
               users[0].full_name,
             ],
           );
-          details = { before: state.placement, after, proposal };
+          details = { requestId: target, before: state.placement, after, proposal };
         } else {
           const [requests] = await db.execute<RowDataPacket[]>(
             "SELECT q.*,DATE_FORMAT(q.effective_on,'%Y-%m-%d') AS effective_date FROM academic_changes q WHERE id=? FOR UPDATE",
@@ -253,12 +261,6 @@ export class AcademicChangesService {
             fail(
               "INVALID_STATE_TRANSITION",
               "This request already has a final decision.",
-            );
-          if (action === "approve" && actor === q.actor_id)
-            throw new AuthError(
-              403,
-              "SELF_APPROVAL_DENIED",
-              "A different Coordinator must approve this request.",
             );
           if (action === "cancel" && actor !== q.actor_id)
             throw new AuthError(

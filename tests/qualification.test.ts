@@ -17,6 +17,8 @@ describe("Annual qualification commands", () => {
     "not_selected",
   ];
   const edges: Record<string, string> = {
+    "applicant:validate": "qualified",
+    "exam_passed:validate": "qualified",
     "applicant:exam-passed": "exam_passed",
     "exam_passed:qualify": "qualified",
     "qualified:select": "selected",
@@ -45,6 +47,7 @@ describe("Annual qualification commands", () => {
     expect(qualificationPermission("create")).toBe(
       "scholarship.status.request",
     );
+    expect(qualificationPermission("validate")).toBe("scholarship.status.request");
     expect(qualificationPermission("exam-passed")).toBe(
       "scholarship.status.request",
     );
@@ -64,6 +67,12 @@ describe("Annual qualification commands", () => {
     reason: "Verified official decision",
     reference: "Physical register 1",
   };
+  it("requires explicit prior-qualification confirmation for validation only", () => {
+    expect(() => parseQualification(command, false, true)).toThrow();
+    expect(() => parseQualification({ ...command, priorQualificationConfirmed: false }, false, true)).toThrow();
+    expect(parseQualification({ ...command, priorQualificationConfirmed: true }, false, true)).toMatchObject({ priorQualificationConfirmed: true });
+    expect(() => parseQualification({ ...command, priorQualificationConfirmed: true }, false)).toThrow();
+  });
   it("rejects forged state, approval identity, academic year mutation and future dates", () => {
     for (const extra of [
       { status: "active" },

@@ -96,6 +96,11 @@ export default function ReportsPage() {
     setError("");
     setOffset(0);
   };
+  useEffect(() => {
+    if (!cycleId || !cycles.some(c => c.id === cycleId) || !permissions?.includes(REPORTS[kind].permission)) return;
+    const params = new URLSearchParams({ cycleId, kind });
+    window.history.replaceState(null, "", `#reports?${params}`);
+  }, [cycleId, kind, cycles, permissions]);
   const allowed = (Object.keys(REPORTS) as ReportKind[]).filter((k) =>
     permissions?.includes(REPORTS[k].permission),
   );

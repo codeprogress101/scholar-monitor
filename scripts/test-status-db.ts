@@ -47,7 +47,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -287,6 +287,17 @@ try {
   const pending = await send(proposal(1));
   assert.equal(pending.statusCode, 200, pending.body);
   const requestId = pending.json().requestId;
+  const notices = await request("coordinator", "/api/v1/notifications?mode=pending");
+  assert.equal(notices.statusCode, 200, notices.body);
+  assert.ok(notices.json().items.some((n: { sourceId: string }) => n.sourceId === requestId));
+  const updates = await request("coordinator", "/api/v1/notifications");
+  assert.equal(updates.statusCode, 200, updates.body);
+  const notice = updates.json().items.find((n: { sourceId: string }) => n.sourceId === requestId);
+  assert.ok(notice);
+  assert.equal((await request("coordinator", `/api/v1/notifications/${notice.id}/read`, { read: true })).statusCode, 200);
+  assert.ok((await request("coordinator", "/api/v1/notifications?mode=pending")).json().items.some((n: { sourceId: string }) => n.sourceId === requestId));
+  assert.ok((await request("system_admin", "/api/v1/notifications")).json().items.every((n: {kind:string}) => n.kind === "account"));
+
   assert.equal((await view()).status, "active");
   expectError(
     await decide(requestId, "approve", "staff"),
@@ -295,6 +306,10 @@ try {
   );
   const approved = await decide(requestId);
   assert.equal(approved.statusCode, 200, approved.body);
+  assert.ok(!(await request("coordinator", "/api/v1/notifications?mode=pending")).json().items.some((n: { sourceId: string }) => n.sourceId === requestId));
+  assert.ok((await request("staff", "/api/v1/notifications")).json().items.some((n: { sourceId: string; action: string }) => n.sourceId === requestId && n.action === "approve"));
+  pass("Notification submission/read/decision round trip preserves pending state and excludes technical accounts");
+
   let current = await view();
   assert.equal(current.status, "dropped");
   assert.equal(current.statusAllowsPayout, false);
@@ -351,7 +366,7 @@ try {
   );
   const own = await send(proposal(3, "on_hold"), "coordinator");
   assert.equal(own.statusCode, 200);
-  expectError(await decide(own.json().requestId), 403, "SELF_APPROVAL_DENIED");
+  expectError(await decide(own.json().requestId, "approve", "staff"), 403, "PERMISSION_DENIED");
   expectError(
     await decide(own.json().requestId, "cancel", "staff"),
     403,
@@ -428,6 +443,26 @@ try {
   pass(
     "Competing approvals have one winner; stale proposals cannot overwrite current status",
   );
+  // Force the terminal winner instead of depending on which concurrent request wins.
+  current = await view();
+  const staleVersion = current.version;
+  const staleHold = await send(proposal(staleVersion, "on_hold"));
+  const terminalWinner = await send(proposal(staleVersion, "withdrawn"));
+  assert.equal(staleHold.statusCode, 200, staleHold.body);
+  assert.equal(terminalWinner.statusCode, 200, terminalWinner.body);
+  assert.equal((await decide(terminalWinner.json().requestId)).statusCode, 200);
+  const terminalBefore = await view();
+  expectError(await decide(staleHold.json().requestId), 409, "VERSION_CONFLICT");
+  expectError(await send(proposal(staleVersion, "on_hold")), 409, "VERSION_CONFLICT");
+  assert.deepEqual(await view(), terminalBefore);
+  // A fresh request still cannot reverse a terminal state without a linked correction.
+  expectError(await send(proposal(terminalBefore.version, "active")), 409, "INVALID_STATE_TRANSITION");
+  const restoreActive = await send(proposal(terminalBefore.version, "active", {
+    kind: "correction", correctsRequestId: terminalWinner.json().requestId,
+  }));
+  assert.equal(restoreActive.statusCode, 200, restoreActive.body);
+  assert.equal((await decide(restoreActive.json().requestId)).statusCode, 200);
+  pass("Terminal winner consistently rejects stale requests/approvals without changing history");
   current = await view();
   const rollback = await send(proposal(current.version, "suspended"));
   const before = await view();

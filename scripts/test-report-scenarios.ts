@@ -168,4 +168,23 @@ export async function testReports(
     auditBefore[0].n,
     "Reports must not mutate workflow history",
   );
+  if(process.argv.includes('--report-capacity')) {
+    const [[annual]]=await c.admin.execute<RowDataPacket[]>('SELECT academic_year_id FROM scholarship_records WHERE id=?',[c.annualId]);
+    const before=await get('scholars'), missingBefore=await get('missing');
+    const ids=Array.from({length:1500},()=>({scholar:randomUUID(),annual:randomUUID()}));
+    for(let offset=0;offset<ids.length;offset+=250){
+      const part=ids.slice(offset,offset+250);
+      await c.admin.query("INSERT INTO scholars(id,first_name,last_name,academic_year_id,created_at,updated_at) VALUES "+part.map(()=>"(?,?,?, ?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))").join(','),part.flatMap((r,i)=>[r.scholar,'Synthetic','Capacity '+(offset+i),annual.academic_year_id]));
+      await c.admin.query('INSERT INTO scholar_identifiers(scholar_id,entry_year,sequence_no) VALUES '+part.map(()=>'(?,?,?)').join(','),part.flatMap((r,i)=>[r.scholar,2098,offset+i+1]));
+      await c.admin.query("INSERT INTO scholarship_records(id,scholar_id,academic_year_id,status,last_effective_on,created_at,updated_at) VALUES "+part.map(()=>"(?,?,?,'selected',CURRENT_DATE(),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))").join(','),part.flatMap(r=>[r.annual,r.scholar,annual.academic_year_id]));
+    }
+    const started=Date.now(), full=await get('scholars'), missing=await get('missing');
+    assert.equal(full.total,before.total+1500);
+    assert.equal(missing.total,missingBefore.total+3000,'Two document requirements per synthetic scholar');
+    const last=await get('scholars','&offset=1500&limit=100');
+    assert.equal(last.sourceHash,full.sourceHash);assert.equal(last.total,full.total);
+    console.log(JSON.stringify({reportCapacity:{scholars:1500,documents:3000,elapsedMs:Date.now()-started,completeTotals:true,paginationFingerprintStable:true}}));
+    for(const r of ids){await c.admin.execute('DELETE FROM scholarship_records WHERE id=?',[r.annual]);await c.admin.execute('DELETE FROM scholar_identifiers WHERE scholar_id=?',[r.scholar]);await c.admin.execute('DELETE FROM scholars WHERE id=?',[r.scholar]);}
+  }
+
 }

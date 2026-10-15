@@ -1,4 +1,7 @@
 import { academicCurrent } from "../academic/changes-service.js";
+import { additionPreview } from "./additions.js";
+import {consolidationSource,publicationSource} from "./consolidation.js";
+import { lineage } from "./revisions.js";
 import { randomUUID } from "node:crypto";
 import type { RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
@@ -118,8 +121,11 @@ export class MasterlistWorkflowService {
             "Academic year is locked or archived.",
           );
         const items = await entries(db, id);
+        const addition = await additionPreview(db, row, items);
+        const consolidation = await consolidationSource(db,id);
         if (!["return-draft", "lock"].includes(action)) {
           const report = await validate(db, row, items);
+          report.valid = report.issues.length === 0;
           if (!report.valid) throw new DraftValidationError(report.issues);
         }
         if (action === "approve") {
@@ -127,11 +133,11 @@ export class MasterlistWorkflowService {
             "SELECT actor_id FROM masterlist_workflow_events WHERE masterlist_id=? AND action='submit-approval' ORDER BY resulting_version DESC LIMIT 1 FOR UPDATE",
             [id],
           );
-          if (!submissions.length || submissions[0].actor_id === actor)
+          if (!submissions.length)
             throw new AuthError(
               403,
-              "SELF_APPROVAL_DENIED",
-              "A different Coordinator must approve the submitted masterlist.",
+              "SUBMISSION_REQUIRED",
+              "Submit this masterlist for approval first.",
             );
         }
         const [users] = await db.execute<RowDataPacket[]>(
@@ -147,8 +153,23 @@ export class MasterlistWorkflowService {
           publicationVersion: version,
           entries: items,
         };
+        if (addition.targetId && !["return-draft", "lock"].includes(action)) {
+          const chain = await lineage(db, addition.targetId);
+          snapshot.entries = [...addition.existing, ...items];
+          snapshot.lineage = { rootId: chain.rootId, parentId: addition.targetId, kind: "addition", sourceDraftId: id, versionLabel: `1.${chain.revision + 1}` };
+          if(consolidation) snapshot.lineage={...snapshot.lineage,kind:"consolidation",sourcePublicationId:consolidation.source_id,sourcePublicationHash:consolidation.source_hash};
+          if (action === "publish") {
+            const [approved] = await db.execute<RowDataPacket[]>("SELECT snapshot FROM masterlist_workflow_events WHERE masterlist_id=? AND action='approve' ORDER BY resulting_version DESC LIMIT 1", [id]);
+            const evidence = approved[0] ? decode<OfficialSnapshot>(approved[0].snapshot) : null;
+            if (!evidence || JSON.stringify(evidence.entries) !== JSON.stringify(snapshot.entries) || JSON.stringify(evidence.lineage) !== JSON.stringify(snapshot.lineage))
+              throw new AuthError(409,"APPROVAL_STALE","Combined membership changed. Return to Draft and obtain a new approval.");
+            const [parent] = await db.execute<RowDataPacket[]>("SELECT DATE_FORMAT(effective_on,'%Y-%m-%d') AS effective_on FROM masterlist_publications WHERE masterlist_id=?",[addition.targetId]);
+            if (input.effectiveOn! < parent[0].effective_on) throw new AuthError(409,"INVALID_EFFECTIVE_DATE","Combined publication cannot precede its parent publication.");
+            if(consolidation && input.effectiveOn! < (await publicationSource(db,consolidation.source_id)).effective_on)throw new AuthError(409,"INVALID_EFFECTIVE_DATE","Consolidation cannot precede either source publication.");
+          }
+        }
         if (action === "publish") {
-          for (const entry of items) {
+          for (const entry of consolidation ? [] : items) {
             const [annual] = await db.execute<RowDataPacket[]>(
               "SELECT operational_status,status_version,DATE_FORMAT(last_effective_on,'%Y-%m-%d') AS last_date FROM scholarship_records WHERE id=? FOR UPDATE",
               [entry.snapshot.scholarshipId],
@@ -182,6 +203,7 @@ export class MasterlistWorkflowService {
                 "Publication activation cannot precede the latest qualification or approved academic change.",
               );
           }
+          if (addition.targetId) snapshot.entries = [...addition.existing.map(e => ({ ...e, id: randomUUID() })), ...items];
           const serialized = JSON.stringify(snapshot);
           await db.execute(
             "INSERT INTO masterlist_publications (masterlist_id,snapshot,snapshot_hash,effective_on,actor_id,actor_name,published_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(6))",
@@ -194,7 +216,16 @@ export class MasterlistWorkflowService {
               users[0].full_name,
             ],
           );
-          for (const entry of items) {
+          if (addition.targetId) {
+            const chain = await lineage(db, addition.targetId);
+            await db.execute("INSERT INTO masterlist_revisions(masterlist_id,parent_id,root_id,revision,kind) VALUES(?,?,?,?,?)",[id,addition.targetId,chain.rootId,chain.revision+1,consolidation?"consolidation":"addition"]);
+            if(consolidation) await db.execute("INSERT INTO masterlist_consolidation_links(source_id,successor_id) VALUES(?,?)",[consolidation.source_id,id]);
+            // Materialize the already-approved combined snapshot under the same
+            // transaction; the final state below is published, never editable.
+            await db.execute("UPDATE masterlist_versions SET status='draft' WHERE id=?", [id]);
+            for (const old of snapshot.entries.slice(0, addition.existing.length)) await db.execute("INSERT INTO masterlist_entries(id,masterlist_id,scholar_id,snapshot,award_number,created_at,updated_at) VALUES(?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",[old.id,id,old.scholarId,JSON.stringify(old.snapshot),old.awardNumber]);
+          }
+          for (const entry of consolidation ? [] : items) {
             const annualId = entry.snapshot.scholarshipId;
             await db.execute(
               "INSERT INTO masterlist_activations (scholarship_id,masterlist_id,effective_on,activated_at) VALUES (?,?,?,UTC_TIMESTAMP(6))",

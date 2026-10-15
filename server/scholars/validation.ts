@@ -83,7 +83,13 @@ export const parseScholarQuery = (value: unknown) =>
     z
       .object({
         q: text(160).default(""),
+        sort: z.enum(["name", "scholarId", "school", "yearLevel", "classification"]).default("name"),
+        direction: z.enum(["asc", "desc"]).default("asc"),
+        scope: z.enum(["current", "graduated", "all"]).default("current"),
         academicYearId: z.uuid().optional(),
+        scholarshipYearId: z.uuid().optional(),
+        contextAcademicYearId: z.uuid().optional(),
+        classification: z.enum(["all", "new", "continuing", "unknown"]).default("all"),
         offset: z.coerce.number().int().min(0).max(1000000).default(0),
         limit: z.coerce.number().int().min(1).max(100).default(25),
       })

@@ -1,8 +1,11 @@
+import { SIGNATORY_CODE, parseSignatories } from "./payroll-signatories.js";
+import { rolloverYear } from "./rollover.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
+import { calendarState, guardCalendar, workingYear } from "./calendar.js";
 import {
   isPeriod,
   type ConfigKind,
@@ -40,6 +43,7 @@ function record(row: RowDataPacket): ConfigRecord {
     startsOn: row.start_date ?? null,
     endsOn: row.end_date ?? null,
     academicYearId: row.academic_year_id ?? null,
+    ...(row.academic_year_id ? { termKind: row.term_kind ?? null } : {}),
     valueType: row.value_type ?? null,
     value: row.setting_value ?? null,
   };
@@ -78,6 +82,12 @@ function available(item: ConfigRecord) {
 }
 export class ConfigurationService {
   constructor(private authorization: AuthorizationService) {}
+  async calendar(actorId: string) {
+    return this.authorization.withPermission(actorId, "configuration.read", async db => {
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+      return calendarState(db);
+    });
+  }
   async list(
     actorId: string,
     rawKind: unknown,
@@ -91,7 +101,7 @@ export class ConfigurationService {
       async (db) => {
         const search =
           "%" + query.q.replace(/[!%_]/g, (value) => "!" + value) + "%";
-        const where = `${query.includeArchived ? "1=1" : "r.archived_at IS NULL"} AND (r.code LIKE ? ESCAPE '!' OR r.name LIKE ? ESCAPE '!')`;
+        const where = `${query.includeArchived ? "1=1" : "r.archived_at IS NULL"}${kind === "settings" ? " AND r.code <> 'LDSS_WORKING_ACADEMIC_YEAR'" : ""} AND (r.code LIKE ? ESCAPE '!' OR r.name LIKE ? ESCAPE '!')`;
         const [count] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS total FROM ${tables[kind]} r WHERE ${where}`,
           [search, search],
@@ -100,8 +110,9 @@ export class ConfigurationService {
           `SELECT ${selection(kind)} FROM ${tables[kind]} r WHERE ${where} ORDER BY r.code,r.id LIMIT ? OFFSET ?`,
           [search, search, query.limit, query.offset],
         );
+        const calendar = isPeriod(kind) ? await workingYear(db) : null;
         return {
-          items: rows.map(record),
+          items: rows.map(row => ({ ...record(row), ...(calendar ? { working: (kind === "academic-years" ? row.id : row.academic_year_id) === calendar.yearId } : {}) })),
           total: Number(count[0].total),
           offset: query.offset,
           limit: query.limit,
@@ -161,6 +172,10 @@ export class ConfigurationService {
             return JSON.parse(prior[0].result) as ConfigRecord;
           }
           const before = id ? await get(db, kind, id, true) : null;
+          if (kind === "settings" && (before?.code === SIGNATORY_CODE || input.fields?.code === SIGNATORY_CODE)) {
+            if(input.action !== "update" || before?.code !== SIGNATORY_CODE || input.fields?.code !== SIGNATORY_CODE || input.fields?.valueType !== "text") throw new AuthError(422,"INVALID_SIGNATORIES","Edit the existing payroll signatories; they cannot be archived or recreated.");
+            parseSignatories(input.fields.value!);
+          }
           if (before && before.version !== input.expectedVersion)
             throw new AuthError(
               409,
@@ -195,6 +210,7 @@ export class ConfigurationService {
               "INVALID_STATE_TRANSITION",
               "This record is already active.",
             );
+          const advance = await guardCalendar(db, kind, input, before);
           if (kind === "semesters") {
             const parentId =
               before?.academicYearId ?? input.fields!.academicYearId!;
@@ -208,6 +224,11 @@ export class ConfigurationService {
                 "VALIDATION_FAILED",
                 "A semester cannot be moved to another academic year.",
               );
+            const termKind = input.fields?.termKind;
+            if (termKind === "first" || termKind === "second") {
+              const [duplicates] = await db.execute<RowDataPacket[]>("SELECT id FROM semesters WHERE academic_year_id=? AND term_kind=? AND id<>? LOCK IN SHARE MODE", [parentId, termKind, id ?? ""]);
+              if (duplicates.length) throw new AuthError(409, "SEMESTER_IDENTITY_CONFLICT", "Another semester already has this identity in the academic year. Review that calendar record first.");
+            }
             const parent = await get(db, "academic-years", parentId, true);
             available(parent);
             const start = input.fields?.startsOn ?? before!.startsOn!,
@@ -262,10 +283,13 @@ export class ConfigurationService {
           if (input.action === "create" || input.action === "update") {
             const fields = input.fields!;
             const columns = ["name"],
-              values: (string | number)[] = [fields.name];
+              values: (string | number | null)[] = [fields.name];
             if (isPeriod(kind)) {
               columns.push("starts_on", "ends_on");
               values.push(fields.startsOn!, fields.endsOn!);
+            }
+            if (kind === "semesters" && fields.termKind !== undefined) {
+              columns.push("term_kind"); values.push(fields.termKind);
             }
             if (kind === "settings") {
               columns.push("value_type", "setting_value");
@@ -299,7 +323,10 @@ export class ConfigurationService {
               [targetId],
             );
           }
-          const after = await get(db, kind, targetId);
+          if (advance && kind === "academic-years") await db.execute("UPDATE system_settings SET setting_value=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", [targetId, advance.id]);
+          const destinationYear = kind === "academic-years" ? targetId : input.fields?.value;
+          const rollover = advance ? await rolloverYear(db, advance.yearId, destinationYear!, actorId, requestId) : undefined;
+          const after = { ...await get(db, kind, targetId), ...(rollover ? { rollover } : {}) };
           await db.execute(
             "INSERT INTO audit_logs (id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES (?,'configuration.changed',?,?,?,?, 'user',UTC_TIMESTAMP(6),?,?,?)",
             [
@@ -310,7 +337,7 @@ export class ConfigurationService {
               actorId,
               requestId,
               input.reason,
-              JSON.stringify({ before, after, idempotency_key: key }),
+              JSON.stringify({ before, after, idempotency_key: key, ...(advance ? { workingYearChange: { from: advance.yearId, to: destinationYear, settingId: advance.id, previousVersion: advance.version, version: advance.version + 1 } } : {}) }),
             ],
           );
           await db.execute(

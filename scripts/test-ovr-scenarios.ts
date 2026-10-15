@@ -140,6 +140,7 @@ export async function testOvrScenarios(c: Context) {
   batch = await ok<OvrBatch>(cmd(batch, "validate", {}, "coordinator"));
   assert.equal(batch.validation!.valid, true);
   denied(await cmd(beforeAdd, "remove", entry), 409, "VERSION_CONFLICT");
+  denied(await cmd(batch, "remove", { ...entry, reason: "" }), 422, "VALIDATION_FAILED");
   batch = await ok<OvrBatch>(cmd(batch, "remove", entry));
   assert.equal((await read(batch)).entries.length, 0);
   assert.equal((await read(batch)).history[0].entry!.scholarshipId, c.annualId);

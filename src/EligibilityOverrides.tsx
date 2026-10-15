@@ -1,3 +1,4 @@
+import { useActionForm } from "./use-action-form";
 import { useRef, useState, type FormEvent } from "react";
 import type { EligibilityView } from "../server/eligibility/model";
 import type {
@@ -40,6 +41,7 @@ export default function EligibilityOverrides({
     setSelected(r);
     setError("");
   }
+  const actionForm = useActionForm(action);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!action || busy.current) return;
@@ -98,7 +100,7 @@ export default function EligibilityOverrides({
     >
       <h4>Eligibility overrides</h4>
       <p>
-        Exceptions preserve normal calculations and require review by a separate
+        Exceptions preserve normal calculations and require explicit review by the
         Coordinator. Source changes invalidate an approval until a new request
         is approved.
       </p>
@@ -132,7 +134,7 @@ export default function EligibilityOverrides({
         </p>
       )}
       {items.map((r) => (
-        <article className="border rounded p-3 my-3" key={r.id}>
+        <article id={`request-${r.id}`} className="border rounded p-3 my-3" key={r.id}>
           <h5>
             Override {r.state} — revision {r.revision}
           </h5>
@@ -197,7 +199,7 @@ export default function EligibilityOverrides({
                   </>
                 )}
               {canApprove &&
-                r.requesterId !== session.user.id &&
+                
                 r.state === "pending" && (
                   <>
                     <button
@@ -241,7 +243,7 @@ export default function EligibilityOverrides({
         </p>
       )}
       {action && (
-        <form
+        <form ref={actionForm}
           onSubmit={submit}
           aria-label="Override command"
           key={`${action}-${selected?.id ?? "new"}`}

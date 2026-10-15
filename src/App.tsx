@@ -1,10 +1,17 @@
+import BackupStatus from "./BackupStatus";
+import Notifications, { NotificationBell, useNotifications } from "./Notifications";
+import { configurationRequest } from "./configuration-api";
+import type { Access } from "../server/authorization/policy";
+import { REPORTS } from "../server/reports/model";
 import AuditPage from "./AuditPage";
 import DashboardPage from "./DashboardPage";
 import PayoutCyclesPage from "./PayoutCyclesPage";
 import ReportsPage from "./ReportsPage";
 import RequirementsPage from "./RequirementsPage";
 import MasterlistsPage from "./MasterlistsPage";
-import { useEffect, useState } from "react";
+import ScholarWorkspace from "./ScholarWorkspace";
+import { routeChangeTracker } from "./scholar-navigation";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -19,7 +26,6 @@ import {
   HeartHandshake,
   LayoutGrid,
   ListChecks,
-  LockKeyhole,
   MapPin,
   Menu,
   Milestone,
@@ -34,11 +40,12 @@ import {
 import { fetchHealth, type Health } from "./api";
 import AccessPage from "./AccessPage";
 import ConfigurationPage from "./ConfigurationPage";
-import ScholarsPage from "./ScholarsPage";
+import AdmissionReview from "./AdmissionReview";
 import roadmap from "./roadmap.json";
 import type { Session } from "./auth-api";
 
 type Page =
+  | "notifications"
   | "overview"
   | "roadmap"
   | "status"
@@ -46,17 +53,22 @@ type Page =
   | "access"
   | "configuration"
   | "scholars"
+  | "admissions"
   | "masterlists"
+  | "continuing"
   | "requirements"
   | "payouts"
   | "reports"
   | "dashboard"
   | "audit";
 const navigation = [
+  { id: "notifications" as const, label: "Notifications", icon: ListChecks },
   { id: "access" as const, label: "My access", icon: ShieldCheck },
-  { id: "dashboard" as const, label: "Dashboard", icon: LayoutGrid },
-  { id: "overview" as const, label: "Overview", icon: LayoutGrid },
+  { id: "dashboard" as const, label: "Home", icon: LayoutGrid },
+  { id: "overview" as const, label: "About the workspace", icon: LayoutGrid },
   { id: "scholars" as const, label: "Scholar registry", icon: Users },
+  { id: "admissions" as const, label: "Admission review", icon: ClipboardCheck },
+  { id: "continuing" as const, label: "Continuing scholars", icon: Users },
   {
     id: "masterlists" as const,
     label: "Masterlists",
@@ -64,10 +76,10 @@ const navigation = [
   },
   {
     id: "requirements" as const,
-    label: "Requirement definitions",
+    label: "Document policies",
     icon: FileCheck2,
   },
-  { id: "payouts" as const, label: "Payout cycles", icon: Wallet },
+  { id: "payouts" as const, label: "Payroll", icon: Wallet },
   { id: "reports" as const, label: "Reports", icon: ListChecks },
   { id: "audit" as const, label: "Audit events", icon: ShieldCheck },
   { id: "configuration" as const, label: "Configuration", icon: Settings2 },
@@ -104,6 +116,7 @@ const modules = [
 
 function initialPage(): Page {
   const hash = window.location.hash.slice(1).split("?")[0];
+  if (hash === "continuing") return "scholars";
   return navigation.some((item) => item.id === hash)
     ? (hash as Page)
     : "dashboard";
@@ -118,24 +131,85 @@ export default function App({
   onLogout: () => void;
   signingOut: boolean;
 }) {
+  const [access, setAccess] = useState<Access | null>(null);
+  useEffect(() => { const controller = new AbortController(); configurationRequest<Access>("me/permissions", { signal: controller.signal }).then(setAccess).catch(() => {}); return () => controller.abort(); }, []);
+  const can = (permission: string) => access?.permissions.some(p => p.code === permission) ?? false;
+  const daily = ["dashboard", ...(can("scholars.read") ? ["scholars", "admissions"] : []), ...(can("ovr.prepare") ? ["payouts"] : []), ...(can("masterlists.prepare") ? ["masterlists"] : []), ...(Object.values(REPORTS).some(report => can(report.permission)) ? ["reports"] : [])];
+  const tools = ["access", ...(can("configuration.read") ? ["requirements", "configuration"] : []), ...(can("audit.view_all") || can("audit.view_limited") ? ["audit"] : []), "status", "roadmap", "overview", ...(can("configuration.manage") && !can("ovr.prepare") ? ["payouts"] : [])];
   const [page, setPage] = useState<Page>(initialPage);
+  const [locationHash, setLocationHash] = useState(window.location.hash);
+  const routeTracker = useRef(routeChangeTracker(window.location.hash));
+  const notificationQuery = page === "dashboard" ? "mode=pending" : page === "notifications" ? (locationHash.split("?")[1] || "mode=updates") : "mode=updates";
+  const notificationFeed = useNotifications(session.user.id, notificationQuery, !signingOut);
+  useEffect(() => {
+    const id = new URLSearchParams(locationHash.split("?")[1]).get("request");
+    if (!id) return;
+    function focusRequest() {
+      const target = document.getElementById(`request-${id}`);
+      if (!target) return false;
+      let parent: HTMLElement | null = target;
+      while (parent) { if (parent instanceof HTMLDetailsElement) parent.open = true; parent = parent.parentElement; }
+      target.tabIndex = -1; target.focus({preventScroll:true}); target.scrollIntoView({block:"center"});
+      return true;
+    }
+    if (focusRequest()) return;
+    const observer = new MutationObserver(() => { if (focusRequest()) observer.disconnect(); });
+    observer.observe(document.body,{childList:true,subtree:true});
+    return () => observer.disconnect();
+  }, [locationHash]);
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 650);
+  function closeNavigation() {
+    setMenuOpen(false);
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".mobile-toggle")?.focus());
+  }
+  useEffect(() => {
+    const resize = () => { setIsMobile(window.innerWidth <= 650); if (window.innerWidth > 650) setMenuOpen(false); };
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") closeNavigation(); };
+    if (menuOpen) {
+      window.addEventListener("keydown", close);
+      document.querySelector<HTMLAnchorElement>("#primary-navigation a")?.focus();
+    }
+    return () => { window.removeEventListener("keydown", close); };
+  }, [menuOpen]);
   const [health, setHealth] = useState<Health | null>(null);
   const [checking, setChecking] = useState(true);
+  const [healthCheckedAt, setHealthCheckedAt] = useState<string | null>(null);
   const [failure, setFailure] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [phase, setPhase] = useState("all");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
+    const routeChanged = routeTracker.current;
     const onHash = () => {
-      if (window.location.hash === "#main-content") return;
+      // Window hash listeners can run before a modal's listener. Preserve an
+      // unresolved command before changing the route or remounting its owner.
+      const pendingLocation = document.querySelector<HTMLDialogElement>("dialog[open][data-pending-location]")?.dataset.pendingLocation;
+      if (pendingLocation !== undefined) {
+        window.history.replaceState(null, "", pendingLocation);
+        return;
+      }
+      if (!routeChanged(window.location.hash)) return;
+      setLocationHash(window.location.hash);
+      // Profiles remember their context with replaceState, which emits no
+      // hashchange. A real navigation must still reset the destination screen.
+      setNavigationRevision((value) => value + 1);
       setPage(initialPage());
       setMenuOpen(false);
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, behavior: "instant" });
     };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    window.addEventListener("popstate", onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("popstate", onHash);
+    };
   }, []);
 
   useEffect(() => {
@@ -157,7 +231,7 @@ export default function App({
       })
       .finally(() => {
         window.clearTimeout(timeout);
-        if (active) setChecking(false);
+        if (active) { setChecking(false); setHealthCheckedAt(new Date().toISOString()); }
       });
     return () => {
       active = false;
@@ -184,22 +258,23 @@ export default function App({
 
   return (
     <div className="workspace">
-      <a className="skip-link" href="#main-content">
+      <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>
         Skip to content
       </a>
       {menuOpen && (
         <button
           className="sidebar-backdrop"
           aria-label="Close navigation"
-          onClick={() => setMenuOpen(false)}
+          onClick={closeNavigation}
         />
       )}
       <aside
         id="primary-navigation"
         className={`sidebar ${menuOpen ? "is-open" : ""}`}
         aria-label="Main navigation"
+        inert={isMobile && !menuOpen}
       >
-        <a href="#overview" className="brand">
+        <a href="#dashboard" className="brand">
           <span className="brand-mark">
             <GraduationCap size={29} strokeWidth={1.5} />
           </span>
@@ -210,14 +285,14 @@ export default function App({
         <button
           className="mobile-close icon-button"
           aria-label="Close navigation"
-          onClick={() => setMenuOpen(false)}
+          onClick={closeNavigation}
         >
           <X size={22} />
         </button>
         <div className="sidebar-rule" />
-        <div className="nav-label">YOUR WORKSPACE</div>
+        <div className="nav-label">DAILY WORK</div>
         <nav className="nav flex-column main-nav">
-          {navigation.map(({ id, label, icon: Icon }) => (
+          {navigation.filter(item => daily.includes(item.id)).map(({ id, label, icon: Icon }) => (
             <a
               key={id}
               onClick={() => setMenuOpen(false)}
@@ -231,35 +306,16 @@ export default function App({
             </a>
           ))}
         </nav>
-        <div className="nav-label modules-label">
-          SCHOLARSHIP OPERATIONS <LockKeyhole size={12} />
-        </div>
-        <div className="future-nav">
-          {modules
-            .filter((item) => item.name !== "Scholar registry")
-            .map(({ name, icon: Icon }) => (
-              <a
-                href={
-                  name === "Official masterlists"
-                    ? "#masterlists"
-                    : name === "Requirements"
-                      ? "#requirements"
-                      : "#payouts"
-                }
-                key={name}
-              >
-                <Icon size={18} strokeWidth={1.6} />
-                <span>{name}</span>
-                <ChevronRight size={13} />
-              </a>
-            ))}
-          <div className="upcoming-note">
-            More payout operations follow in upcoming checkpoints
-          </div>
-        </div>
+        <a className={`nav-link help-link ${page === "guide" ? "active" : ""}`} href="#guide" aria-current={page === "guide" ? "page" : undefined}><BookOpen size={18} /> Help & workflow guide</a>
+        <details className="nav-tools" open={tools.includes(page) ? true : undefined}>
+          <summary>Setup & administration</summary>
+          <nav className="nav flex-column main-nav" aria-label="Setup and administration">
+            {navigation.filter(item => tools.includes(item.id)).map(({ id, label, icon: Icon }) => <a key={id} href={`#${id}`} onClick={() => setMenuOpen(false)} className={`nav-link ${page === id ? "active" : ""}`} aria-current={page === id ? "page" : undefined}><Icon size={18} /><span>{label}</span></a>)}
+          </nav>
+        </details>
         <div className="sidebar-bottom">
           <div className="local-badge">
-            <span className="small-dot" /> SCHOLAR REGISTRY <span>0.9</span>
+            <span className="small-dot" /> SCHOLARSHIP WORKSPACE
           </div>
           <div className="municipality">
             <span className="municipality-icon">
@@ -272,7 +328,7 @@ export default function App({
         </div>
       </aside>
 
-      <div className="workspace-body">
+      <div className="workspace-body" inert={menuOpen}>
         <header className="topbar">
           <div className="breadcrumb-row">
             <button
@@ -289,7 +345,8 @@ export default function App({
             <span>{navigation.find((item) => item.id === page)?.label}</span>
           </div>
           <div className="topbar-right">
-            <span className="signed-in-name">{session.user.fullName}</span>
+            <NotificationBell feed={notificationFeed} />
+            <span className="signed-in-name">{session.user.fullName}{access && <small className="d-block">{access.roles.map(role => role.label).join(" · ") || "No role assigned"}</small>}</span>
             <div className="topbar-divider" />
             <button
               className="sign-out-button"
@@ -303,14 +360,16 @@ export default function App({
 
         <main id="main-content" tabIndex={-1}>
           {page === "access" && <AccessPage session={session} />}
-          {page === "masterlists" && <MasterlistsPage session={session} />}
-          {page === "scholars" && <ScholarsPage session={session} />}
+            {page === "masterlists" && <MasterlistsPage key={`${locationHash}-${navigationRevision}`} session={session} />}
+          {page === "scholars" && <ScholarWorkspace key={`scholars-${navigationRevision}-${locationHash}`} session={session} access={access} />}
+          {page === "admissions" && <AdmissionReview key={`admissions-${navigationRevision}-${locationHash}`} session={session} />}
           {page === "audit" && <AuditPage session={session} />}
           {page === "dashboard" && <DashboardPage />}
-          {page === "reports" && <ReportsPage key={window.location.hash} />}
+          {page === "notifications" && <Notifications feed={notificationFeed} session={session} query={notificationQuery} onQuery={q => { window.location.hash = "notifications?" + q; }} />}
+          {page === "reports" && <ReportsPage key={`reports-${navigationRevision}-${locationHash}`} />}
           {page === "payouts" && <PayoutCyclesPage session={session} />}
           {page === "requirements" && <RequirementsPage session={session} />}
-          {page === "configuration" && <ConfigurationPage session={session} />}
+          {page === "configuration" && <ConfigurationPage key={`configuration-${navigationRevision}`} session={session} />}
           {page === "overview" && (
             <>
               <div className="page-heading">
@@ -679,204 +738,56 @@ export default function App({
           )}
 
           {page === "status" && (
-            <>
-              <div className="page-heading">
-                <div>
-                  <div className="eyebrow">WORKSPACE READINESS</div>
-                  <h1>System status</h1>
-                  <p>A live service check and a clear view of what is ready.</p>
-                </div>
-                <button
-                  className="btn btn-outline-secondary quiet-button"
-                  onClick={recheck}
-                  disabled={checking}
-                >
-                  <RefreshCw size={16} className={checking ? "spin" : ""} />
-                  {checking ? "Checking…" : "Check again"}
-                </button>
-              </div>
-              <section
-                className={`service-banner ${failure ? "service-failed" : ""}`}
-                aria-live="polite"
-              >
-                <span className="service-banner-icon">
-                  <Server size={27} />
-                </span>
-                <div>
-                  <h2>{serviceLabel}</h2>
-                  <p>
-                    {checking
-                      ? "Contacting the application service…"
-                      : failure
-                        ? "The API could not be reached. Start the server, then check again."
-                        : "The application API is responding. This confirms service availability only."}
-                  </p>
-                </div>
-                <span className={`status-dot ${failure ? "is-error" : ""}`} />
-              </section>
-              <div className="status-grid">
-                <section className="info-panel">
-                  <div className="panel-heading">
-                    <Settings2 size={20} />
-                    <h2>Readiness checklist</h2>
-                  </div>
-                  {[
-                    {
-                      title: "Application interface",
-                      detail: "The workspace is loaded in your browser.",
-                      state: "Available",
-                    },
-                    {
-                      title: "Application service",
-                      detail: "/api/v1/health",
-                      state: checking
-                        ? "Checking"
-                        : failure
-                          ? "Unavailable"
-                          : "Connected",
-                    },
-                    {
-                      title: "Individual accounts",
-                      detail: "Authentication and secure sessions · F01",
-                      state: "Available",
-                    },
-                    {
-                      title: "Role permissions",
-                      detail:
-                        "Staff, Coordinator, and System Administrator · F02",
-                      state: "Available",
-                    },
-                    {
-                      title: "Scholar registry",
-                      detail:
-                        "Permanent IDs and scholar profiles for Staff and Coordinators · F04",
-                      state: "Available",
-                    },
-                    {
-                      title: "Reference configuration",
-                      detail:
-                        "Academic periods, shared lists, and program settings · F03",
-                      state: "Available",
-                    },
-                    {
-                      title: "XAMPP database",
-                      detail: "MariaDB / MySQL - live connection check",
-                      state: checking
-                        ? "Checking"
-                        : health?.database === "connected"
-                          ? "Connected"
-                          : health?.database === "unavailable"
-                            ? "Unavailable"
-                            : health?.database === "not_configured"
-                              ? "Not configured"
-                              : "Unknown",
-                    },
-                  ].map((item) => (
-                    <div className="readiness-row" key={item.title}>
-                      <div>
-                        <h3>{item.title}</h3>
-                        <p>{item.detail}</p>
-                      </div>
-                      <span
-                        className={`soft-badge ${["Available", "Connected"].includes(item.state) ? "" : "neutral"}`}
-                      >
-                        {item.state}
-                      </span>
-                    </div>
-                  ))}
-                </section>
-                <section className="info-panel release-panel">
-                  <div className="eyebrow">CURRENT DELIVERY</div>
-                  <h2>Authentication & individual accounts</h2>
-                  <p>
-                    Individual accounts, server-managed sessions, and controlled
-                    password recovery.
-                  </p>
-                  <dl>
-                    <div>
-                      <dt>Checkpoint</dt>
-                      <dd>{health?.checkpoint ?? "F36"}</dd>
-                    </div>
-                    <div>
-                      <dt>Release</dt>
-                      <dd>{health?.release ?? "0.23.0"}</dd>
-                    </div>
-                    <div>
-                      <dt>Record storage</dt>
-                      <dd>Not yet enabled</dd>
-                    </div>
-                    <div>
-                      <dt>Acceptance</dt>
-                      <dd>Pending review</dd>
-                    </div>
-                  </dl>
-                  <a href="#guide" className="text-link">
-                    Read the setup guide <ArrowRight size={15} />
-                  </a>
-                </section>
-              </div>
-            </>
+            <section className="admin-workspace">
+              <div className="page-heading"><div><h1>System status</h1><p>Live checks for this installation.</p></div><button className="btn configuration-primary" onClick={recheck} disabled={checking}><RefreshCw size={16} className={checking ? "spin" : ""}/>{checking ? "Checking..." : "Check again"}</button></div>
+              <dl className="admin-facts">
+                <div><dt>Application service</dt><dd><strong>{checking ? "Checking" : failure ? "Unavailable" : health ? "Connected" : "Not checked"}</strong></dd></div>
+                <div><dt>Database connection</dt><dd><strong>{checking ? "Checking" : failure ? "Not confirmed" : health?.database === "connected" ? "Connected" : health?.database === "unavailable" ? "Unavailable" : health?.database === "not_configured" ? "Not configured" : "Unknown"}</strong></dd></div>
+              </dl>
+              {failure && <p role="alert" className="alert alert-danger">The service check failed. Check that the application server is running, then try again.</p>}
+              {healthCheckedAt && <p className="text-muted">Last check: {new Date(healthCheckedAt).toLocaleString("en-PH",{timeZone:"Asia/Manila"})} (Manila)</p>}
+              <p className="text-muted">Connection checks do not establish deployment readiness or office acceptance.</p>
+              {can("roles.manage") && <BackupStatus />}
+              <details className="secondary-details"><summary>Technical details</summary>
+                <dl className="admin-facts"><div><dt>Release</dt><dd>{health?.release ?? "Not reported"}</dd></div><div><dt>Checkpoint</dt><dd>{health?.checkpoint ?? "Not reported"}</dd></div></dl>
+                <pre className="admin-technical">{health ? JSON.stringify(health,null,2) : "No service response available."}</pre>
+                <a href="#guide">Setup guide</a>
+              </details>
+            </section>
           )}
 
           {page === "guide" && (
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">GET TO KNOW YOUR WORKSPACE</div>
-                  <h1>Made for the work that matters.</h1>
+                  <div className="eyebrow">GET TO KNOW DAILY WORK</div>
+                  <h1>How to use the workspace</h1>
                   <p>
-                    A practical guide to this first release and the principles
-                    behind it.
+                    Start with a scholar, then follow the next action shown.
                   </p>
                 </div>
               </div>
-              <section className="guide-intro">
-                <span className="module-icon">
-                  <BookOpen size={27} />
-                </span>
-                <div>
-                  <h2>Welcome to your individual workspace.</h2>
-                  <p>
-                    You can review your roles in My access, explore the
-                    implementation plan, and check the application service.
-                    Maintain shared lists in Configuration. Staff and
-                    Coordinators can now manage the scholar registry.
-                  </p>
-                </div>
-              </section>
+              {can("scholars.read") && <nav className="task-grid" aria-label="Workflow shortcuts">
+                <a href="#scholars?task=receive"><strong>1. Receive documents</strong><span>Search for a scholar, select the semester, and tick the documents received.</span></a>
+                <a href="#scholars?task=receive"><strong>2. Review the scholar</strong><span>Verify COR and COG, check school and year level, then record academic findings.</span></a>
+                <a href="#payouts"><strong>3. Prepare payroll</strong><span>Open the semester and batch. Review blocked cases, preview, then submit after cutoff.</span></a>
+              </nav>}
+              <p className="next-step">Staff records and reviews documents. The Coordinator handles authorized approvals. System Administrators manage accounts and setup.</p>
               <div className="row g-4 guide-grid">
                 {[
-                  {
-                    icon: Users,
-                    title: "For the scholarship team",
-                    text: "An internal workspace for Staff, Coordinators, and System Administrators. Scholarship approvals belong to the Coordinator; technical administration does not grant approval authority.",
-                  },
-                  {
-                    icon: GraduationCap,
-                    title: "One scholar. One lasting identity.",
-                    text: "Each scholar will receive a permanent LDSS-YYYY-00001 ID. Course changes, school transfers, and new academic years will preserve that identity and its history.",
-                  },
-                  {
-                    icon: FileCheck2,
-                    title: "Physical documents, traceable decisions",
-                    text: "COR and grades remain hard-copy requirements. The system will track receiving, verification, corrections, waivers, and physical storage references.",
-                  },
-                  {
-                    icon: ShieldCheck,
-                    title: "Official history is preserved",
-                    text: "Locked masterlists and finalized payout batches will be immutable. Corrections use approved amendments, with an audit trail of the original and revised records.",
-                  },
-                ].map(({ icon: Icon, title, text }) => (
-                  <section className="col-md-6" key={title}>
-                    <div className="guide-card">
-                      <Icon size={24} strokeWidth={1.5} />
-                      <h2>{title}</h2>
-                      <p>{text}</p>
-                    </div>
-                  </section>
+                  { icon: Users, title: "1. Find or register a scholar", text: "Search the registry first. For a new person, enter their name and current academic year. Contact details can be added later.", href: "#scholars", link: "Open scholar registry" },
+                  { icon: GraduationCap, title: "2. Validate admission and prepare the masterlist", text: "Staff validates the prior qualification of new applicants; the Coordinator selects them. Continuing scholars use an accepted roster. Add eligible scholars to the annual masterlist, then complete its review and publication.", href: "#admissions", link: "Open admission review" },
+                  { icon: FileCheck2, title: "3. Receive and verify documents", text: "Open the scholar, then Receive requirements. Use the open semester, record COR and COG separately, verify the papers, and review academic findings. School, course and year level come from Academic records.", href: "#scholars?task=receive", link: "Receive documents" },
+                  { icon: Wallet, title: "4. Review and release payroll", text: "Open Payroll, choose the semester and batch. Eligible scholars appear automatically. Resolve missing records, preview the payroll, then follow the available approval and release actions. Printing does not record a payment.", href: "#payouts", link: "Open payroll" },
+                  { icon: RefreshCw, title: "Corrections and changes", text: "Use document correction for replacement papers, Academic records for school/course/year changes, and Scholarship records for standing or graduation. Required decisions preserve the original history.", href: "#scholars", link: "Find a scholar" },
+                  { icon: ListChecks, title: "Progress and history", text: "Home shows current work. Reports summarize the selected semester. History sections contain earlier receipts and decisions. Staff prepare records; Coordinators make authorized scholarship decisions.", href: "#reports", link: "Open reports" },
+                ].map(({ icon: Icon, title, text, href, link }) => (
+                  <section className="col-md-6" key={title}><div className="guide-card">
+                    <Icon size={24} strokeWidth={1.5} /><h2>{title}</h2><p>{text}</p><a href={href}>{link}</a>
+                  </div></section>
                 ))}
               </div>
-              <section className="info-panel setup-panel">
+              {can("configuration.manage") && <details className="secondary-details"><summary>Technical installation guide</summary><section className="info-panel setup-panel">
                 <h2>Run this workspace locally</h2>
                 <p>
                   Start MySQL in XAMPP. From the project folder, use Node.js
@@ -899,7 +810,7 @@ export default function App({
                 <a href="#status" className="text-link">
                   Check the service connection <ArrowRight size={15} />
                 </a>
-              </section>
+              </section></details>}
             </>
           )}
 
@@ -916,7 +827,7 @@ export default function App({
           />
           <span role="status">{serviceLabel}</span>
           <span>·</span>
-          <span>F36 Acceptance testing</span>
+          <a href="#guide">Help & workflow guide</a>
         </div>
       </div>
     </div>

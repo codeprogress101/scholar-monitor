@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile, stat, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, stat, unlink, rename } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import mysql from "mysql2/promise";
@@ -25,7 +25,7 @@ export function seal(payload, key) {
   return Buffer.concat([MAGIC, nonce, cipher.getAuthTag(), encrypted]);
 }
 
-export function unseal(bytes, key) {
+export function unseal(bytes, key, expectedDatabase = "ldss_scholar_monitor_dev") {
   if (bytes.length < 37 || bytes.length > MAX_ARCHIVE || !bytes.subarray(0, 8).equals(MAGIC))
     throw new Error("Invalid backup format or size.");
   try {
@@ -35,7 +35,7 @@ export function unseal(bytes, key) {
     // Authenticate the complete ciphertext before parsing or running any SQL.
     const compressed = Buffer.concat([decipher.update(bytes.subarray(36)), decipher.final()]);
     const payload = JSON.parse(gunzipSync(compressed, { maxOutputLength: MAX_SQL * 3 }).toString("utf8"));
-    if (payload.version !== 1 || payload.database !== "ldss_scholar_monitor_dev" ||
+    if (payload.version !== 1 || payload.database !== expectedDatabase ||
         typeof payload.sql !== "string" || Buffer.byteLength(payload.sql) > MAX_SQL ||
         hash(payload.sql) !== payload.sqlHash || !payload.inventory?.tables)
       throw new Error("Invalid payload");
@@ -45,7 +45,7 @@ export function unseal(bytes, key) {
   }
 }
 
-function run(executable, args, { input, password = "", limit = MAX_SQL } = {}) {
+export function run(executable, args, { input, password = "", limit = MAX_SQL } = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(executable, args, {
       windowsHide: true,
@@ -132,34 +132,43 @@ export async function inventory(db) {
 
 const clientArgs = (user) => ["--no-defaults", "--host=127.0.0.1", `--port=${Number(process.env.DB_PORT ?? 3306)}`, `--user=${user}`, "--default-character-set=utf8mb4"];
 
-export async function createBackup(key) {
-  const db = await localAdmin();
+export async function createBackup(key, context) {
+  const db = context ? await mysql.createConnection(context.connection) : await localAdmin();
+  const source = context?.connection.database ?? "ldss_scholar_monitor_dev";
   let locked = false;
   try {
     await db.query("SET SESSION lock_wait_timeout=10");
     // Counts, schema and dump must describe precisely the same state.
     // This local administrative operation briefly pauses writes server-wide.
-    await db.query("FLUSH TABLES WITH READ LOCK");
+    if (context) {
+      // Production backup credentials need only source-schema privileges, not
+      // a global RELOAD grant or a server-wide pause affecting other databases.
+      const [tables] = await db.query("SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() ORDER BY TABLE_NAME");
+      if (!tables.length) throw new Error("Source database is empty.");
+      await db.query(`LOCK TABLES ${tables.map(t => `${identifier(t.name)} READ`).join(', ')}`);
+    } else await db.query("FLUSH TABLES WITH READ LOCK");
     locked = true;
     const [[{ n }]] = await db.query("SELECT (SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=DATABASE()) + (SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA=DATABASE()) AS n");
     if (Number(n)) throw new Error("Unexpected routines/events require a reviewed backup format upgrade.");
     const state = await inventory(db);
-    const sql = (await run("C:/xampp/mysql/bin/mysqldump.exe", [
-      ...clientArgs("root"), "--single-transaction", "--quick", "--skip-lock-tables",
+    const sql = (await run(context?.dumpTool ?? "C:/xampp/mysql/bin/mysqldump.exe", [
+      ...(context ? context.args : clientArgs("root")), "--single-transaction", "--quick", "--skip-lock-tables",
       "--skip-add-locks", "--hex-blob", "--triggers", "--skip-comments",
-      "ldss_scholar_monitor_dev",
-    ], { password: process.env.LDSS_SETUP_ADMIN_PASSWORD ?? "" })).toString("utf8");
-    const payload = { version: 1, database: "ldss_scholar_monitor_dev", createdAt: new Date().toISOString(),
+      source,
+    ], { password: context?.connection.password ?? process.env.LDSS_SETUP_ADMIN_PASSWORD ?? "" })).toString("utf8");
+    const payload = { version: 1, database: source, createdAt: new Date().toISOString(),
       sqlHash: hash(sql), sql, inventory: state };
     await db.query("UNLOCK TABLES");
     locked = false;
     const encrypted = seal(payload, key);
-    await mkdir("output/backups", { recursive: true });
-    const file = resolve("output/backups", `ldss-${Date.now()}-${randomBytes(4).toString("hex")}.ldssbackup`);
+    unseal(encrypted, key, source);
+    await mkdir(context?.directory ?? "output/backups", { recursive: true });
+    const file = resolve(context?.directory ?? "output/backups", `ldss-${Date.now()}-${randomBytes(4).toString("hex")}.ldssbackup`);
     try {
-      await writeFile(file, encrypted, { flag: "wx", mode: 0o600 });
+      await writeFile(`${file}.partial`, encrypted, { flag: "wx", mode: 0o600 });
+      await rename(`${file}.partial`, file);
     } catch (error) {
-      if (error.code !== "EEXIST") await unlink(file).catch(() => {});
+      if (error.code !== "EEXIST") await unlink(`${file}.partial`).catch(() => {});
       throw error;
     }
     return { file, createdAt: payload.createdAt, tables: state.tables.length, bytes: encrypted.length };
@@ -169,11 +178,11 @@ export async function createBackup(key) {
   }
 }
 
-export async function restoreBackup(file, key, { keep = false } = {}) {
+export async function restoreBackup(file, key, { keep = false, context } = {}) {
   if ((await stat(file)).size > MAX_ARCHIVE) throw new Error("Backup exceeds size limit.");
   const archive = await readFile(file);
-  const payload = unseal(archive, key);
-  const db = await localAdmin(); // Local development guard before any DB mutation.
+  const payload = unseal(archive, key, context?.sourceDatabase);
+  const db = context ? await mysql.createConnection(context.admin) : await localAdmin(); // Default development guard retained.
   const suffix = `${Date.now()}_${randomBytes(4).toString("hex")}`;
   const target = `ldss_restore_${suffix}`;
   const username = `ldss_r_${randomBytes(8).toString("hex")}`;
@@ -193,8 +202,8 @@ export async function restoreBackup(file, key, { keep = false } = {}) {
     // as a disposable account with no access to the source or other databases.
     const sql = payload.sql.replace(/^\/\*!\d{5}[^\r\n]*$/gm, (line) =>
       line.replace(/DEFINER=`(?:[^`]|``)*`@`(?:[^`]|``)*`/g, "DEFINER=CURRENT_USER"));
-    await run("C:/xampp/mysql/bin/mysql.exe", [...clientArgs(username), "--binary-mode", "--local-infile=0", target], { input: sql, password });
-    const restored = await mysql.createConnection({ host: "127.0.0.1", port: Number(process.env.DB_PORT ?? 3306),
+    await run(context?.mysqlTool ?? "C:/xampp/mysql/bin/mysql.exe", [...(context ? ["--no-defaults", "--host=127.0.0.1", `--port=${context.admin.port}`, `--user=${username}`, "--default-character-set=utf8mb4"] : clientArgs(username)), "--binary-mode", "--local-infile=0", target], { input: sql, password });
+    const restored = await mysql.createConnection({ host: "127.0.0.1", port: context?.admin.port ?? Number(process.env.DB_PORT ?? 3306),
       user: username, password, database: target });
     let state;
     try {
@@ -210,8 +219,8 @@ export async function restoreBackup(file, key, { keep = false } = {}) {
       elapsedSeconds: (Date.now() - started) / 1000, tables: state.tables.map(({ name, count }) => ({ name, count })),
       checks: ["all table counts and checksums", "columns and indexes", "foreign keys and check constraints",
         "trigger definitions", "view definitions and execution", "unique, foreign-key and check rejection probes"], verified: true };
-    await mkdir("output/backups", { recursive: true });
-    const reportFile = resolve("output/backups", `restore-${suffix}.json`);
+    await mkdir(context?.directory ?? "output/backups", { recursive: true });
+    const reportFile = resolve(context?.directory ?? "output/backups", `restore-${suffix}.json`);
     await writeFile(reportFile, JSON.stringify(report, null, 2) + "\n", { flag: "wx", mode: 0o600 });
     return { target, reportFile, elapsedSeconds: report.elapsedSeconds, retained: keep };
   } finally {

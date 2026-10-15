@@ -1,5 +1,9 @@
 # XAMPP MariaDB / MySQL migration convention
 
+### Diagnostic workflow repair (migration 40)
+
+`20261008010000_f36_workflow_diagnostic_fixes.sql` adds nullable continuing-participation provenance to annual scholarship records and an explicit continuing admission state. Existing rows remain unchanged. Verified-to-verified decisions require a link to the prior event; backend authorization and freshness checks limit this to a genuine recheck of changed evidence. Original receipt and workflow events remain immutable. No new table grants or role permissions are required. Local application followed encrypted backup, successful isolated restore, row preservation and canonical grant-hash comparison (`output/workflow-fixes-20261008/local-migration.json`). Do not edit the applied migration or restore an older backup over newer operational work.
+
 The user chose XAMPP first on 2026-09-29, overriding the source plan's PostgreSQL choice. Local verification uses XAMPP MariaDB 10.4.32. Use InnoDB, UTF-8 (`utf8mb4`), foreign keys, explicit constraints, and UTC timestamps.
 
 F00 adds only `schema_migrations`. Run `npm run setup:local` once on a fresh local setup; it creates a dedicated development database and a runtime identity initially limited to SELECT on this metadata table. It refuses an existing database, user, or `.env`, and does not overwrite them. Then run `npm run db:migrate` for F01 account/session, F02 permission, F03 reference configuration, F04 scholar tables, F06 annual qualification tables, F07 status-change history, and F08 academic records with narrow runtime grants.
@@ -182,3 +186,39 @@ Submission and finalization use the shared current-source validator inside the g
 ### F31 audit viewer
 
 `20261004180000_f31_audit_viewer.sql` adds nullable actor-role snapshots and time/actor indexes to audit_logs. A BEFORE INSERT trigger captures active roles using MariaDB-compatible JSON_QUOTE/GROUP_CONCAT; old events retain NULL. The audit_event_view exposes recorded event evidence through runtime SELECT only. Raw audit SELECT, UPDATE and DELETE remain denied. Own/all scope is enforced inside authenticated service transactions. The export metadata view remains unchanged.
+
+### Workflow Phase 06 checklist ownership bridge
+
+`20261006030000_f36_semester_checklist_owner.sql` permits a checklist to reference either its existing annual scholarship record or a scholar-semester record, never both or neither. The semester owner must match the checklist semester. A unique owner/context key prevents duplicate semester checklists; semester-owned checklists cannot attach to legacy payout cycles. Existing annual ownership, documents and receipts are not converted. No new runtime grants, role permissions, data backfill or scope activation are included. The semester provisioning and coverage-aware service path remains pending; schema support alone does not enable continuing-scholar receiving. Both DDL statements support retries on the supported XAMPP MariaDB version. Preserve the forward migration after use; do not restore over newer operational data to undo this additive bridge.
+
+### Workflow Phase 06 semester setup authorization
+
+`20261006040000_f36_semester_setup.sql` adds `semesters.configure` for Coordinator only. The setup service records authority, document-policy and disabled scope versions for one accepted roster and semester. Staff reads setup; System Administrator technical access does not authorize it. Runtime policy/scope access is SELECT/INSERT only; semester records and document coverage remain read-only. Saving setup creates no receiving records, receipts or entitlements and cannot activate a scope. Correction and controlled activation remain future steps. The local migration was preceded by encrypted backup, verified restore and restored-copy preservation checks.
+
+### Workflow Phase 08 / Checkpoint A submission windows
+
+`20261007010000_f36_payroll_submission_windows.sql` adds regular first/second-semester mappings, versioned semester deadlines, numbered payroll submission windows and their extension history. The four new tables receive runtime SELECT/INSERT only. Only Coordinator receives `payroll.windows.manage`; technical administration does not confer this permission. Mapping pins academic configuration versions. Submission dates use whole days in Asia/Manila, with sequential non-overlapping windows and separate financial processing status. Commands serialize through the existing writer guard and commit history, audit and retry receipts atomically. Legacy records are not backfilled or relabeled. Managed batches remain setup-only until the later receipt, candidate and allocation checkpoints; this migration does not enforce receipt deadlines or enable payment. Local application followed an encrypted backup, verified isolated restore, partial-DDL retry and historical-data/schema preservation checks. Retain the applied forward migration and histories; do not restore an old backup over newer business data to undo it.
+
+### Workflow Phase 08 / Checkpoint B1 enrollment evidence
+
+`20261007020000_f36_enrollment_document_evidence.sql` adds append-only actual-document evidence linked to an initial requirement receipt or a resubmission event. Runtime receives SELECT/INSERT only; existing role permissions are unchanged. A semester enrollment obligation accepts COR or Certificate of Enrollment; COG remains a separate obligation. Each new receipt/resubmission pins the paper actually received. Historical receipts are not relabeled or backfilled. Receipt, document evidence, audit and retry receipt commit atomically. Verification records the current document type alongside existing coverage/placement context. This increment does not activate deadline enforcement, official-membership bridging or financial processing. Local application followed encrypted backup, verified isolated restore, DDL retry and unchanged historical-row/schema checks.
+
+
+### Managed release and graduation confirmation
+
+`20261007050000_f36_graduation_confirmation.sql` adds an immutable final-funded-semester link to an approved graduation decision. It does not backfill earlier decisions or alter existing business rows. Runtime receives SELECT/INSERT for this table and the existing entitlement_release_links table, with no UPDATE/DELETE. Existing Coordinator status/finalization/correction permissions and Staff processing permissions are reused. Payment holds and unclaimed outcomes append existing entitlement events; original allocations, payment records and finalizations remain immutable. Local application passed encrypted backup/restore, repeatable migration and preservation checks (`output/managed-release/migration-local.json`).
+
+
+### Annual New-to-Continuing rollover
+
+`20261008020000_f36_annual_rollover.sql` adds nullable `continuing_from_scholarship_id`, a same-scholar composite foreign key and mutually exclusive Continuing provenance checks. Existing Continuing roster sources remain valid. No historical rows or working-year setting are changed by migration. Runtime uses existing annual INSERT and append-only audit INSERT grants; source IDs are not updateable through runtime grants. Year advancement writes individual outcomes/evidence and a reloadable summary to existing append-only audit records.
+
+Migration 42 (`20261008030000_f36_scholar_intake.sql`) adds immutable year-specific spreadsheet intake provenance. It grants no admission or eligibility and creates no scholar or calendar data. Runtime access is SELECT/INSERT only.
+
+## In-app notifications (migration 43)
+
+`20261008040000_f37_notifications.sql` adds immutable `notification_events` and personal `notification_reads`. An AFTER INSERT audit trigger captures the supported workflow transitions in the same transaction. Event IDs are the immutable audit IDs; requester ownership is captured at that transition. Runtime reads events and can update only the separate personal read-state table through authenticated, owner-scoped endpoints. No role/approval grants are introduced.
+
+Existing pending requests are projected from source tables without replaying completed history. See `docs/NOTIFICATIONS_EVENT_MAP.md` for actual transitions and limits. No pending-task status is persisted in the notification tables.
+
+This migration is validated in disposable databases but is not automatically applied to the working database in this delivery. Activation uses the existing backup/restore and `npm run db:migrate` procedure, followed by `npm run test:db` and the full acceptance gate. The runtime needs SELECT on `notification_events` and SELECT/INSERT/UPDATE/DELETE on `notification_reads`; `grantAuthRuntime` includes these narrowly scoped table grants. Existing business permissions are unchanged. Do not expose a new client against an older schema when activating the release.

@@ -1,0 +1,29 @@
+{
+  "originalRenewalSha256": "f4ef421d4deecad93f59f44ecd85a6671a1bb795a4c8f9d12750b2bfb3c2e529",
+  "files": [
+    {
+      "name": "database-ready.mjs",
+      "sha256": "7cd7b076624cf1b4d8b9022620a1566219e32ff09af3f37ecd53641f3deb2de0"
+    },
+    {
+      "name": "domain-https.patched.ps1",
+      "sha256": "63c92fe8ab2b17a5acb2e8f0c5cc092392ebdd62d5a9db2902840dcc111504d9"
+    },
+    {
+      "name": "install-startup-repair.ps1",
+      "sha256": "d662ce5f5751ae9dcd4d466f8facc03c20b14843a0cc3541d4204509f2c07ed3"
+    },
+    {
+      "name": "OwnedProcess.cs",
+      "sha256": "17630018d9c7b52854510fb61048332911b09a58f1518b5f31703ff80efcbbdb"
+    },
+    {
+      "name": "supervise.ps1",
+      "sha256": "ccdef17b576b321de20b135d61d5ff71ae8b81541991f43b2b81f957f2f3f9c0"
+    },
+    {
+      "name": "test-supervisor.ps1",
+      "sha256": "2543707608d11b5402fba18a6fb5d42530161c58184c52e7cba6b9345e892f74"
+    }
+  ]
+}

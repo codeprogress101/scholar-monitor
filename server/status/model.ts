@@ -44,6 +44,7 @@ export type StatusRequest = {
   actorName: string;
   createdAt: string;
   decision: null | {
+    finalSemesterId?: string | null;
     action: "approve" | "reject" | "cancel";
     actorName: string;
     reason: string;
@@ -53,6 +54,8 @@ export type StatusRequest = {
   };
 };
 export type StatusView = {
+  graduation?: import("./graduation.js").Graduation | null;
+  semesters?: { id: string; name: string }[];
   status: OperationalStatus | null;
   version: number;
   effectiveOn: string | null;

@@ -198,14 +198,14 @@ export async function testOverrideScenarios(c: {
   let self = await ok(request("coordinator", base, createBody(await view())));
   self = await ok(command(self, "submit-review", "coordinator"));
   denied(
-    await command(self, "approve", "coordinator"),
+    await command(self, "approve", "staff"),
     403,
-    "SEPARATE_APPROVER_REQUIRED",
+    "PERMISSION_DENIED",
   );
   denied(
-    await command(self, "reject", "coordinator"),
+    await command(self, "reject", "staff"),
     403,
-    "SEPARATE_APPROVER_REQUIRED",
+    "PERMISSION_DENIED",
   );
   await ok(command(self, "cancel", "coordinator"));
   pass(

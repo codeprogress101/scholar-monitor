@@ -1,0 +1,56 @@
+import { mkdir,writeFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import JSZip from "jszip";
+import type { Connection,RowDataPacket } from "mysql2/promise";
+import type { LightMyRequestResponse } from "fastify";
+import type { OvrDetail } from "../server/ovr/model.js";
+import { digest } from "../server/auth/crypto.js";
+import { today } from "../server/scholars/validation.js";
+type Request=(role:string,path:string,body?:object,key?:string)=>Promise<LightMyRequestResponse>;
+export async function testLegacyContainment({request,admin,batch,destination}:{request:Request;admin:Connection;batch:string;destination:string}){
+  const [[owned]]=await admin.query<RowDataPacket[]>("SELECT DATABASE() AS name");assert.match(owned.name,/^ldss_f19_test_\d+_[a-f0-9]{8}$/);
+  const ok=async(p:Promise<LightMyRequestResponse>)=>{const r=await p;assert.equal(r.statusCode,200,r.body);return r;};
+  const denied=async(p:Promise<LightMyRequestResponse>,code:string)=>{const r=await p;assert.notEqual(r.statusCode,200,r.body);assert.equal(r.json().error.code,code,r.body);};
+  const original=(await ok(request("staff",`/api/v1/ovr-batches/${batch}`))).json<OvrDetail>();
+  const id=randomUUID(),path=`/api/v1/ovr-batches/${id}`,actor=original.batch.actorId!,snapshot=structuredClone(original.finalization!.snapshot);
+  snapshot.batchId=id;snapshot.revision=1;snapshot.code="LEGACY-SYNTHETIC";snapshot.legacyPayrollForm=snapshot.payrollForm;delete snapshot.payrollForm;
+  const header={...original.batch,id,code:snapshot.code,revision:1,state:"finalized",action:"finalize"};
+  await admin.execute("INSERT INTO ovr_batches(id,cycle_id,code,name,created_by,created_at) VALUES(?,?,?,?,?,UTC_TIMESTAMP(6))",[id,header.cycleId,header.code,header.name,actor]);
+  await admin.execute("INSERT INTO ovr_batch_events(batch_id,revision,state,action,snapshot,actor_id,occurred_at) VALUES(?,1,'finalized','finalize',?,?,UTC_TIMESTAMP(6))",[id,JSON.stringify(header),actor]);
+  for(const e of snapshot.entries)await admin.execute("INSERT INTO ovr_entries(batch_id,batch_revision,scholarship_id,action,evidence) VALUES(?,1,?,'add',?)",[id,e.scholarshipId,JSON.stringify(e.evidence)]);
+  await admin.execute("INSERT INTO ovr_finalizations(batch_id,batch_revision,snapshot,snapshot_hash,entry_count,finalized_by,finalized_at) VALUES(?,1,?,?,?,?,UTC_TIMESTAMP(6))",[id,JSON.stringify(snapshot),digest(JSON.stringify(snapshot)),snapshot.entries.length,actor]);
+  const read=async()=>(await ok(request("staff",path))).json<OvrDetail>();
+  await denied(request("coordinator",path+"/submit",{expectedRevision:1,effectiveOn:today(),reason:"Legacy must remain read only",reference:"LEGACY-TEST"}),"LEGACY_PAYROLL_READ_ONLY");
+  await denied(request("staff",path+"/payments",{expectedRevision:1,effectiveOn:today(),reason:"Legacy must remain read only",reference:"LEGACY-TEST",scholarshipId:snapshot.entries[0].scholarshipId,outcome:"paid",amount:"5000.00",remarks:"",receiptConfirmed:true}),"LEGACY_PAYROLL_READ_ONLY");
+  await denied(request("staff",path+"/amendments/request",{expectedRevision:1,change:"add",scholarshipId:randomUUID(),reason:"No new legacy entitlement",reference:"LEGACY-TEST"}),"LEGACY_PAYROLL_READ_ONLY");
+  const before=(await ok(request("staff",path+"/payroll-form?original=true"))).body;
+  await ok(request("staff",path+"/amendments/request",{expectedRevision:1,change:"remove",scholarshipId:snapshot.entries[1].scholarshipId,reason:"Correct historical payroll membership",reference:"LEGACY-REMOVE"}));
+  let detail=await read();
+  await ok(request("coordinator",path+"/amendments/approve",{expectedRevision:detail.batch.revision,amendmentId:detail.amendments[0].id,reason:"Coordinator verified removal against original roster",reference:"LEGACY-APPROVED"}));
+  detail=await read();assert.equal(detail.effectiveFinalization!.snapshot.entries.length,1);
+  const html=(await ok(request("staff",path+"/payroll-form"))).body;assert.equal((html.match(/class="student"/g)??[]).length,1);
+  assert.equal((await ok(request("staff",path+"/payroll-form?original=true"))).body,before);
+  const word=await ok(request("staff",path+"/payroll-form?format=docx")),zip=await JSZip.loadAsync(word.rawPayload),xml=await zip.file("word/document.xml")!.async("string");
+  await mkdir("output/readiness-remediation-20261010",{recursive:true});await writeFile("output/readiness-remediation-20261010/amended-payroll.docx",word.rawPayload);
+  assert.ok(xml.includes(snapshot.legacyPayrollForm!.rows.find(r=>r.scholarshipId===snapshot.entries[0].scholarshipId)!.firstName));assert.ok(!xml.includes(snapshot.legacyPayrollForm!.rows.find(r=>r.scholarshipId===snapshot.entries[1].scholarshipId)!.firstName));
+  assert.deepEqual(detail.finalization!.snapshot,snapshot);
+  // Seed an already-paid historical record in the owned fixture only. Conversion must not rewrite it.
+  const payment=randomUUID();
+  await admin.execute("INSERT INTO payment_records(id,batch_id,batch_revision,cycle_id,scholarship_id,outcome,amount,effective_on,reference_text,remarks,actor_id,actor_name,recorded_at) VALUES(?,?,?,?,?,'paid',5000,?,'SYNTHETIC-HISTORICAL','Historical fixture only',?,?,UTC_TIMESTAMP(6))",[payment,id,detail.batch.revision,header.cycleId,snapshot.entries[0].scholarshipId,today(),actor,header.actorName]);
+  const otherBatch=(await ok(request("staff",`/api/v1/ovr-batches/${batch}`))).json<OvrDetail>();
+  assert.equal(otherBatch.semesterPayments!.find(p=>p.scholarshipId===snapshot.entries[0].scholarshipId)!.paidBatchId,id);
+  const review=(await ok(request("coordinator",path+"/conversion"))).json();
+  const body={sourceHash:review.sourceHash,destinationBatchId:destination,reviewed:true,reason:"Reconciled historical payments and allocations",dispositions:[{scholarshipId:snapshot.entries[0].scholarshipId,disposition:"preserve_paid"}]};
+  await denied(request("staff",path+"/conversion",body),"PERMISSION_DENIED");
+  await denied(request("system_admin",path+"/conversion",body),"PERMISSION_DENIED");
+  await denied(request("coordinator",path+"/conversion",{...body,sourceHash:"0".repeat(64)}),"SOURCE_CHANGED");
+  await denied(request("coordinator",path+"/conversion",{...body,dispositions:[{scholarshipId:snapshot.entries[0].scholarshipId,disposition:"reprocess_unclaimed"}]}),"PRESERVE_PAID_HISTORY");
+  await admin.query("CREATE TRIGGER fail_conversion_audit BEFORE INSERT ON audit_logs FOR EACH ROW BEGIN IF NEW.event_type='payroll.legacy_conversion' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic conversion rollback'; END IF; END");
+  const key=randomUUID();try{assert.equal((await request("coordinator",path+"/conversion",body,key)).statusCode,500);}finally{await admin.query("DROP TRIGGER fail_conversion_audit");}
+  assert.equal((await admin.execute<RowDataPacket[]>("SELECT id FROM payroll_legacy_conversions WHERE source_batch_id=?",[id]))[0].length,0);
+  await ok(request("coordinator",path+"/conversion",body,key));await ok(request("coordinator",path+"/conversion",body,key));
+  assert.equal((await read()).payments[0].id,payment);assert.equal((await read()).payments[0].amount,"5000.00");
+  assert.equal((await admin.execute<RowDataPacket[]>("SELECT id FROM payroll_reprocessing WHERE source_batch_id=?",[id]))[0].length,0);
+  console.log("PASS legacy financial read-only boundary, amended HTML/Word membership, unchanged original export/signatories, reviewed conversion roles, stale-source rejection, preserved Paid history, no new entitlement, audit rollback and exact retries");
+}

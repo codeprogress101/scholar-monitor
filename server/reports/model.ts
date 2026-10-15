@@ -4,7 +4,7 @@ export const REPORTS = {
   missing: { label: "Missing requirements", permission: "scholars.read" },
   verification: { label: "For verification", permission: "scholars.read" },
   eligibility: { label: "Eligibility", permission: "scholars.read" },
-  ovr: { label: "OVR status", permission: "ovr.prepare" },
+  ovr: { label: "Payroll status", permission: "ovr.prepare" },
   payments: { label: "Paid and unpaid", permission: "ovr.prepare" },
   masterlists: {
     label: "Masterlist versions",

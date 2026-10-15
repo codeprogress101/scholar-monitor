@@ -1,4 +1,23 @@
+import { SharedSemesterDocumentsService } from "./requirements/shared-semester-documents.js";
+import { EntrantGradingCardService } from "./requirements/entrant-grading-card.js";
+import { LegacyConversionService } from "./ovr/legacy-conversion.js";
+import { PlacementPolicyService } from "./academic/placement-policy-service.js";
+import { TreasuryService } from "./ovr/treasury-service.js";
+import { registerBackupStatus } from "./backup-status.js";
+import { NotificationService } from "./notifications/service.js";
+import { registerNotifications } from "./notifications/routes.js";
+import { SubmissionWindowService } from "./payouts/submission-service.js";
+import { registerSubmissionWindows } from "./payouts/submission-routes.js";
 import { publicFailure } from "./error-response.js";
+import { ContinuingService } from "./continuing/service.js";
+import { SemesterSetupService } from "./continuing/semester-setup.js";
+import { SemesterReceivingService } from "./continuing/semester-receiving.js";
+import { SemesterAcademicService } from "./continuing/semester-academic.js";
+import { SemesterEligibilityPreviewService } from "./continuing/semester-eligibility-preview.js";
+import { SemesterComplianceService } from "./continuing/semester-compliance.js";
+import { registerSemesterReceiving } from "./continuing/semester-receiving-routes.js";
+import { registerSemesterSetup } from "./continuing/semester-setup-routes.js";
+import { registerContinuing } from "./continuing/routes.js";
 import { routineEvidence } from "./routine-evidence.js";
 import { AuditService } from "./audit/service.js";
 import { registerAudit } from "./audit/routes.js";
@@ -30,6 +49,8 @@ import { registerRequirementWaiver } from "./requirements/waiver-routes.js";
 import { RequirementWorkflowService } from "./requirements/workflow-service.js";
 import { registerRequirementWorkflow } from "./requirements/workflow-routes.js";
 import { RequirementReceiptService } from "./requirements/receipt-service.js";
+import { RequirementTimingService } from "./requirements/timing-service.js";
+import { registerRequirementTiming } from "./requirements/timing-routes.js";
 import { registerRequirementReceipts } from "./requirements/receipt-routes.js";
 import { RequirementInstancesService } from "./requirements/instances-service.js";
 import { registerRequirementInstances } from "./requirements/instances-routes.js";
@@ -40,6 +61,7 @@ import { registerAmendments } from "./masterlists/amendment-routes.js";
 import { MasterlistWorkflowService } from "./masterlists/workflow-service.js";
 import { MasterlistService } from "./masterlists/service.js";
 import { registerMasterlists } from "./masterlists/routes.js";
+import { MasterlistAdditionService } from "./masterlists/additions.js";
 import { AcademicChangesService } from "./academic/changes-service.js";
 import { registerAcademicChanges } from "./academic/changes-routes.js";
 import { AcademicService } from "./academic/service.js";
@@ -94,7 +116,7 @@ export function buildApp(
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 1024 * 1024,
     requestTimeout: 30_000,
-    trustProxy: false,
+    trustProxy: config.TRUST_LOOPBACK_PROXY ? ["127.0.0.1", "::1"] : false,
     requestIdHeader: false,
     genReqId: () => randomUUID(),
   });
@@ -105,6 +127,17 @@ export function buildApp(
       request.body = routineEvidence(request.routeOptions.url ?? request.url, request.body);
   });
   app.register(cookie);
+  registerSubmissionWindows(app, new SubmissionWindowService(new AuthorizationService(database.pool)));
+  registerContinuing(app, new ContinuingService(database.pool));
+  registerSemesterSetup(app, new SemesterSetupService(database.pool));
+  const sharedDocuments = new SharedSemesterDocumentsService(database.pool);
+  const entrantCards = new EntrantGradingCardService(database.pool);
+  app.get<{Params:{id:string}}>("/api/v1/requirement-instances/:id/entrant-card",{config:{permission:"scholars.read"}},r=>entrantCards.read(r.authSession!.user.id,r.params.id));
+  app.post<{Params:{id:string}}>("/api/v1/requirement-instances/:id/entrant-card",{config:{permission:"semesters.configure"},bodyLimit:4096},r=>entrantCards.command(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
+  app.get<{ Params: { id: string; semester: string } }>("/api/v1/scholars/:id/semester-requirements/:semester/shared-documents", { config: { permission: "scholars.read" } }, r => sharedDocuments.read(r.authSession!.user.id, r.params.id, r.params.semester));
+  app.post<{ Params: { id: string; semester: string } }>("/api/v1/scholars/:id/semester-requirements/:semester/shared-documents/reconcile", { config: { permission: "semesters.configure" }, bodyLimit: 4096 }, r => sharedDocuments.reconcile(r.authSession!.user.id, r.params.id, r.params.semester, r.headers["idempotency-key"], r.body, r.id));
+  app.post<{ Params: { id: string; semester: string } }>("/api/v1/scholars/:id/semester-requirements/:semester/shared-documents/reuse", { config: { permission: "semesters.configure" }, bodyLimit: 4096 }, r => sharedDocuments.reuse(r.authSession!.user.id, r.params.id, r.params.semester, r.headers["idempotency-key"], r.body, r.id));
+  registerSemesterReceiving(app, new SemesterReceivingService(database.pool), new SemesterAcademicService(database.pool), new SemesterComplianceService(database.pool), new SemesterEligibilityPreviewService(database.pool));
   registerAuth(
     app,
     config,
@@ -120,6 +153,8 @@ export function buildApp(
     options.authorization ?? new AuthorizationService(database.pool),
   );
   registerAudit(app, new AuditService(new AuthorizationService(database.pool)));
+  registerBackupStatus(app, config.BACKUP_STATUS_FILE, config.DB_NAME, config.APP_ENV);
+  registerNotifications(app, new NotificationService(new AuthorizationService(database.pool)));
   registerDashboard(
     app,
     new DashboardService(new AuthorizationService(database.pool)),
@@ -148,10 +183,19 @@ export function buildApp(
     app,
     new RequirementInstancesService(new AuthorizationService(database.pool)),
   );
+  registerRequirementTiming(app, new RequirementTimingService(new AuthorizationService(database.pool)));
   registerRequirementReceipts(
     app,
     new RequirementReceiptService(new AuthorizationService(database.pool)),
   );
+  const placementPolicy = new PlacementPolicyService(new AuthorizationService(database.pool));
+  app.post<{Params:{id:string}}>("/api/v1/academic-records/:id/policy-reviews",{bodyLimit:8192,config:{permission:"academic.changes.approve"}},r=>placementPolicy.record(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
+  const conversion = new LegacyConversionService(new AuthorizationService(database.pool));
+  app.get<{Params:{id:string}}>("/api/v1/ovr-batches/:id/conversion",{config:{permission:"ovr.finalize"}},r=>conversion.read(r.authSession!.user.id,r.params.id));
+  app.post<{Params:{id:string}}>("/api/v1/ovr-batches/:id/conversion",{bodyLimit:131072,config:{permission:"ovr.finalize"}},r=>conversion.convert(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
+  const treasury = new TreasuryService(new AuthorizationService(database.pool));
+  app.post<{Params:{id:string}}>("/api/v1/ovr-batches/:id/treasury-evidence", {bodyLimit:4096, config:{permission:"ovr.process"}}, r => treasury.record(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
+  for(const action of ["request","approve","reject"] as const) app.post<{Params:{id:string}}>(`/api/v1/ovr-batches/:id/historical-receipts/${action}`, {bodyLimit:8192, config:{permission:action === "request" ? "ovr.process" : "payments.corrections.approve"}}, r => treasury.historical(r.authSession!.user.id,r.params.id,action,r.headers["idempotency-key"],r.body,r.id));
   registerOvrProcessing(
     app,
     new OvrProcessingService(new AuthorizationService(database.pool)),
@@ -213,6 +257,9 @@ export function buildApp(
     app,
     new MasterlistAmendmentService(new AuthorizationService(database.pool)),
   );
+  const additions = new MasterlistAdditionService(new AuthorizationService(database.pool));
+  app.get<{ Params: { id: string } }>("/api/v1/masterlists/:id/addition", { config: { permission: "masterlists.prepare" } }, r => additions.view(r.authSession!.user.id, r.params.id));
+  app.post<{ Params: { id: string } }>("/api/v1/masterlists/:id/addition", { config: { permission: "masterlists.prepare" }, bodyLimit: 4096 }, r => additions.command(r.authSession!.user.id, r.params.id, r.headers["idempotency-key"], r.body, r.id));
   registerMasterlists(
     app,
     new MasterlistService(new AuthorizationService(database.pool)),

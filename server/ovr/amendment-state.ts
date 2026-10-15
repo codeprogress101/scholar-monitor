@@ -81,7 +81,7 @@ export function requireAmendable(state: string) {
     throw new AuthError(
       423,
       "OVR_ALREADY_CLOSED",
-      "Closed OVR batches cannot be amended.",
+      "Closed Payroll batches cannot be amended.",
     );
   if (!["finalized", "submitted"].includes(state))
     throw new AuthError(

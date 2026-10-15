@@ -1,4 +1,6 @@
 import type { WorkflowView } from "../server/masterlists/workflow-model.js";
+import {testConsolidation} from "./test-masterlist-consolidation-scenarios.js";
+import { officialMembership } from "../server/eligibility/official-membership.js";
 import { digest } from "../server/auth/crypto.js";
 import "dotenv/config";
 import assert from "node:assert/strict";
@@ -53,7 +55,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -452,9 +454,9 @@ try {
   await ok(move("submit-verification", 6));
   await ok(move("submit-approval", 7, "coordinator"));
   expectError(
-    await move("approve", 8, "coordinator"),
+    await move("approve", 8, "staff"),
     403,
-    "SELF_APPROVAL_DENIED",
+    "PERMISSION_DENIED",
   );
   const pending = await request(
     "staff",
@@ -482,7 +484,7 @@ try {
     "MASTERLIST_AMENDMENT_REQUIRED",
   );
   pass(
-    "Approval requires fresh source snapshots and a different actor; approved membership blocks pending and new academic changes",
+    "Approval requires fresh source snapshots and Coordinator permission; approved membership blocks pending and new academic changes",
   );
   // A legitimate profile revision after approval must also be caught before publication.
   await admin.execute(
@@ -715,10 +717,110 @@ try {
     }),
   );
   if (!process.argv.includes("--browser")) {
-    await ok(move("submit-verification", 2, "staff", fresh.id));
-    await ok(move("submit-approval", 3, "staff", fresh.id));
-    await ok(move("approve", 4, "coordinator", fresh.id));
-    await ok(move("publish", 5, "coordinator", fresh.id));
+    const attach = (source: string, version: number, target: string | null, targetVersion?: number, role="staff", key=randomUUID()) => request(role, `/api/v1/masterlists/${source}/addition`, {expectedVersion:version,targetId:target,...(targetVersion?{targetVersion}:{}),...evidence},key);
+    expectError(await attach(fresh.id,2,draft.id,16,"system_admin"),403,"PERMISSION_DENIED");
+    const wrongYear = await createDraft(nextYear.id,"Wrong year addition");
+    expectError(await attach(wrongYear.id,1,draft.id,16),409,"INVALID_ADDITION_TARGET");
+    const attachKey=randomUUID();
+    await ok(attach(fresh.id,2,draft.id,16,"staff",attachKey));
+    await ok(attach(fresh.id,2,draft.id,16,"staff",attachKey));
+    const preview=(await request("staff",`/api/v1/masterlists/${fresh.id}/addition`)).json();
+    assert.equal(preview.existing.length,1); assert.equal(preview.additions,1); assert.deepEqual(preview.issues,[]);
+    await ok(move("submit-verification", 3, "staff", fresh.id));
+    expectError(await attach(fresh.id,4,null),409,"RETURN_TO_DRAFT_REQUIRED");
+    await ok(move("submit-approval", 4, "staff", fresh.id));
+    await ok(move("approve", 5, "coordinator", fresh.id));
+    await admin.query("CREATE TRIGGER fail_addition_audit BEFORE INSERT ON audit_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic failure'");
+    assert.equal((await move("publish",6,"coordinator",fresh.id)).statusCode,500);
+    await admin.query("DROP TRIGGER fail_addition_audit");
+    assert.equal((await workflow(fresh.id)).publication,null);
+    const [rollbackAddition] = await admin.execute<RowDataPacket[]>("SELECT (SELECT COUNT(*) FROM masterlist_revisions WHERE masterlist_id=?) AS revisions,(SELECT COUNT(*) FROM masterlist_activations WHERE scholarship_id=?) AS activations,(SELECT COUNT(*) FROM masterlist_entries WHERE masterlist_id=?) AS members",[fresh.id,secondAnnual.json().id,fresh.id]);
+    assert.deepEqual([Number(rollbackAddition[0].revisions),Number(rollbackAddition[0].activations),Number(rollbackAddition[0].members)],[0,0,1]);
+    const publishKey=randomUUID();
+    const competing=await Promise.all([move("publish",6,"coordinator",fresh.id,publishKey),move("publish",6,"reviewer",fresh.id)]);
+    assert.deepEqual(competing.map(r=>r.statusCode).sort(),[200,409]);
+    const combined=await workflow(fresh.id);
+    assert.equal(combined.publication!.snapshot.entries.length,2);
+    assert.equal(combined.publication!.snapshot.lineage!.parentId,draft.id);
+    assert.deepEqual(combined.publication!.snapshot.entries[0].snapshot,state.publication!.snapshot.entries[0].snapshot);
+    assert.deepEqual((await request("staff",`/api/v1/masterlists/${fresh.id}/publication`)).json(),combined.publication);
+    assert.equal(JSON.stringify((await workflow()).publication),publicationBytes);
+    await ok(move("lock",7,"coordinator",fresh.id));
+    const dbConnection=await runtime.getConnection();
+    try {
+      for(const annualId of [annual.json().id,secondAnnual.json().id]) {
+        const member=await officialMembership(dbConnection,{academicYearId:year.id},annualId);
+        assert.equal(member.official.masterlistId,fresh.id); assert.equal(member.official.rootId,draft.id); assert.equal(member.official.valid,true);
+        assert.equal(member.official.effectiveOn,"2026-09-03");
+      }
+    } finally { dbConnection.release(); }
+    const [activationCounts]=await admin.query<RowDataPacket[]>("SELECT scholarship_id,COUNT(*) AS n FROM masterlist_activations GROUP BY scholarship_id");
+    assert.ok(activationCounts.every(r=>r.n===1));
+    const staleTarget=await createDraft(year.id,"Stale parent addition");
+    expectError(await attach(staleTarget.id,1,draft.id,16),409,"INVALID_ADDITION_TARGET");
+    await ok(attach(staleTarget.id,1,fresh.id,8));
+    const empty=(await request("staff",`/api/v1/masterlists/${staleTarget.id}/addition`)).json();
+    assert.ok(empty.issues.some((i:{code:string})=>i.code==="EMPTY_DRAFT"));
+    await ok(attach(staleTarget.id,2,null));
+    assert.equal((await request("staff",`/api/v1/masterlists/${staleTarget.id}/addition`)).json().targetId,null);
+    await ok(move("return-draft",5,"coordinator",duplicate.id));
+    await ok(attach(duplicate.id,6,fresh.id,8));
+    const duplicatePreview=(await request("staff",`/api/v1/masterlists/${duplicate.id}/addition`)).json();
+    assert.ok(duplicatePreview.issues.some((i:{code:string;scholarId:string})=>i.code==="DUPLICATE_ENTRY"&&i.scholarId===person.id));
+    assert.ok(duplicatePreview.issues.some((i:{code:string})=>i.code==="ALREADY_ACTIVATED"));
+    expectError(await move("submit-verification",7,"staff",duplicate.id),422,"CANDIDATE_INVALID");
+    const thirdResponse=await request("staff","/api/v1/scholars",{expectedVersion:0,reason:"Synthetic third addition",fields:{firstName:"UniqueThird",lastName:"AdditionFixture",academicYearId:year.id,contact:{}}});
+    assert.equal(thirdResponse.statusCode,200,thirdResponse.body);
+    const third=thirdResponse.json<ScholarResult>();
+    await ok(request("staff",`/api/v1/scholars/${third.id}/academic-records`,body()));
+    const thirdAnnual=await ok(request("staff",`/api/v1/scholars/${third.id}/scholarships`,{expectedVersion:0,academicYearId:year.id,effectiveOn:"2026-09-01",...evidence}));
+    for(const [index,action] of ["exam-passed","qualify","select"].entries()) await ok(request(action==="exam-passed"?"staff":"coordinator",`/api/v1/scholarships/${thirdAnnual.id}/qualification/${action}`,{expectedVersion:index+1,effectiveOn:"2026-09-01",...evidence}));
+    await ok(request("staff",`/api/v1/masterlists/${staleTarget.id}/entries`,{action:"add",expectedVersion:3,scholarId:third.id,awardNumber:"official-002",...evidence}));
+    await ok(attach(staleTarget.id,4,fresh.id,8));
+    const awardConflict=(await request("staff",`/api/v1/masterlists/${staleTarget.id}/addition`)).json();
+    assert.ok(awardConflict.issues.some((i:{code:string;scholarId:string})=>i.code==="AWARD_NUMBER_CONFLICT"&&i.scholarId===third.id));
+    expectError(await move("submit-verification",5,"staff",staleTarget.id),422,"CANDIDATE_INVALID");
+    await ok(request("staff",`/api/v1/masterlists/${staleTarget.id}/entries`,{action:"refresh",expectedVersion:5,scholarId:third.id,awardNumber:"OFFICIAL-003",...evidence}));
+    for(const [index,action] of ["submit-verification","submit-approval","approve"].entries()) await ok(move(action,index+6,index<2?"staff":"coordinator",staleTarget.id));
+    // A competing amendment advances the target after this addition was approved.
+    const targetAmendmentResponse=await request("staff",`/api/v1/masterlists/${fresh.id}/amendments`,{expectedVersion:8,scholarId:second.id,kind:"award_number",awardNumber:"OFFICIAL-002-UPDATED",effectiveOn:"2026-09-04",...evidence});
+    assert.equal(targetAmendmentResponse.statusCode,200,targetAmendmentResponse.body);
+    const targetAmendment=targetAmendmentResponse.json<{amendmentId:string}>();
+    await ok(request("coordinator",`/api/v1/masterlist-amendments/${targetAmendment.amendmentId}/approve`,evidence));
+    const revisedTargetResponse=await request("coordinator",`/api/v1/masterlist-amendments/${targetAmendment.amendmentId}/publish`,evidence);
+    assert.equal(revisedTargetResponse.statusCode,200,revisedTargetResponse.body);
+    const revisedTarget=revisedTargetResponse.json<{masterlistId:string}>();
+    expectError(await move("publish",9,"coordinator",staleTarget.id),422,"CANDIDATE_INVALID");
+    assert.equal((await workflow(staleTarget.id)).publication,null);
+    await ok(move("return-draft",9,"coordinator",staleTarget.id));
+    await ok(attach(staleTarget.id,10,revisedTarget.masterlistId,2));
+    expectError(await move("publish",11,"coordinator",staleTarget.id),409,"INVALID_STATE_TRANSITION");
+    for(const [index,action] of ["submit-verification","submit-approval","approve"].entries()) await ok(move(action,index+11,index<2?"staff":"coordinator",staleTarget.id));
+    expectError(await move("publish",14,"coordinator",staleTarget.id),409,"INVALID_EFFECTIVE_DATE");
+    const thirdPublishKey=randomUUID();
+    const thirdPublish=await ok(move("publish",14,"coordinator",staleTarget.id,thirdPublishKey,{effectiveOn:"2026-09-05"}));
+    assert.deepEqual(await ok(move("publish",14,"coordinator",staleTarget.id,thirdPublishKey,{effectiveOn:"2026-09-05"})),thirdPublish);
+    await ok(move("lock",15,"coordinator",staleTarget.id));
+    const thirdPublication=(await workflow(staleTarget.id)).publication!;
+    assert.equal(thirdPublication.snapshot.entries.length,3);
+    assert.equal(thirdPublication.snapshot.lineage!.versionLabel,"1.3");
+    assert.equal(thirdPublication.snapshot.entries.find(e=>e.scholarId===second.id)!.awardNumber,"OFFICIAL-002-UPDATED");
+    const amendment=await request("staff",`/api/v1/masterlists/${staleTarget.id}/amendments`,{expectedVersion:16,scholarId:third.id,kind:"award_number",awardNumber:"OFFICIAL-003-CORRECTED",effectiveOn:"2026-09-10",...evidence});
+    assert.equal(amendment.statusCode,200,amendment.body);
+    const amendmentId=amendment.json().amendmentId;
+    await ok(request("coordinator",`/api/v1/masterlist-amendments/${amendmentId}/approve`,evidence));
+    const amendmentPublished=await request("coordinator",`/api/v1/masterlist-amendments/${amendmentId}/publish`,evidence);
+    assert.equal(amendmentPublished.statusCode,200,amendmentPublished.body);
+    const connection=await runtime.getConnection();
+    try { for(const annualId of [annual.json().id,secondAnnual.json().id,thirdAnnual.id]) {
+      const membership=(await officialMembership(connection,{academicYearId:year.id},annualId)).official;
+      assert.equal(membership.masterlistId,amendmentPublished.json().masterlistId);
+      assert.equal(membership.effectiveOn,annualId===thirdAnnual.id?"2026-09-05":"2026-09-03");
+    } } finally {connection.release();}
+    assert.equal(JSON.stringify((await workflow()).publication),publicationBytes);
+    pass("A third draft extends the combined revision; a later amendment resolves as current for original and newly activated scholars");
+    pass("Addition publication preserves original snapshots, combines membership, activates once, enforces roles/years/targets, rolls back failures and serializes competing publication");
+    await testConsolidation({admin,runtime,request,year:year.id,school:school.id,course:course.id,target:amendmentPublished.json().masterlistId});
     const lockedYear = await request(
       "system_admin",
       `/api/v1/configuration/academic-years/${year.id}`,
@@ -729,10 +831,11 @@ try {
       },
     );
     assert.equal(lockedYear.statusCode, 200, lockedYear.body);
-    await ok(move("lock", 6, "coordinator", fresh.id));
+    expectError(await attach(duplicate.id,7,amendmentPublished.json().masterlistId,2),409,"RETURN_TO_DRAFT_REQUIRED");
+    // Combined official list was already locked above.
     assert.equal((await workflow(fresh.id)).status, "locked");
     pass(
-      "An already-published snapshot can be locked after its academic year closes",
+      "Closed academic years reject addition attachment and preserve existing locked publications",
     );
   }
   console.log(

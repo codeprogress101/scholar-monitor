@@ -1,3 +1,4 @@
+import type { AcademicChangeView } from "../server/academic/changes-model.js";
 import type {
   AmendmentView,
   AmendmentResult,
@@ -57,7 +58,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -456,9 +457,9 @@ try {
   await ok(move("submit-verification", 6));
   await ok(move("submit-approval", 7, "coordinator"));
   expectError(
-    await move("approve", 8, "coordinator"),
+    await move("approve", 8, "staff"),
     403,
-    "SELF_APPROVAL_DENIED",
+    "PERMISSION_DENIED",
   );
   const pending = await request(
     "staff",
@@ -486,7 +487,7 @@ try {
     "MASTERLIST_AMENDMENT_REQUIRED",
   );
   pass(
-    "Approval requires fresh source snapshots and a different actor; approved membership blocks pending and new academic changes",
+    "Approval requires fresh source snapshots and Coordinator permission; approved membership blocks pending and new academic changes",
   );
   // A legitimate profile revision after approval must also be caught before publication.
   await admin.execute(
@@ -555,6 +556,13 @@ try {
   );
   state = await workflow();
   assert.equal(state.status, "published");
+  for (const role of ["staff", "coordinator"]) {
+    const guidance = await request(role, `/api/v1/academic-records/${academic.id}/changes`);
+    assert.equal(guidance.statusCode, 200, guidance.body);
+    assert.equal(guidance.json().blockedReason, "official_membership");
+    assert.equal(guidance.json().officialMasterlist.id, draft.id);
+    assert.equal(guidance.json().officialMasterlist.status, "published");
+  }
   assert.equal(
     state.publication!.snapshot.entries[0].snapshot.placement.yearLevel,
     "Second year",
@@ -666,7 +674,7 @@ try {
     expectedVersion: 16,
     scholarId: person.id,
     kind: "year_level_correction",
-    yearLevel: "Third year",
+    yearLevel: "First year",
     effectiveOn: "2026-09-04",
     ...evidence,
   };
@@ -700,6 +708,13 @@ try {
     const r = await response;
     assert.equal(r.statusCode, 200, r.body);
     return r.json<AmendmentResult>();
+  };
+  const typedTransfer={expectedVersion:16,scholarId:person.id,kind:"both",schoolName:"Typed Transfer College",courseName:"Typed Transfer Course",effectiveOn:"2026-09-04",...evidence};
+  expectError(await propose(typedTransfer),409,"PLACEMENT_POLICY_REVIEW_REQUIRED");
+  const policyReview=async(schoolId:string,courseId:string)=>{
+    const current=(await request("staff",`/api/v1/academic-records/${academic.id}/changes`)).json<AcademicChangeView>();
+    const response=await request("coordinator",`/api/v1/academic-records/${academic.id}/policy-reviews`,{expectedVersion:current.version,schoolId,courseId,yearLevel:current.current.yearLevel,effectiveOn:"2026-09-04",priorShiftCount:0,secondYearBoundaryOn:"2027-06-01",permissionGrantedOn:"2026-08-01",permissionReference:"Synthetic committee prior permission",historyReference:"Reviewed complete synthetic history and boundary",sourceCategory:"degree",destinationCategory:"degree",reviewed:true});
+    assert.equal(response.statusCode,200,response.body);
   };
   for (const role of ["system_admin", "unassigned"]) {
     expectError(
@@ -760,9 +775,9 @@ try {
     ),
   );
   expectError(
-    await decision(self.amendmentId, "approve"),
+    await decision(self.amendmentId, "approve", "staff"),
     403,
-    "SELF_APPROVAL_DENIED",
+    "PERMISSION_DENIED",
   );
   await result(decision(self.amendmentId, "cancel"));
   pass(
@@ -830,14 +845,14 @@ try {
   assert.equal((await workflow(v11)).status, "locked");
   assert.equal(
     amendedOfficial.snapshot.entries[0].snapshot.placement.yearLevel,
-    "Third year",
+    "First year",
   );
   assert.equal(amendedOfficial.snapshot.lineage!.versionLabel, "1.1");
   assert.equal(
     amendedOfficial.hash,
     digest(JSON.stringify(amendedOfficial.snapshot)),
   );
-  assert.equal((await list())[0].yearLevel, "Third year");
+  assert.equal((await list())[0].yearLevel, "First year");
   assert.equal(JSON.stringify((await workflow()).publication), originalJSON);
   const [statusAfter] = await admin.execute<RowDataPacket[]>(
     "SELECT operational_status,status_version,status_effective_on FROM scholarship_records WHERE id=?",
@@ -881,7 +896,7 @@ try {
     (await workflow(v11)).publication!.snapshot.entries[0].awardNumber,
     null,
   );
-  assert.equal((await list())[0].yearLevel, "Third year");
+  assert.equal((await list())[0].yearLevel, "First year");
   pass(
     "Latest-version checks prevent forks; 1.2 preserves earlier releases and corrects only the award number",
   );
@@ -889,6 +904,7 @@ try {
     code: "AMEND-COURSE",
     name: "Amendment destination",
   });
+  await policyReview(school.id,destination.id);
   const courseRequest = await result(
     propose(
       {
@@ -926,6 +942,7 @@ try {
       code: "AMEND-COURSE-2",
       name: "Amended Degree",
     });
+  await policyReview(newSchool.id,newCourse.id);
   const both = await result(
     propose(
       {

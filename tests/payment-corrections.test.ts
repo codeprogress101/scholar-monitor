@@ -12,12 +12,12 @@ describe("payment corrections", () => {
     reason: "Correct receipt evidence",
     reference: "PAY-025",
     outcome: "paid",
-    amount: "100.00",
+    amount: "5000.00",
     effectiveOn: "2026-01-01",
     remarks: "",
   };
   it("rejects malformed money, future dates and forged actors", () => {
-    for (const amount of ["abc", "1.2.3", "0.00", "-1.00", "1e3"])
+    for (const amount of ["1000.00", "4999.99", "5000.01", "abc", "1.2.3", "0.00", "-1.00", "1e3"])
       expect(() =>
         parsePaymentCorrection("correct", { ...input, amount }),
       ).toThrow();
@@ -35,14 +35,14 @@ describe("payment corrections", () => {
     expect(() =>
       parsePaymentCorrection("correct", {
         ...input,
-        outcome: "not_paid",
+        outcome: "not_paid", unpaidReason: "review",
         amount: "0.00",
       }),
     ).toThrow();
     expect(
       parsePaymentCorrection("correct", {
         ...input,
-        outcome: "not_paid",
+        outcome: "not_paid", unpaidReason: "review",
         amount: "0.00",
         remarks: "Receipt was reversed",
       }),

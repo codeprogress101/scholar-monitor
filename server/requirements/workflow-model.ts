@@ -26,6 +26,7 @@ export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
   waived: "Waived",
 };
 export type VerificationContext = {
+  entrantCard?: import("./entrant-grading-card.js").EntrantCard;
   scholarId: string;
   scholarVersion: number;
   humanId: string;
@@ -34,15 +35,27 @@ export type VerificationContext = {
   yearCode: string;
   semesterId: string;
   semesterCode: string;
-  schoolId: string;
+  schoolId: string | null;
   schoolName: string;
-  courseId: string;
+  courseId: string | null;
   courseName: string;
   academicVersion: number;
   definitionVersionId: string;
   placementEffectiveOn: string | null;
   policyDate: string;
+  coverageId?: string;
+  semesterRevision?: number;
+  receivingSemesterId?: string;
+  receivingSemesterCode?: string;
+  documentKind?: "cor" | "cog";
+  receivedDocumentType?: import("./document-evidence.js").ReceivedDocumentType;
+  predecessorSourceHash?: string;
 };
+export function verificationMatches(current: VerificationContext, saved?: VerificationContext): boolean {
+  return Boolean(saved && Object.entries(current).every(([key, value]) =>
+    (key === "predecessorSourceHash" && saved.predecessorSourceHash === undefined) ||
+    JSON.stringify(value) === JSON.stringify(saved[key as keyof VerificationContext])));
+}
 export type RequirementWorkflowEvent = {
   id: string;
   version: number;
@@ -57,9 +70,13 @@ export type RequirementWorkflowEvent = {
   actorName: string;
   recordedAt: string;
   details: {
+    automaticRouting?: boolean;
+    decisionAction?: string;
     verification?: VerificationContext;
     checks?: Record<string, boolean>;
+    attestation?: "all-five-checked";
     receipt?: {
+      documentType?: import("./document-evidence.js").ReceivedDocumentType;
       receivedOn: string;
       physicalReference: string | null;
       storageLocation: string;

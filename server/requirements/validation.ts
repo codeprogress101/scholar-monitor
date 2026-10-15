@@ -12,6 +12,7 @@ const date = z.iso.date().refine((d) => d >= "1900-01-01" && d <= "9999-12-31");
 const fields = z
   .object({
     name: text(1, 160),
+    documentKind: z.enum(["enrollment", "grades", "other"]).nullable().optional(),
     instructions: text(1, 2000),
     appliesTo: z.enum(["semester", "payout"]),
     semesterId: z.uuid().nullable(),

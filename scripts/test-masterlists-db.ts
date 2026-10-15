@@ -51,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -367,6 +367,10 @@ try {
     "Eligible candidates produce clean snapshots, computed counts, database uniqueness and idempotent commands",
   );
   expectError(await command("remove", 1), 409, "VERSION_CONFLICT");
+  expectError(await request("staff", endpoint + "/entries", {
+    action: "remove", expectedVersion: 2, scholarId: person.id,
+    awardNumber: null, reason: "", reference: "",
+  }), 422, "VALIDATION_FAILED");
   assert.equal((await command("remove", 2)).statusCode, 200);
   current = await detail();
   assert.equal(current.count, 0);

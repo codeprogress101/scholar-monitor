@@ -1,3 +1,4 @@
+import { useActionForm } from "./use-action-form";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
@@ -35,8 +36,10 @@ export default function StatusPanel({
     id: string;
   } | null>(null);
   const [to, setTo] = useState<OperationalStatus>("on_hold"),
+    [finalSemester, setFinalSemester] = useState(""),
     [effectiveOn, setEffectiveOn] = useState(""),
     [code, setCode] = useState(""),
+    [reasonCategory, setReasonCategory] = useState(""),
     [reason, setReason] = useState(""),
     [reference, setReference] = useState("");
   const pending = useRef<{ signature: string; key: string } | null>(null),
@@ -56,6 +59,7 @@ export default function StatusPanel({
       r.decision.resultingVersion === view.version &&
       r.toStatus === view.status,
   );
+  const actionForm = useActionForm(mode);
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -85,7 +89,9 @@ export default function StatusPanel({
     setNotice("");
     setReason("");
     setReference("");
-    setCode("");
+    setFinalSemester("");
+    setCode(terminal ? "RECORDING_CORRECTION" : "");
+    setReasonCategory(terminal ? "RECORDING_CORRECTION" : "");
     setTo(
       terminal && original
         ? original.fromStatus
@@ -122,7 +128,7 @@ export default function StatusPanel({
             reason,
             reference,
           }
-        : { reason, reference };
+        : { reason, reference, ...(mode.action === "approve" && view.requests.find(r => r.id === mode.id)?.toStatus === "graduated" ? { finalSemesterId: finalSemester } : {}) };
     const signature = JSON.stringify({ path, body });
     if (pending.current?.signature !== signature)
       pending.current = { signature, key: crypto.randomUUID() };
@@ -166,7 +172,8 @@ export default function StatusPanel({
       aria-label="Scholarship status changes"
     >
       <div className="section-heading">
-        <h4>Operational status</h4>
+        <h4>Scholarship standing</h4>
+        <p className="small">Staff or Coordinator submits a request. The Coordinator approves the change.</p>
         <button
           type="button"
           className="btn btn-sm btn-outline-secondary"
@@ -194,13 +201,14 @@ export default function StatusPanel({
       {loading && <p role="status">Loading status history...</p>}
       {view && (
         <>
+          {view.graduation && <p className="alert alert-info"><strong>{view.graduation.label}</strong>{view.graduation.semesterName && ` · Final funded semester: ${view.graduation.semesterName}`}</p>}
           <p>
             <strong>
-              {view.status ? OPERATIONAL_LABELS[view.status] : "Not activated"}
+              {view.graduation ? "Graduated" : view.status ? OPERATIONAL_LABELS[view.status] : "Not activated"}
             </strong>
             {view.effectiveOn && ` - effective ${view.effectiveOn}`}
           </p>
-          {!view.status ? (
+          {view.graduation ? <p>Graduation is already recorded. No second graduation is needed. Previous decisions remain in the history below.</p> : !view.status ? (
             <p className="alert alert-info">
               Status changes become available after official masterlist
               activation. Qualification alone does not activate this record.
@@ -221,11 +229,11 @@ export default function StatusPanel({
           {terminal && (
             <p className="alert alert-warning">
               Terminal state. Reversal requires a correction linked to the
-              original approved decision, a reason/reference, and a different
+              original approved decision, a reason/reference, and the
               Coordinator's approval.
             </p>
           )}
-          {!mode && view.status && canRequest && (
+          {!mode && view.status && canRequest && !view.graduation?.archived && (
             <button
               type="button"
               className="btn btn-outline-secondary"
@@ -242,8 +250,9 @@ export default function StatusPanel({
                 : "Request status change"}
             </button>
           )}
+          {!mode && view.status && !terminal && !view.graduation && canRequest && !view.periodUnavailable && <button className="btn configuration-primary ms-2" onClick={() => { begin("request"); setTo("graduated"); setCode("GRADUATION"); setReasonCategory("GRADUATION"); }}>Mark as Graduated</button>}
           {mode && (
-            <form className="border rounded p-3 my-3" onSubmit={submit}>
+            <form ref={actionForm} className="border rounded p-3 my-3" onSubmit={submit}>
               <fieldset disabled={saving || loading}>
                 <legend className="h5">
                   {mode.action === "request"
@@ -252,6 +261,7 @@ export default function StatusPanel({
                       : "Request status change"
                     : `${mode.action[0].toUpperCase() + mode.action.slice(1)} status request`}
                 </legend>
+                <p className="alert alert-info"><strong>{mode.action === "request" ? `${view.status ? OPERATIONAL_LABELS[view.status] : "Not activated"} \u2192 ${OPERATIONAL_LABELS[to]}` : (() => { const r = view.requests.find(r => r.id === mode.id); return r ? `${OPERATIONAL_LABELS[r.fromStatus]} \u2192 ${OPERATIONAL_LABELS[r.toStatus]}` : ""; })()}</strong></p>
                 {mode.action === "approve" && (
                   <p>
                     Approval applies the requested state and effective date.
@@ -268,13 +278,18 @@ export default function StatusPanel({
                         id="status-target"
                         className="form-select"
                         value={to}
-                        onChange={(e) =>
-                          setTo(e.target.value as OperationalStatus)
-                        }
+                        onChange={(e) => {
+                          setTo(e.target.value as OperationalStatus);
+                          setCode(terminal ? "RECORDING_CORRECTION" : ""); setReasonCategory(terminal ? "RECORDING_CORRECTION" : "");
+                          if (e.target.value === "withdrawn" || e.target.value === "graduated") {
+                            const category = e.target.value === "withdrawn" ? "VOLUNTARY_WITHDRAWAL" : "GRADUATION";
+                            setCode(category); setReasonCategory(category);
+                          }
+                        }}
                       >
                         {options.map((s) => (
                           <option key={s} value={s}>
-                            {OPERATIONAL_LABELS[s]}
+                            {s === "withdrawn" ? "Voluntary scholarship withdrawal" : OPERATIONAL_LABELS[s]}
                           </option>
                         ))}
                       </select>
@@ -294,22 +309,30 @@ export default function StatusPanel({
                     </div>
                     <div className="col-md-4">
                       <label className="form-label" htmlFor="status-code">
-                        Reason code
+                        Reason category
                       </label>
-                      <input
+                      <select
                         id="status-code"
-                        className="form-control"
+                        className="form-select"
                         required
-                        minLength={2}
-                        maxLength={60}
-                        pattern="[A-Z][A-Z0-9_]+"
-                        placeholder="e.g. VERIFIED_WITHDRAWAL"
-                        value={code}
-                        onChange={(e) => setCode(e.target.value.toUpperCase())}
-                      />
+                        value={reasonCategory}
+                        onChange={(e) => { setReasonCategory(e.target.value); setCode(e.target.value === "custom" ? "" : e.target.value); }}
+                      >
+                        <option value="">Choose a reason category</option>
+                        {to === "graduated" && !terminal && <option value="GRADUATION">Graduation (sets status to Graduated)</option>}
+                        <option value="VOLUNTARY_WITHDRAWAL">Voluntary scholarship withdrawal</option>
+                        <option value="ACADEMIC_REVIEW">Academic requirements</option>
+                        <option value="ENROLLMENT_CHANGE">Enrollment or attendance change</option>
+                        <option value="RETURN_TO_PROGRAM">Return to the program</option>
+                        <option value="RECORDING_CORRECTION">Correction of a recorded decision</option>
+                        <option value="custom">Other reason code</option>
+                      </select>
+                      {reasonCategory === "custom" && <label className="form-label d-block mt-2">Other reason code<input className="form-control" required minLength={2} maxLength={60} pattern="[A-Z][A-Z0-9_]+" value={code} onChange={e => setCode(e.target.value.toUpperCase())} /></label>}
                     </div>
                   </div>
                 )}
+                {mode.action === "approve" && view.requests.find(r => r.id === mode.id)?.toStatus === "graduated" && <label className="form-label d-block">Confirm final funded semester<select className="form-select" required value={finalSemester} onChange={e => setFinalSemester(e.target.value)}><option value="">Choose the scholar's final funded semester</option>{view.semesters?.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select><span className="small">Other eligibility checks still apply. Graduation does not record payment.</span></label>}
+                {mode.action === "request" && to === "withdrawn" && <p>Use this for leaving the scholarship program. Staff records the effective date and supporting request; the Coordinator approves. Document waivers are handled with the individual requirement.</p>}
                 <label className="form-label" htmlFor="status-reason">
                   Status reason
                 </label>
@@ -357,7 +380,8 @@ export default function StatusPanel({
           {!view.requests.length && <p>No status changes recorded.</p>}
           <ol className="ps-3">
             {view.requests.map((r) => (
-              <li className="mb-4" key={r.id}>
+              <li className="mb-3" key={r.id} id={`request-${r.id}`}><details open={!r.decision || new URLSearchParams(window.location.hash.split("?")[1]).get("request") === r.id}>
+                <summary>{OPERATIONAL_LABELS[r.toStatus]}: {r.decision?.action ?? "Pending approval"} ({r.effectiveOn})</summary>
                 <strong>
                   {OPERATIONAL_LABELS[r.fromStatus]} →{" "}
                   {OPERATIONAL_LABELS[r.toStatus]}
@@ -403,7 +427,6 @@ export default function StatusPanel({
                               loading ||
                               saving ||
                               view.periodUnavailable ||
-                              r.actorId === access.userId ||
                               r.expectedVersion !== view.version
                             }
                             onClick={() => begin("approve", r.id)}
@@ -433,7 +456,7 @@ export default function StatusPanel({
                     </div>
                   </>
                 )}
-              </li>
+              </details></li>
             ))}
           </ol>
         </>

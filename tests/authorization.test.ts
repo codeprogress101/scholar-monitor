@@ -46,6 +46,19 @@ it("denies newly declared API routes without an explicit access policy", async (
   expect(response.statusCode).toBe(403);
   expect(response.json().error.code).toBe("PERMISSION_DENIED");
 });
+it("restricts backup status to current technical administration permissions", async () => {
+  const { app, access } = fixture();
+  for (const role of ["staff", "coordinator"] as const) {
+    access.roles = [{ code: role, label: role, description: "test" }];
+    expect((await app.inject("/api/v1/admin/backup-status")).statusCode).toBe(403);
+  }
+  access.permissions = [{ code: "roles.manage", label: "Administration", category: "Administration" }];
+  const response = await app.inject("/api/v1/admin/backup-status");
+  expect(response.statusCode).toBe(200);
+  expect(response.json().configured).toBe(false);
+  access.permissions = [];
+  expect((await app.inject("/api/v1/admin/backup-status")).statusCode).toBe(403);
+});
 it("derives the current user from the session regardless of forged actor inputs", async () => {
   const { app, authorization } = fixture();
   const response = await app.inject({

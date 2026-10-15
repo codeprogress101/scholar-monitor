@@ -49,7 +49,7 @@ export function registerAuth(
       try {
         request.authSession = await auth.session(
           request.cookies[cookieName],
-          !["/api/v1/auth/me", "/api/v1/me/permissions"].includes(path),
+          !["/api/v1/auth/me", "/api/v1/me/permissions"].includes(path) && (mutation || !path.startsWith("/api/v1/notifications")),
         );
       } catch (error) {
         if (error instanceof AuthError && [401, 403].includes(error.status))

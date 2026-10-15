@@ -1,6 +1,8 @@
+import { useActionForm } from "./use-action-form";
 import { receivingToday } from "./receiving-selection";
+import { documentLabels } from "./document-labels";
 import RoutineEvidence from "./RoutineEvidence";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
 import type { RequirementInstance } from "../server/requirements/instances-model";
@@ -8,10 +10,11 @@ import {
   REQUIREMENT_STATUS_LABELS as statusLabel,
   type RequirementAction,
   type VerificationContext,
+  verificationMatches,
 } from "../server/requirements/workflow-model";
 import { configurationRequest as request } from "./configuration-api";
 const labels: Record<RequirementAction, string> = {
-  "send-for-verification": "Send for verification",
+  "send-for-verification": "Sent for verification",
   verify: "Verify document",
   "return-for-correction": "Return for correction",
   resubmit: "Record resubmission",
@@ -50,7 +53,7 @@ export default function RequirementWorkflow({
   closed: boolean;
   onBusy: (value: boolean) => void;
   onChanged: () => void;
-  onAcademicSetup?: () => void;
+  onAcademicSetup?: (yearId?: string) => void;
 }) {
   const [action, setAction] = useState<RequirementAction | null>(null),
     [context, setContext] = useState<VerificationContext | null>(null),
@@ -64,20 +67,30 @@ export default function RequirementWorkflow({
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
   const [needsAcademic, setNeedsAcademic] = useState(false);
+  const [freshness, setFreshness] = useState<"checking" | "current" | "stale" | "unavailable">("checking");
+  useEffect(() => {
+    if (instance.status !== "verified" || closed || !canVerify) return;
+    const controller = new AbortController();
+    request<VerificationContext>(`requirement-instances/${instance.id}/verification-context`, { signal: controller.signal })
+      .then(value => { if (!controller.signal.aborted) setFreshness(verificationMatches(value, instance.history.at(-1)?.details.verification) ? "current" : "stale"); })
+      .catch(() => { if (!controller.signal.aborted) setFreshness("unavailable"); });
+    return () => controller.abort();
+  }, [instance, closed, canVerify]);
+  const [enrollmentDocument, setEnrollmentDocument] = useState<"cor" | "certificate_of_enrollment">("cor");
+  const [missingYear, setMissingYear] = useState<string | undefined>(undefined);
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
   const actions: RequirementAction[] =
-    instance.status === "submitted" || instance.status === "resubmitted"
-      ? ["send-for-verification"]
-      : instance.status === "for_verification"
+    ["submitted", "resubmitted", "for_verification"].includes(instance.status)
         ? ["verify", "return-for-correction", "reject"]
         : instance.status === "verified"
-          ? ["return-for-correction"]
+          ? [...(freshness === "stale" ? ["verify" as const] : []), "return-for-correction"]
           : instance.status === "for_correction"
             ? ["resubmit"]
             : [];
   const allowed = (a: RequirementAction) =>
     a === "resubmit" ? canReceive : canVerify;
+  const actionForm = useActionForm(action);
   async function choose(a: RequirementAction) {
     if (busy.current) return;
     setAction(a);
@@ -101,6 +114,7 @@ export default function RequirementWorkflow({
       );
     } catch (e) {
       setNeedsAcademic(e instanceof ApiError && e.code === "ACADEMIC_RECORD_REQUIRED");
+      setMissingYear(e instanceof ApiError && e.details && typeof e.details === "object" && "academicYearId" in e.details && typeof e.details.academicYearId === "string" ? e.details.academicYearId : undefined);
       setError(
         e instanceof ApiError
           ? e.message
@@ -129,6 +143,9 @@ export default function RequirementWorkflow({
           courseId: context.courseId,
           academicVersion: context.academicVersion,
           definitionVersionId: context.definitionVersionId,
+          ...(context.entrantCard ? {entrantCardId:context.entrantCard.id} : {}),
+          ...(context.predecessorSourceHash ? { predecessorSourceHash: context.predecessorSourceHash } : {}),
+          ...(context.coverageId ? { coverageId: context.coverageId, semesterRevision: context.semesterRevision } : {}),
         }
       : null;
     const body = {
@@ -138,7 +155,7 @@ export default function RequirementWorkflow({
       reason,
       reference,
       remarks: remarks.trim() || null,
-      ...(action === "verify" ? { document, checks } : {}),
+      ...(action === "verify" ? { document, attestation: "all-five-checked", checks } : {}),
       ...(action === "return-for-correction"
         ? {
             correctionOf:
@@ -151,6 +168,7 @@ export default function RequirementWorkflow({
         ? {
             physicalReference: physicalRef.trim() || null,
             storageLocation: storage,
+            ...(instance.entrantCard ? { entrantCardId:instance.entrantCard.id,documentType:"shs_grading_card" } : instance.coverage?.kind === "cor" ? { documentType: enrollmentDocument } : {}),
           }
         : {}),
     };
@@ -182,10 +200,10 @@ export default function RequirementWorkflow({
   }
   return (
     <div className="mt-2" aria-label={`Workflow ${instance.code}`}>
+      {!closed && actions.length > 0 && <p className="text-muted small">Staff or Coordinator · Review the received document, then verify or return it for correction.</p>}
       {instance.status === "verified" && (
-        <p className="alert alert-success py-2">
-          Verified - meets the normal requirement rule. Other payout eligibility
-          checks remain separate.
+        <p className={`alert ${freshness === "current" || closed ? "alert-success" : "alert-warning"} py-2`}>
+          {closed ? "Historical verification recorded." : !canVerify ? "Verification recorded. Review semester academic details before checking current compliance." : freshness === "stale" ? "Records changed since verification. Recheck this document; no new receipt is needed." : freshness === "checking" ? "Checking verification against current records…" : freshness === "unavailable" ? "Verification recorded. Current context is unavailable; review semester academic details." : "Verified against current records. Payout eligibility is assessed separately."}
         </p>
       )}
       {!closed && (
@@ -205,7 +223,7 @@ export default function RequirementWorkflow({
         </div>
       )}
       {action && (
-        <form
+        <form ref={actionForm}
           className="border rounded p-3 mt-2"
           onSubmit={submit}
           aria-label={`${labels[action]} ${instance.code}`}
@@ -216,7 +234,7 @@ export default function RequirementWorkflow({
           {error && (
             <div role="alert" className="alert alert-danger">
               {error}
-              {needsAcademic && onAcademicSetup && <button type="button" className="btn btn-outline-secondary ms-2" onClick={onAcademicSetup}>Add academic record</button>}
+              {needsAcademic && onAcademicSetup && <button type="button" className="btn btn-outline-secondary ms-2" onClick={() => onAcademicSetup(missingYear)}>Add academic record</button>}
             </div>
           )}
           <fieldset disabled={disabled || saving || closed}>
@@ -230,8 +248,10 @@ export default function RequirementWorkflow({
                       </strong>
                       <br />
                       {context.yearCode} / {context.semesterCode}
+                      {context.receivingSemesterCode && <> (document coverage; receiving for {context.receivingSemesterCode})</>}
                       <br />
                       {context.schoolName} / {context.courseName}
+                      {context.receivedDocumentType && <><br />Document received: {documentLabels[context.receivedDocumentType]}</>}
                       <br />
                       Pinned policy version {instance.revision}, effective
                       context {context.policyDate}
@@ -240,21 +260,8 @@ export default function RequirementWorkflow({
                       Compare the physical document with these authoritative
                       records, then confirm every check.
                     </p>
-                    {(
-                      Object.keys(checkLabels) as Array<keyof typeof checks>
-                    ).map((key) => (
-                      <label key={key} className="d-block mb-2">
-                        <input
-                          type="checkbox"
-                          required
-                          checked={checks[key]}
-                          onChange={(e) =>
-                            setChecks({ ...checks, [key]: e.target.checked })
-                          }
-                        />{" "}
-                        {checkLabels[key]}
-                      </label>
-                    ))}
+                    <ul>{Object.values(context.entrantCard ? {...checkLabels,period:'The card covers the approved latest completed school year and grading period.',placement:'The issuing school matches the reviewed senior-high-school evidence.'} : checkLabels).map(label=><li key={label}>{label}</li>)}</ul>
+                    <label className="d-block mb-2"><input type="checkbox" required checked={Object.values(checks).every(Boolean)} onChange={e=>setChecks({identity:e.target.checked,period:e.target.checked,placement:e.target.checked,applicability:e.target.checked,validity:e.target.checked})}/> I checked all five items against this document.</label>
                   </>
                 ) : (
                   <p>
@@ -291,6 +298,7 @@ export default function RequirementWorkflow({
             </label>
             {action === "resubmit" && (
               <>
+                {instance.coverage?.kind === "cor" && <label className="form-label d-block">Replacement enrollment document<select className="form-select" value={enrollmentDocument} onChange={(e) => setEnrollmentDocument(e.target.value as "cor" | "certificate_of_enrollment")}><option value="cor">{documentLabels.cor}</option><option value="certificate_of_enrollment">{documentLabels.certificate_of_enrollment}</option></select></label>}
                 <p>
                   The effective date is the date the corrected hard copy was
                   received.
@@ -409,7 +417,7 @@ export default function RequirementWorkflow({
                 {event.details.receipt && (
                   <div>
                     Corrected hard copy received{" "}
-                    {event.details.receipt.receivedOn}. Storage:{" "}
+                    {event.details.receipt.receivedOn}. {event.details.receipt.documentType && `${documentLabels[event.details.receipt.documentType]}. `}Storage:{" "}
                     {event.details.receipt.storageLocation}. Physical reference:{" "}
                     {event.details.receipt.physicalReference ?? "Not recorded"}.
                   </div>

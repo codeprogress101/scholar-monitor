@@ -1,3 +1,4 @@
+import { useActionForm } from "./use-action-form";
 import { REQUIREMENT_STATUS_LABELS as statusLabel } from "../server/requirements/workflow-model";
 import { useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
@@ -28,6 +29,7 @@ export default function RequirementWaiverForm({
     [reason, setReason] = useState("");
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
+  const actionForm = useActionForm(open);
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy.current) return;
@@ -111,11 +113,11 @@ export default function RequirementWaiverForm({
               setError("");
             }}
           >
-            Waive {instance.code} requirement
+            Waive {instance.code} requirement · Coordinator
           </button>
         )}
       {open && (
-        <form
+        <form ref={actionForm}
           className="border rounded p-3 mt-2"
           aria-label={`Waive ${instance.code}`}
           onSubmit={submit}

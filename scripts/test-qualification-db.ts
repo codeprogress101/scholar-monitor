@@ -50,7 +50,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -262,6 +262,20 @@ try {
   assert.equal(initial.statusCode, 200, initial.body);
   let record = initial.json<QualificationResult>();
   assert.equal(record.status, "applicant");
+  const reviewPath = `/api/v1/scholarships/review?academicYearId=${year.id}&status=applicant`;
+  assert.equal((await app.inject(reviewPath)).statusCode, 401);
+  for (const role of ["system_admin", "unassigned"]) expectError(await request(role, reviewPath), 403, "PERMISSION_DENIED");
+  const queued = await request("staff", reviewPath);
+  assert.equal(queued.statusCode, 200, queued.body);
+  assert.equal(queued.json().items[0].id, record.id);
+  assert.equal(queued.json().items[0].version, record.version);
+  assert.equal(queued.json().total, 1);
+  assert.equal((await request("coordinator", reviewPath + "&offset=25")).json().items.length, 0);
+  assert.equal((await request("coordinator", reviewPath.replace("status=applicant", "status=qualified"))).json().total, 0);
+  assert.equal((await request("coordinator", reviewPath.replace(year.id, nextYear.id))).json().total, 0);
+  assert.equal((await request("staff", reviewPath + "&q=no-such-person")).json().total, 0);
+  expectError(await request("staff", reviewPath + "&offset=-1"), 422, "VALIDATION_FAILED");
+  pass("Admission review preserves role privacy, year/stage filtering, bounded pagination and reviewed revisions");
   for (const action of ["qualify", "select", "not-select", "activate"])
     expectError(
       await command(record, action, "staff"),
@@ -500,7 +514,7 @@ try {
   );
   expectError(
     await command(qualified, "select", "coordinator", randomUUID(), {
-      reference: "",
+      reference: null,
     }),
     422,
     "VALIDATION_FAILED",
@@ -529,6 +543,31 @@ try {
   pass(
     "Effective-date order, references, immutable year and missing person/year guards are enforced",
   );
+  const defaultYear = await config("academic-years", {
+    code: "DEFAULT-EVIDENCE", name: "Routine evidence fixture",
+    startsOn: "2029-06-01", endsOn: "2030-05-31",
+  });
+  const defaultCreated = await request("staff", listPath, {
+    ...creation(defaultYear.id), reason: "", reference: "",
+  });
+  assert.equal(defaultCreated.statusCode, 200, defaultCreated.body);
+  const defaultRecord = defaultCreated.json<QualificationResult>();
+  const defaultKey = randomUUID();
+  const defaultExam = await command(defaultRecord, "exam-passed", "staff", defaultKey, {
+    reason: "", reference: "",
+  });
+  assert.equal(defaultExam.statusCode, 200, defaultExam.body);
+  assert.deepEqual((await command(defaultRecord, "exam-passed", "staff", defaultKey, {
+    reason: "", reference: "",
+  })).json(), defaultExam.json());
+  const defaultHistory = await detail(defaultRecord.id);
+  assert.equal(defaultHistory.events.length, 2);
+  assert.equal(defaultHistory.events.at(-1)!.reason, "Qualification decision recorded");
+  assert.equal(defaultHistory.events.at(-1)!.reference, "Internal workflow record");
+  expectError(await command(defaultExam.json<QualificationResult>(), "not-select", "coordinator", randomUUID(), {
+    reason: "", reference: "",
+  }), 422, "VALIDATION_FAILED");
+  pass("Routine blank evidence is recorded automatically with safe retries; Not Selected still requires a reason");
   const locked = await request(
     "system_admin",
     "/api/v1/configuration/academic-years/" + retryYear.id,
@@ -592,9 +631,31 @@ try {
   pass(
     "CSRF and restricted database grants protect annual identity, append-only events and retry history",
   );
-  console.log(
-    `All ${passed} qualification scenarios passed in an isolated disposable database.`,
-  );
+  const validationYear = await config("academic-years", { code: "VALIDATE", name: "External qualification validation", startsOn: "2030-06-01", endsOn: "2031-05-31" });
+  const createdValidation = await request("staff", listPath, creation(validationYear.id));
+  assert.equal(createdValidation.statusCode, 200, createdValidation.body);
+  const validationId = createdValidation.json().id;
+  const validationBody = { expectedVersion: 1, effectiveOn: "2026-09-01", reason: "", reference: "", priorQualificationConfirmed: true };
+  const validationPath = `/api/v1/scholarships/${validationId}/qualification/validate`;
+  expectError(await request("system_admin", validationPath, validationBody), 403, "PERMISSION_DENIED");
+  assert.equal((await request("staff", validationPath, { ...validationBody, priorQualificationConfirmed: false })).statusCode, 422);
+  assert.equal((await request("staff", validationPath, validationBody)).statusCode, 409);
+  await addAcademic(validationYear.id);
+  const validationKey = randomUUID();
+  const validated = await request("staff", validationPath, validationBody, validationKey);
+  assert.equal(validated.statusCode, 200, validated.body);
+  assert.equal(validated.json().status, "qualified");
+  assert.deepEqual((await request("staff", validationPath, validationBody, validationKey)).json(), validated.json());
+  expectError(await command(validated.json(), "select", "staff"), 403, "PERMISSION_DENIED");
+  const selectedValidation = await command(validated.json(), "select");
+  assert.equal(selectedValidation.statusCode, 200, selectedValidation.body);
+  assert.deepEqual((await detail(validationId)).events.map(e => e.action), ["create", "validate", "select"]);
+  assert.equal((await request("staff", validationPath, { ...validationBody, expectedVersion: 3 })).statusCode, 409);
+  const [[validationAudit]] = await admin.execute<RowDataPacket[]>("SELECT details FROM audit_logs WHERE entity_id=? AND action='validate'", [validationId]);
+  const validationEvidence = typeof validationAudit.details === "string" ? JSON.parse(validationAudit.details) : validationAudit.details;
+  assert.equal(validationEvidence.priorQualificationConfirmed, true);
+  pass("External validation skips fictional exam events, requires academic evidence and attestation, preserves retries, and keeps Coordinator selection separate");
+  console.log(`All ${passed} qualification scenarios passed in an isolated disposable database.`);
   if (process.argv.includes("--browser")) {
     await config("academic-years", {
       code: "BROWSER-2025",

@@ -7,6 +7,7 @@ export type PayoutRequirement = {
   allowWaiver: boolean;
 };
 export type PayoutCycle = {
+  semesterDocuments?: Awaited<ReturnType<typeof import("../requirements/semester-policy.js").semesterDocumentSources>>;
   id: string;
   code: string;
   semesterId: string;

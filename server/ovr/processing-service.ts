@@ -1,9 +1,13 @@
+import { treasuryEvidence } from "./treasury-state.js";
+import { requireNumberedPayroll } from "./legacy-boundary.js";
+import { requireClaimOpen, assertNoPaidClaim, queueUnclaimed, reprocessingQueue } from "./reprocessing.js";
 import { validationDetails } from "../validation-details.js";
+import { managedRelease, checkManagedPayment, entitlementEvent, linkManagedOutcome } from "./managed-release.js";
 import { paymentCorrections } from "./payment-correction-state.js";
 import { amendments, effectiveRoster } from "./amendment-state.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { RowDataPacket } from "mysql2/promise";
+import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
@@ -30,22 +34,27 @@ const basic = z.object(common).strict();
 const payment = z
   .object({
     ...common,
+    effectiveOn: common.effectiveOn.nullable(),
+    treasuryEvidenceRevision: z.number().int().positive().optional(),
     scholarshipId: z.string().uuid(),
     outcome: z.enum(["paid", "not_paid"]),
+    unpaidReason: z.enum(["did_not_claim","withheld","review"]).optional(),
     amount: z.string().regex(/^(0|[1-9][0-9]{0,9})\.[0-9]{2}$/),
     remarks: text(0, 1000),
+    receiptConfirmed: z.literal(true).optional(),
   })
   .strict()
   .refine((p) =>
     p.outcome === "paid"
-      ? /^(0|[1-9][0-9]{0,9})\.[0-9]{2}$/.test(p.amount) &&
-        BigInt(p.amount.replace(".", "")) > 0n
-      : p.amount === "0.00" && p.remarks.length >= 5,
+      ? p.amount === "5000.00"
+      : p.amount === "0.00" && !!p.unpaidReason && (p.unpaidReason === "did_not_claim" || p.remarks.length >= 5),
   );
 const close = z.object({ ...common, reconciled: z.boolean() }).strict();
+const hold = z.object({ ...common, scholarshipId: z.uuid(), sourceHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export type ProcessingAction =
-  "submit" | "mark-processed" | "record-payment" | "close";
+  "submit" | "mark-processed" | "record-payment" | "close" | "hold" | "release-hold";
 export function processingPermission(action: ProcessingAction) {
+  if (action === "hold" || action === "release-hold") return "ovr.finalize";
   return action === "submit"
     ? "ovr.submit"
     : action === "close"
@@ -54,23 +63,24 @@ export function processingPermission(action: ProcessingAction) {
 }
 export function parseProcessing(action: ProcessingAction, raw: unknown) {
   const parsed = (
-    action === "record-payment" ? payment : action === "close" ? close : basic
+    action === "hold" || action === "release-hold" ? hold : action === "record-payment" ? payment : action === "close" ? close : basic
   ).safeParse(raw);
   if (!parsed.success)
     throw new AuthError(
       422,
       "VALIDATION_FAILED",
-      "Provide the current revision, valid non-future date, reason and reference. Paid amounts require two decimals and must be positive; Not paid requires 0.00 and an explanation.",
+      "Provide the current revision, valid non-future date, reason and reference. Paid degree stipends must be exactly 5000.00; Not paid requires 0.00 and an explanation.",
       validationDetails(parsed.error),
     );
   return parsed.data;
 }
 export function processingTransition(action: ProcessingAction, state: string) {
+  if (["hold", "release-hold"].includes(action) && ["finalized", "submitted", "processed", "closed"].includes(state)) return state;
   if (state === "closed")
     throw new AuthError(
       423,
       "OVR_ALREADY_CLOSED",
-      "This OVR is closed. Ordinary changes are not permitted.",
+      "This Payroll is closed. Ordinary changes are not permitted.",
     );
   if (action === "submit" && state === "finalized") return "submitted";
   if (action === "mark-processed" && state === "submitted") return "processed";
@@ -79,7 +89,7 @@ export function processingTransition(action: ProcessingAction, state: string) {
   throw new AuthError(
     409,
     "OVR_INVALID_STATE",
-    "Submit a finalized OVR, mark a submitted OVR processed, then record every outcome and reconcile before closure.",
+    "Submit a finalized Payroll, mark a submitted Payroll processed, then record every outcome and reconcile before closure.",
   );
 }
 const decode = <T>(value: string | T): T =>
@@ -101,7 +111,12 @@ export class OvrProcessingService {
     return this.authorization.withPermission(
       actor,
       processingPermission(action),
-      async (db) => {
+      db => this.execute(db,actor,id,action,key,input,hash,requestId),
+    );
+  }
+  /** Internal transaction primitive. Callers must authorize on this connection before entering. */
+  async execute(db: PoolConnection, actor: string, id: string, action: ProcessingAction, key: string,
+    input: ReturnType<typeof parseProcessing>, hash: string, requestId: string, historicalRequestId?: string) {
         await db.query(
           "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
         );
@@ -118,13 +133,16 @@ export class OvrProcessingService {
             );
           return decode<OvrBatch>(retry[0].result);
         }
+        await requireNumberedPayroll(db, id);
+        const [[managedPayroll]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE", [id]);
         const previous = (await ovrHistory(db, id))[0],
-          state = processingTransition(action, previous.state),
+          state = historicalRequestId && action === "record-payment" && ["finalized","submitted","processed","closed"].includes(previous.state) ? previous.state : processingTransition(action, previous.state),
           cycle = await currentPayout(db, previous.cycleId);
-        if (
+        const holding = action === "hold" || action === "release-hold";
+        if (!historicalRequestId && !(holding && managedPayroll) && (
           !["open", "locked"].includes(cycle.state) ||
           cycle.periodUnavailable
-        )
+        ))
           throw new AuthError(
             423,
             "RECORD_LOCKED",
@@ -134,7 +152,7 @@ export class OvrProcessingService {
           throw new AuthError(
             409,
             "VERSION_CONFLICT",
-            "OVR processing changed. Refresh before recording another action.",
+            "Payroll processing changed. Refresh before recording another action.",
           );
         if ((await amendments(db, id)).some((a) => a.state === "pending"))
           throw new AuthError(
@@ -150,8 +168,11 @@ export class OvrProcessingService {
             "A frozen roster is required.",
           );
         const frozen = effective.snapshot;
+        const releaseEntries = managedPayroll ? await managedRelease(db, id) : null;
+        if (releaseEntries && (releaseEntries.length > frozen.entries.length || frozen.entries.some(e => !releaseEntries.some(a => a.scholarshipId === e.scholarshipId) && !e.evidence.reprocessing))) throw new AuthError(409, "PAYROLL_ALLOCATION_MISMATCH", "Reconcile frozen membership with its reserved semester allocations before processing.");
+        if (holding && !releaseEntries) throw new AuthError(409, "MANAGED_BATCH_REQUIRED", "Payment holds require a numbered payroll allocation.");
         const priorDate =
-          action === "submit"
+          holding && previous.closure ? previous.closure.effectiveOn : action === "submit" || holding
             ? new Intl.DateTimeFormat("en-CA", {
                 timeZone: "Asia/Manila",
                 year: "numeric",
@@ -161,7 +182,7 @@ export class OvrProcessingService {
             : action === "mark-processed"
               ? previous.administration?.effectiveOn
               : previous.processing?.effectiveOn;
-        if (!priorDate || input.effectiveOn < priorDate)
+        if (!historicalRequestId && (!priorDate || (input.effectiveOn !== null && input.effectiveOn < priorDate)))
           throw new AuthError(
             422,
             "INVALID_PROCESSING_DATE",
@@ -170,6 +191,21 @@ export class OvrProcessingService {
         const payments = await paymentRecords(db, id),
           reconciliation = reconcilePayments(frozen, payments);
         const data = input as z.infer<typeof payment>;
+        const treasury = action === "record-payment" && data.outcome === "paid" ? await treasuryEvidence(db,id) : null;
+        if (action === "record-payment" && data.outcome === "paid" && (!treasury || data.treasuryEvidenceRevision !== treasury.revision))
+          throw new AuthError(409,"TREASURY_EVIDENCE_REQUIRED","Record and review the current batch Treasury evidence before confirming actual receipt.");
+        if (treasury) data.reference = treasury.payrollReference;
+        if (treasury && data.effectiveOn && data.effectiveOn > treasury.officeReceivedOn)
+          throw new AuthError(422,"INVALID_PAYMENT_DATE","A documented receipt date cannot follow the office receipt of its signed evidence.");
+        if (managedPayroll && action === "record-payment" && data.outcome === "paid" && !data.receiptConfirmed) throw new AuthError(422, "ACTUAL_RECEIPT_CONFIRMATION_REQUIRED", "Confirm actual receipt using the signed payment evidence. Payroll preparation or processing alone is not payment.");
+        const releaseEntry = action === "record-payment" ? await checkManagedPayment(db, id, data.scholarshipId, data.outcome, data.amount) : null;
+        if (holding) {
+          const h = input as z.infer<typeof hold>, entry = releaseEntries!.find(e => e.scholarshipId === h.scholarshipId);
+          if (!entry || entry.state === "released") throw new AuthError(409, "UNPAID_ALLOCATION_REQUIRED", "Only an unpaid allocated entry may be held or cleared. Existing payments are preserved.");
+          if (entry.sourceHash !== h.sourceHash) throw new AuthError(409, "SOURCE_CHANGED", "The entry changed. Reload its current restrictions before deciding.");
+          if (action === "release-hold" && (!entry.held || entry.reasons.length)) throw new AuthError(409, "HOLD_RESTRICTIONS_UNRESOLVED", "Resolve the underlying academic and standing restrictions first. Clearing a hold is not an eligibility exception.");
+          await entitlementEvent(db, entry, actor, action === "hold" ? "withheld" : "approved", input.reason, { releaseHold: action === "hold", reference: input.reference, effectiveOn: input.effectiveOn });
+        }
         if (action === "record-payment") {
           if (
             !frozen.entries.some((e) => e.scholarshipId === data.scholarshipId)
@@ -177,11 +213,21 @@ export class OvrProcessingService {
             throw new AuthError(
               409,
               "PAYMENT_NOT_IN_ROSTER",
-              "Only members of this frozen OVR can receive an outcome.",
+              "Only members of this frozen Payroll can receive an outcome.",
             );
+          const provenance = frozen.entries.find(e=>e.scholarshipId===data.scholarshipId)?.evidence.reprocessing;
+          if (data.outcome === "paid") {
+            if (!historicalRequestId) await requireClaimOpen(db,cycle.semesterId,data.effectiveOn ?? undefined);
+            await assertNoPaidClaim(db,data.scholarshipId,cycle.semesterId,undefined,historicalRequestId);
+            if (provenance) {
+              const retry=(await reprocessingQueue(db,cycle)).find(q=>q.id===provenance.id);
+              if(!retry || retry.status!=="processed" || retry.destinationBatchId!==id || retry.reasons.length) throw new AuthError(409,"REPROCESSING_UNAVAILABLE","Reprocessing is held or its original outcome changed. Review the claim history.");
+              if(!data.receiptConfirmed)throw new AuthError(422,"ACTUAL_RECEIPT_CONFIRMATION_REQUIRED","Confirm actual receipt of the reprocessed stipend.");
+            }
+          }
           const [duplicate] = await db.execute<RowDataPacket[]>(
-            "SELECT id FROM payment_records WHERE cycle_id=? AND scholarship_id=? LOCK IN SHARE MODE",
-            [cycle.id, data.scholarshipId],
+            provenance ? "SELECT id FROM payment_records WHERE batch_id=? AND scholarship_id=? LOCK IN SHARE MODE" : "SELECT id FROM payment_records WHERE cycle_id=? AND scholarship_id=? LOCK IN SHARE MODE",
+            [provenance ? id : cycle.id, data.scholarshipId],
           );
           if (duplicate.length)
             throw new AuthError(
@@ -205,7 +251,7 @@ export class OvrProcessingService {
             throw new AuthError(
               409,
               "OVR_UNRECONCILED",
-              "Confirm reconciliation before closing the OVR.",
+              "Confirm reconciliation before closing the Payroll.",
             );
           if (!reconciliation.complete)
             throw new AuthError(
@@ -214,7 +260,7 @@ export class OvrProcessingService {
               "Every frozen member requires a recorded payment outcome before closure.",
               { reconciliation },
             );
-          if (payments.some((p) => p.effectiveOn > input.effectiveOn))
+          if (payments.some((p) => p.effectiveOn && input.effectiveOn && p.effectiveOn > input.effectiveOn))
             throw new AuthError(
               422,
               "INVALID_PROCESSING_DATE",
@@ -227,7 +273,7 @@ export class OvrProcessingService {
         );
         const now = new Date().toISOString(),
           stamp = {
-            effectiveOn: input.effectiveOn,
+            effectiveOn: input.effectiveOn ?? today(),
             reference: input.reference,
             reason: input.reason,
             actorId: actor,
@@ -261,11 +307,12 @@ export class OvrProcessingService {
           "INSERT INTO ovr_batch_events(batch_id,revision,state,action,snapshot,actor_id,occurred_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6))",
           [id, batch.revision, state, action, JSON.stringify(batch), actor],
         );
-        if (action === "record-payment")
+        const paymentId = randomUUID();
+        if (action === "record-payment") {
           await db.execute(
-            "INSERT INTO payment_records(id,batch_id,batch_revision,cycle_id,scholarship_id,outcome,amount,effective_on,reference_text,remarks,actor_id,actor_name,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))",
+            "INSERT INTO payment_records(id,batch_id,batch_revision,cycle_id,scholarship_id,outcome,amount,effective_on,reference_text,remarks,actor_id,actor_name,unpaid_reason,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))",
             [
-              randomUUID(),
+              paymentId,
               id,
               batch.revision,
               cycle.id,
@@ -277,8 +324,16 @@ export class OvrProcessingService {
               data.remarks,
               actor,
               stamp.actorName,
+              data.outcome === "not_paid" ? data.unpaidReason : null,
             ],
           );
+          if (treasury) await db.execute("INSERT INTO payroll_treasury_confirmations(payment_id,batch_id,evidence_revision,actor_id,confirmed_at,historical_request_id) VALUES(?,?,?,?,UTC_TIMESTAMP(6),?)", [paymentId,id,treasury.revision,actor,historicalRequestId ?? null]);
+          if (releaseEntry) {
+            if (data.outcome === "paid") await linkManagedOutcome(db, releaseEntry, paymentId, actor, { outcome: data.outcome, amount: data.amount, effectiveOn: data.effectiveOn, reference: data.reference, sourceHash: releaseEntry.sourceHash });
+            else await entitlementEvent(db, releaseEntry, actor, data.unpaidReason === "did_not_claim" ? "unclaimed" : "withheld", data.reason, { paymentId, reference: data.reference, outcome: "not_paid", amount: "0.00" });
+          }
+        }
+        if(action === "close") await queueUnclaimed(db,frozen,payments,actor);
         await db.execute(
           "INSERT INTO audit_logs(id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES(?,'ovr.processing','ovr_batches',?,?,?,'user',UTC_TIMESTAMP(6),?,?,?)",
           [
@@ -300,12 +355,10 @@ export class OvrProcessingService {
             }),
           ],
         );
-        await db.execute(
+        if (!historicalRequestId) await db.execute(
           "INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",
           [actor, key, hash, JSON.stringify(batch)],
         );
         return batch;
-      },
-    );
   }
 }

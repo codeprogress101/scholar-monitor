@@ -98,7 +98,7 @@ export function parseCommand(kind: ConfigKind, value: unknown): ConfigCommand {
           ...basic,
           startsOn: date,
           endsOn: date,
-          ...(kind === "semesters" ? { academicYearId: z.uuid() } : {}),
+          ...(kind === "semesters" ? { academicYearId: z.uuid(), termKind: z.enum(["first", "second", "other"]).nullable().optional() } : {}),
         })
         .strict()
     : kind === "settings"

@@ -24,8 +24,9 @@ async function releaseInputs() {
     ...await filesIn("src"), ...await filesIn("server"), ...await filesIn("scripts"),
     ...await filesIn("tests"), ...await filesIn("db/migrations")].sort();
 }
-await mkdir("output/uat", { recursive: true });
-const reportFile = "output/uat/F36-report.json";
+const evidenceDirectory = process.env.LDSS_UAT_OUTPUT ?? "output/uat";
+await mkdir(evidenceDirectory, { recursive: true });
+const reportFile = join(evidenceDirectory, "F36-report.json");
 const packageInfo = JSON.parse(await readFile("package.json", "utf8"));
 const report = { release: packageInfo.version, startedAt: new Date().toISOString(),
   status: "running", productionAuthorized: false, coordinatorSignoff: "pending",
@@ -50,7 +51,7 @@ try {
       child.once("error", reject);
       child.once("close", (exitCode) => resolveRun(exitCode));
     });
-    const logFile = resolve("output/uat", `${name.replaceAll(":", "-")}.log`);
+    const logFile = resolve(evidenceDirectory, `${name.replaceAll(":", "-")}.log`);
     await writeFile(logFile, Buffer.concat(log));
     report.suites.push({ name, passed: code === 0, elapsedSeconds: (Date.now() - started) / 1000, logFile });
     if (code !== 0) throw new Error(`Acceptance suite ${name} failed. Review its local log.`);
@@ -70,6 +71,6 @@ try {
 } finally {
   report.finishedAt = new Date().toISOString();
   await writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
-  await writeFile(`output/uat/F36-${Date.now()}.json`, JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
+  await writeFile(join(evidenceDirectory, `F36-${Date.now()}.json`), JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
   console.log(`Acceptance evidence: ${reportFile}`);
 }

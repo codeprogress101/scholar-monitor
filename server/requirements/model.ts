@@ -1,4 +1,5 @@
 export type RequirementVersion = {
+  documentKind?: "enrollment" | "grades" | "other" | null;
   id: string;
   definitionId: string;
   code: string;

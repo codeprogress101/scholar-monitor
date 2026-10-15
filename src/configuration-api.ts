@@ -36,5 +36,6 @@ export async function configurationRequest<T>(
       body?.error?.request_id,
     );
   if (!body) throw new Error("Unexpected service response.");
+  if (options?.body !== undefined && !path.startsWith("notifications/")) window.dispatchEvent(new Event("workflow-updated"));
   return body as T;
 }

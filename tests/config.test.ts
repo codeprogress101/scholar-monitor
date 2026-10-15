@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../server/config.js";
 
 describe("environment configuration", () => {
+  it("trusts a loopback proxy only when explicitly enabled", () => {
+    expect(loadConfig({}).TRUST_LOOPBACK_PROXY).toBe(false);
+    expect(loadConfig({ TRUST_LOOPBACK_PROXY: "false" }).TRUST_LOOPBACK_PROXY).toBe(false);
+    expect(loadConfig({ TRUST_LOOPBACK_PROXY: "true" }).TRUST_LOOPBACK_PROXY).toBe(true);
+    expect(() => loadConfig({ TRUST_LOOPBACK_PROXY: "yes" })).toThrow();
+  });
   it("runs locally without database credentials and uses a loopback listener", () => {
     expect(loadConfig({})).toMatchObject({
       APP_ENV: "development",

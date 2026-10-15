@@ -1,6 +1,6 @@
 # F36 — User acceptance and release checklist
 
-Candidate: **v0.37.0**, XAMPP MariaDB, 29 migrations through `20261004180000_f31_audit_viewer.sql`. F35 is accepted by the request to proceed. F36 remains **pending human acceptance and production readiness**. Automated evidence is not Coordinator or technical-owner sign-off.
+Candidate: **v0.37.0**, XAMPP MariaDB, 45 migrations (validate exact names and checksums against the current acceptance report). F35 is accepted by the request to proceed. F36 remains **pending human acceptance and production readiness**. Automated evidence is not Coordinator or technical-owner sign-off.
 
 ## Repeatable technical gate
 
@@ -20,7 +20,7 @@ Use individual Staff, Coordinator and System Administrator accounts. Michael's e
 | Duplicate Excel import | Duplicates reported; confirmation cannot create duplicate records | Import suite | Pending |
 | COR verified, grades missing | Not eligible; missing grades explained | Eligibility suite | Pending |
 | Locked official masterlist | Direct edits denied; controlled amendment preserves history | Masterlist workflow/amendment suites | Pending |
-| OVR finalization | Entire roster commits or rolls back; independent approval enforced | Finalization/concurrency suites | Pending |
+| Payroll finalization | Entire roster commits or rolls back; explicit Coordinator approval enforced, including the sole Coordinator?s own submission | Finalization/concurrency suites | Pending |
 | Eligibility override approved | Separate Coordinator decision and audit evidence preserved | Override/audit suites | Pending |
 | New semester after paid history | Earlier paid outcomes, finalization and corrections unchanged | Payment suite | Pending |
 | Staff receives one document | Selected document Submitted; unselected documents unchanged; verification separate | Receiving suite and F36 browser smoke | Pending |
@@ -55,3 +55,14 @@ Screenshots: `output/playwright/f36-staff-receiving.png`, `f36-coordinator.png`,
 | Technical owner | To be designated | Pending | **Pending** | — |
 
 No production release or external notification is performed by this checkpoint. See [release and rollback procedure](F36-release-runbook.md).
+
+## Localhost payroll consistency checkpoint 9 October 2026
+
+See [the dated implementation report](../output/payroll-consistency-20261009/REPORT.md) for one-claim concurrency, correction, signatory, browser and Word-render evidence. Final unchanged-source UAT passed: 48/48 suites, 356 tests across 65 test files, with source fingerprints verified. Operator sign-off remains pending. This checkpoint does not authorize LAN deployment or replace operator sign-off.
+
+
+## 10 October 2026 remediation evidence
+
+The A01-A08 remediation source and disposable verification are recorded in [the dated report](../output/readiness-remediation-20261010/REPORT.md). Earlier evidence is retained and superseded only where that report explicitly identifies a changed workflow. Legacy operational writes are now contained; historical corrections remain controlled. Treasury reconciliation, reviewed placement policy, exact schema readiness and consistent read snapshots are implemented locally. Final UAT status and coverage limits are authoritative in the dated report. LAN installation, verified controlling ordinance/calendar, recovery/key-custody checks and an uninterrupted office operator pilot remain separate pending acceptance.
+
+Final result for this remediation: 51 configured UAT suites (45 distinct commands), 361 unit tests/66 files, lint/type check/build/secret scan passed on 483 unchanged inputs and 48 migrations. See the dated report for browser/Word evidence, release-review archive and coverage limits. Technical gate passed; office and LAN sign-off remain pending.

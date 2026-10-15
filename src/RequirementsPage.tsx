@@ -1,3 +1,6 @@
+import FocusedDialog from "./FocusedDialog";
+import { readAdminView, useAdminView } from "./admin-view-state";
+import { StatusBadge } from "./WorkspaceUI";
 import RoutineEvidence from "./RoutineEvidence";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
@@ -17,6 +20,7 @@ const blank = {
   code: "",
   name: "",
   instructions: "",
+  documentKind: "",
   appliesTo: "semester",
   semesterId: "",
   effectiveFrom: "",
@@ -39,12 +43,14 @@ async function semesters(signal: AbortSignal) {
   }
 }
 export default function RequirementsPage({ session }: { session: Session }) {
+  const viewKey = `admin-policies:${session.user.id}`;
+  const [saved] = useState(() => readAdminView(viewKey, {query:"", offset:0}));
   const [list, setList] = useState<RequirementList | null>(null),
     [parents, setParents] = useState<ConfigRecord[]>([]),
     [manage, setManage] = useState(false);
-  const [offset, setOffset] = useState(0),
-    [query, setQuery] = useState(""),
-    [search, setSearch] = useState(""),
+  const [offset, setOffset] = useState(saved.offset),
+    [query, setQuery] = useState(saved.query),
+    [search, setSearch] = useState(saved.query),
     [reload, setReload] = useState(0);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -61,26 +67,8 @@ export default function RequirementsPage({ session }: { session: Session }) {
       effectiveOn: "",
     }),
     [preview, setPreview] = useState<RequirementVersion[] | null>(null);
-  const editorPanel = useRef<HTMLFormElement>(null);
-  const historyPanel = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (editor) {
-      editorPanel.current?.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
-      });
-      editorPanel.current?.focus({ preventScroll: true });
-    }
-  }, [editor]);
-  useEffect(() => {
-    if (history) {
-      historyPanel.current?.scrollIntoView({
-        block: "start",
-        behavior: "smooth",
-      });
-      historyPanel.current?.focus({ preventScroll: true });
-    }
-  }, [history]);
+  const [uncertain, setUncertain] = useState(false);
+  useAdminView(viewKey, {query, offset}, !loading);
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
   useEffect(() => {
@@ -119,7 +107,6 @@ export default function RequirementsPage({ session }: { session: Session }) {
   }, [offset, query, reload]);
   function refresh() {
     setLoading(true);
-    setList(null);
     setHistory(null);
     setPreview(null);
     setEditor(null);
@@ -134,6 +121,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
             code: version.code,
             name: version.name,
             instructions: version.instructions,
+            documentKind: version.documentKind ?? "",
             appliesTo: version.appliesTo,
             semesterId: version.semesterId ?? "",
             effectiveFrom: "",
@@ -146,6 +134,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
     setError("");
     setNotice("");
     pending.current = null;
+    setUncertain(false);
   }
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -166,6 +155,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
             fields: {
               name: fields.name,
               instructions: fields.instructions,
+              documentKind: fields.documentKind || null,
               appliesTo: fields.appliesTo,
               semesterId: fields.semesterId || null,
               effectiveFrom: fields.effectiveFrom,
@@ -184,12 +174,14 @@ export default function RequirementsPage({ session }: { session: Session }) {
         csrf: session.csrfToken,
         key: pending.current.key,
       });
+      setUncertain(false);
       refresh();
       setNotice(
         `Saved ${result.code} version ${result.revision}, effective ${result.effectiveFrom}. Earlier versions remain unchanged.`,
       );
       pending.current = null;
     } catch (e) {
+      setUncertain(!(e instanceof ApiError) || e.status >= 500);
       setError(message(e));
     } finally {
       busy.current = false;
@@ -263,17 +255,16 @@ export default function RequirementsPage({ session }: { session: Session }) {
   ));
   return (
     <section
-      className="configuration-page"
+      className="configuration-page admin-workspace"
       aria-label="Requirement definitions"
       style={{ overflowWrap: "anywhere" }}
     >
       <div className="section-heading">
         <div>
           <span className="eyebrow">PHYSICAL DOCUMENT POLICY</span>
-          <h1>Requirement definitions</h1>
+          <h1>Document policies</h1>
           <p>
-            Configure hard-copy requirements for semesters or payouts. Each
-            change preserves the earlier policy.
+            Set which documents are required for each semester.
           </p>
         </div>
         <button
@@ -281,7 +272,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
           disabled={saving}
           onClick={refresh}
         >
-          Refresh definitions
+          Refresh
         </button>
       </div>
       {error && (
@@ -295,9 +286,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
         </div>
       )}
       {!loading && list && !manage && (
-        <p className="notice">
-          Read-only access. System Administrators configure requirement policy.
-        </p>
+        <p className="muted-line">View only. An administrator manages these policies. To receive documents, <a className="text-decoration-underline" href="#scholars?task=receive">find a scholar</a>.</p>
       )}
       <div className="configuration-toolbar">
         <form
@@ -331,26 +320,18 @@ export default function RequirementsPage({ session }: { session: Session }) {
             disabled={loading || saving}
             onClick={() => open("create")}
           >
-            Add requirement definition
+            Create policy
           </button>
         )}
       </div>
       {editor && (
-        <form
+        <FocusedDialog title={editor.action === "create" ? "Create policy" : editor.action === "archive" ? "Archive policy" : "Revise policy"} busy={saving || uncertain} onClose={()=>setEditor(null)}>
+        {error && <p role="alert" className="alert alert-danger">{error}</p>}
+        <form id="policy-editor-form"
           className="card p-3 my-3"
           onSubmit={save}
           aria-label="Requirement editor"
-          ref={editorPanel}
-          tabIndex={-1}
         >
-          <h2>
-            {editor.action === "create"
-              ? "New definition"
-              : editor.action === "archive"
-                ? "Archive definition"
-                : "New policy version"}
-            {editor.version ? ` - ${editor.version.code}` : ""}
-          </h2>
           <p>
             Start dates are inclusive; end dates are exclusive. A newer version
             supersedes the earlier one from its start date, even if its scope
@@ -358,11 +339,13 @@ export default function RequirementsPage({ session }: { session: Session }) {
             {editor.version &&
               `Choose a date after ${editor.version.effectiveFrom}, no earlier than today.`}
           </p>
-          <fieldset disabled={saving}>
+          {editor.action === "archive" && <p role="alert">This ends active use from the effective date. Earlier policy versions and recorded evidence are retained.</p>}
+          <fieldset disabled={saving || uncertain}>
             {editor.action === "create" && field("code", "Requirement code")}
             {editor.action !== "archive" && (
               <>
                 {field("name", "Requirement name")}
+                <label className="form-label d-block">Document kind<select className="form-select" value={fields.documentKind} required onChange={e => setFields({ ...fields, documentKind: e.target.value })}><option value="">Choose kind</option><option value="enrollment">Enrollment (COR / enrollment certificate)</option><option value="grades">Grades (COG)</option><option value="other">Other requirement</option></select></label>
                 <label className="form-label d-block">
                   Hard-copy instructions
                   <textarea
@@ -384,12 +367,12 @@ export default function RequirementsPage({ session }: { session: Session }) {
                       setFields({ ...fields, appliesTo: e.target.value })
                     }
                   >
-                    <option value="semester">Each semester</option>
-                    <option value="payout">Each payout</option>
+                    <option value="semester">Semester documents (receiving and payout)</option>
+                    <option value="payout">Separate payout obligation</option>
                   </select>
                 </label>
                 <label className="form-label d-block">
-                  Semester scope
+                  Required for semester
                   <select
                     className="form-select"
                     value={fields.semesterId}
@@ -434,7 +417,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
               />
             </label></RoutineEvidence>
             <button className="btn configuration-primary" type="submit">
-              Save policy version
+              {editor.action === "archive" ? "Archive policy" : editor.action === "create" ? "Create policy" : "Save policy version"}
             </button>{" "}
             <button
               className="btn btn-outline-secondary"
@@ -445,15 +428,16 @@ export default function RequirementsPage({ session }: { session: Session }) {
             </button>
           </fieldset>
         </form>
+        {uncertain && <div role="alert"><p>Result unconfirmed. Retry the same action before leaving.</p><button form="policy-editor-form" className="btn configuration-primary" disabled={saving}>Retry the same action</button></div>}
+        </FocusedDialog>
       )}
-      {loading ? (
+      {loading && !list ? (
         <p role="status">Loading definitions...</p>
       ) : (
         list && (
           <>
             <p>
-              Latest recorded versions, including future and archived policies.
-              Use the preview below to check a particular date.
+              Latest saved policies. Earlier versions remain in History.
             </p>
             {!list.items.length && (
               <p>
@@ -461,58 +445,18 @@ export default function RequirementsPage({ session }: { session: Session }) {
                 automatically.
               </p>
             )}
-            {list.items.map((v) => (
-              <article className="card p-3 mb-3" key={v.id}>
-                <h2 className="h5">
-                  {v.code} - {v.name}
-                </h2>
-                <p>
-                  Version {v.revision} - {v.active ? "Enabled" : "Archived"}{" "}
-                  from {v.effectiveFrom}
-                  {v.effectiveUntil
-                    ? ` until ${v.effectiveUntil} (exclusive)`
-                    : ""}
-                  <br />
-                  {v.appliesTo === "semester"
-                    ? "Each semester"
-                    : "Each payout"}{" "}
-                  - {v.semesterCode ?? "All semesters"}
-                </p>
-                <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                  {v.instructions}
-                </p>
-                <div className="d-flex gap-2 flex-wrap">
-                  <button
-                    className="btn btn-outline-secondary"
-                    disabled={saving}
-                    onClick={() => void inspect(v)}
-                  >
-                    History: {v.code}
-                  </button>
-                  {manage && (
-                    <>
-                      <button
-                        className="btn btn-outline-secondary"
-                        disabled={saving}
-                        onClick={() => open("revise", v)}
-                      >
-                        {v.active ? "Revise" : "Restore"}: {v.code}
-                      </button>
-                      {v.active && (
-                        <button
-                          className="btn btn-outline-secondary"
-                          disabled={saving}
-                          onClick={() => open("archive", v)}
-                        >
-                          Archive: {v.code}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </article>
-            ))}
-            <div className="d-flex gap-2 align-items-center">
+            <div className="table-responsive" role="region" aria-label="Document policies" tabIndex={0}><table className="table admin-table"><thead><tr><th>Document</th><th>Applies to</th><th>Effective dates</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            {list.items.map(v => <tr key={v.id}>
+              <td><strong>{v.name}</strong><small>{v.code}</small><details><summary>Instructions</summary><p style={{whiteSpace:"pre-wrap"}}>{v.instructions}</p></details></td>
+              <td><small>{v.documentKind === "enrollment" ? "Enrollment" : v.documentKind === "grades" ? "Grades" : v.documentKind === "other" ? "Other requirement" : "Document kind needs review"}</small>{v.semesterCode ?? "All semesters"}<small>{v.appliesTo === "semester" ? "Receiving and payout" : "Separate payout obligation"}</small></td>
+              <td>{v.effectiveFrom}<small>{v.effectiveUntil ? `Until ${v.effectiveUntil} (exclusive)` : "No explicit end"}</small></td>
+              <td><StatusBadge tone={v.active ? "neutral" : "warning"}>{v.active ? "Enabled" : "Archived"}</StatusBadge></td>
+              <td><div className="admin-row-actions">{manage && <button className="btn btn-sm configuration-primary" disabled={saving} onClick={()=>open("revise",v)}>{v.active ? "Revise policy" : "Restore policy"}</button>}
+              <button className="btn btn-sm btn-outline-secondary" disabled={saving} onClick={()=>void inspect(v)}>History</button>
+              {manage && v.active && <button className="btn btn-sm btn-outline-secondary" disabled={saving} onClick={()=>open("archive",v)}>Archive</button>}</div></td>
+            </tr>)}
+            </tbody></table></div>
+            <div className="d-flex gap-2 align-items-center" hidden={list.total <= 25}>
               <button
                 className="btn btn-outline-secondary"
                 disabled={saving || offset === 0}
@@ -539,13 +483,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
         )
       )}
       {history && (
-        <section
-          className="card p-3 my-3"
-          aria-label="Requirement version history"
-          ref={historyPanel}
-          tabIndex={-1}
-        >
-          <h2>Version history - {history[0].code}</h2>
+        <FocusedDialog title={`Policy history${history[0] ? " - " + history[0].code : ""}`} onClose={()=>setHistory(null)}>
           <p>
             Stored versions never change. The next version's start date
             supersedes this version's availability.
@@ -572,18 +510,17 @@ export default function RequirementsPage({ session }: { session: Session }) {
               </p>
             </article>
           ))}
-        </section>
+        </FocusedDialog>
       )}
       {list && (
-        <form
+        <details className="secondary-details"><summary>Check which policies apply</summary><form
           className="card p-3 my-4"
           aria-label="Requirement applicability preview"
           onSubmit={resolve}
         >
           <h2>Preview applicable requirements</h2>
           <p>
-            Check policy for an open semester and date. This preview does not
-            generate scholar obligations or assess payout eligibility.
+            Preview the document policy for a semester and date.
           </p>
           <fieldset disabled={saving}>
             <label className="form-label d-block">
@@ -647,7 +584,7 @@ export default function RequirementsPage({ session }: { session: Session }) {
               )}
             </div>
           )}
-        </form>
+        </form></details>
       )}
     </section>
   );

@@ -11,6 +11,8 @@ export type CandidateSnapshot = {
   personVersion: number;
   scholarshipId: string;
   scholarshipVersion: number;
+  continuingRollover?: { scholarshipId: string; auditId: string };
+  continuingAdmission?: { participationId: string; eventId: string };
   academicRecordId: string;
   academicVersion: number;
   placement: Placement;
@@ -31,6 +33,8 @@ export type Masterlist = {
   version: number;
   count: number;
   unavailable: boolean;
+  revisionKind?: string;
+  latestId?: string;
 };
 export type DraftEntry = {
   id: string;
@@ -45,6 +49,7 @@ export type DraftValidation = {
   issues: DraftIssue[];
 };
 export type DraftDetail = Masterlist & {
+  proposalKind?: "standalone" | "addition" | "consolidation";
   entries: DraftEntry[];
   validation: DraftValidation;
 };

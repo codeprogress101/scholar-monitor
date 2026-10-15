@@ -24,7 +24,7 @@ try {
   const [rows] = await connection.query(
     "SELECT version, checksum FROM schema_migrations",
   );
-  assert.equal(rows.length, 29);
+  assert.equal(rows.length, 53);
   for (const row of rows) {
     assert.match(row.version, /^\d{14}_f\d{2}_[a-z_]+\.sql$/);
     const sql = await readFile(
@@ -34,6 +34,19 @@ try {
     assert.equal(row.checksum, createHash("sha256").update(sql).digest("hex"));
   }
   // EXPLAIN checks privileges without executing DML or changing schema/data.
+  for (const table of [
+    "payroll_draft_deferrals",
+    "payroll_reprocessing",
+    "payroll_reprocessing_attempts",
+    "payroll_reprocessing_events",
+    "payroll_unpaid_classifications",
+  ]) {
+    await connection.query(`SELECT * FROM ${table} LIMIT 0`);
+    await assert.rejects(
+      connection.query(`EXPLAIN DELETE FROM ${table} WHERE 1=0`),
+      (error) => error.code === "ER_TABLEACCESS_DENIED_ERROR",
+    );
+  }
   await assert.rejects(
     connection.query("EXPLAIN DELETE FROM schema_migrations WHERE 1 = 0"),
     (error) => error.code === "ER_TABLEACCESS_DENIED_ERROR",
@@ -53,10 +66,17 @@ try {
     /GRANT (?:ALL|CREATE|ALTER|DROP|DELETE)|WITH GRANT OPTION/,
   );
   for (const sql of [
+    ...["regular_payout_periods", "semester_submission_versions", "payroll_submission_windows", "payroll_submission_window_versions"].flatMap((t) => [`EXPLAIN UPDATE ${t} SET cycle_id=cycle_id WHERE 1=0`, `EXPLAIN DELETE FROM ${t} WHERE 1=0`]),
+    "EXPLAIN UPDATE requirement_document_evidence SET instance_id=instance_id WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_document_evidence WHERE 1=0",
+    "EXPLAIN UPDATE requirement_timing_decisions SET reason=reason WHERE 1=0",
+    "EXPLAIN DELETE FROM requirement_timing_decisions WHERE 1=0",
     "EXPLAIN UPDATE audit_event_view SET action=action WHERE 1=0",
     "EXPLAIN DELETE FROM audit_event_view WHERE 1=0",
     "EXPLAIN UPDATE export_audit_metadata SET action=action WHERE 1=0",
     "EXPLAIN DELETE FROM export_audit_metadata WHERE 1=0",
+    "EXPLAIN UPDATE scholar_intakes SET year_level=year_level WHERE 1=0",
+    "EXPLAIN DELETE FROM scholar_intakes WHERE 1=0",
     "EXPLAIN UPDATE import_jobs SET file_name=file_name WHERE 1=0",
     "EXPLAIN DELETE FROM import_jobs WHERE 1=0",
     "EXPLAIN UPDATE import_confirmations SET result=result WHERE 1=0",

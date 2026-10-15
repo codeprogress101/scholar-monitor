@@ -1,4 +1,7 @@
+import { semesterDocumentSources } from "../requirements/semester-policy.js";
 import { randomUUID } from "node:crypto";
+import { preventGraduateRenewal } from "../status/graduation.js";
+import { requireReconciledBatches } from "./closure.js";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
@@ -34,7 +37,9 @@ async function view(
     "SELECT p.definition_version_id,p.allow_waiver,d.code,v.name,v.revision FROM payout_requirements p JOIN requirement_definition_versions v ON v.id=p.definition_version_id JOIN requirement_definitions d ON d.id=v.definition_id WHERE p.cycle_version_id=? ORDER BY d.code LOCK IN SHARE MODE",
     [r.version_id],
   );
+  const semesterDocuments = await semesterDocumentSources(db, r.semester_id);
   return {
+    ...(semesterDocuments.length ? { semesterDocuments } : {}),
     id: r.id,
     code: r.code,
     semesterId: r.semester_id,
@@ -92,9 +97,10 @@ export async function guardPayoutRequirement(
   instanceId: string,
 ) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT c.payout_cycle_id FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id WHERE i.id=? LOCK IN SHARE MODE",
+    "SELECT c.payout_cycle_id,c.semester_id,COALESCE(r.scholar_id,ss.scholar_id) AS scholar_id FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id LEFT JOIN scholarship_records r ON r.id=c.scholarship_record_id LEFT JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id WHERE i.id=? LOCK IN SHARE MODE",
     [instanceId],
   );
+  if (rows[0]?.scholar_id) await preventGraduateRenewal(db, rows[0].scholar_id, rows[0].semester_id);
   if (rows[0]?.payout_cycle_id)
     requireOpenPayout(await currentPayout(db, rows[0].payout_cycle_id));
 }
@@ -109,9 +115,12 @@ async function validateRequirements(
     appliesTo: "payout",
     effectiveOn: targetDate,
   });
+  available.push(...await applicableRequirements(db, { semesterId, appliesTo: "semester", effectiveOn: targetDate }));
+  const shared = await semesterDocumentSources(db, semesterId);
+  const inherited = new Set(shared.filter(s => s.mode === "enabled").flatMap(s => [s.corDefinitionVersionId, s.cogDefinitionVersionId]));
   if (
-    !chosen.length ||
-    chosen.some((r) => !available.some((a) => a.id === r.definitionVersionId))
+    (!chosen.length && !inherited.size) ||
+    chosen.some((r) => !inherited.has(r.definitionVersionId) && !available.some((a) => a.id === r.definitionVersionId))
   )
     throw new AuthError(
       409,
@@ -120,6 +129,7 @@ async function validateRequirements(
     );
 }
 export class PayoutService {
+  documentSources(actor: string, rawSemester: string) { const semester = parseId(rawSemester); return this.authorization.withPermission(actor, "configuration.read", async db => ({ items: await semesterDocumentSources(db, semester) })); }
   constructor(private authorization: AuthorizationService) {}
   async list(actor: string, raw: unknown) {
     const q = parseRequirementList(raw);
@@ -250,6 +260,14 @@ export class PayoutService {
             "VERSION_CONFLICT",
             "Semester configuration changed. Refresh before creating a cycle.",
           );
+        if (before && ["configure", "open"].includes(input.action)) {
+          const [[legacy]] = await db.execute<RowDataPacket[]>("SELECT b.id FROM ovr_batches b WHERE b.cycle_id=? AND NOT EXISTS(SELECT 1 FROM regular_payout_periods r WHERE r.cycle_id=b.cycle_id) LIMIT 1",[before.id]);
+          if(legacy) throw new AuthError(409,"LEGACY_PAYROLL_READ_ONLY","Legacy payroll cycles with existing batches cannot be reopened or reconfigured. Use reviewed conversion.");
+        }
+        if (input.action === "create") {
+          const [[mapped]] = await db.execute<RowDataPacket[]>("SELECT cycle_id FROM regular_payout_periods WHERE semester_id=? LOCK IN SHARE MODE", [semesterId]);
+          if (mapped) throw new AuthError(409, "REGULAR_PERIOD_MAPPED", "This semester already has a regular payout period. Open a payroll batch within it instead of another cycle.");
+        }
         const state =
           input.action === "create"
             ? "draft"
@@ -263,6 +281,7 @@ export class PayoutService {
             fields.requirements,
           );
         const cycleId = id ?? randomUUID();
+        if (input.action === "close") await requireReconciledBatches(db, cycleId);
         if (input.action === "create") {
           const [duplicate] = await db.execute<RowDataPacket[]>(
             "SELECT id FROM payout_cycles WHERE code=? FOR UPDATE",

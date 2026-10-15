@@ -48,7 +48,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -257,7 +257,13 @@ try {
     role = "coordinator",
     key = randomUUID(),
   ) => request(role, `/api/v1/academic-changes/${id}/${action}`, evidence, key);
+  const reviewPolicy = async (academicId:string,p:typeof proposal,priorShiftCount:number) => {
+    const r=await request("coordinator",`/api/v1/academic-records/${academicId}/policy-reviews`,{expectedVersion:p.expectedVersion,schoolId:p.schoolId,courseId:p.courseId,yearLevel:p.yearLevel,effectiveOn:p.effectiveOn,priorShiftCount,secondYearBoundaryOn:"2027-06-01",permissionGrantedOn:"2026-08-01",permissionReference:"Synthetic prior committee permission",historyReference:"Complete synthetic lifetime placement history and second-year boundary",sourceCategory:"degree",destinationCategory:"degree",reviewed:true});
+    assert.equal(r.statusCode,200,r.body);
+  };
   const createChange = async (p: object = proposal, role = "staff") => {
+    const proposed=p as typeof proposal;
+    if(proposed.kind!=="year_level_correction")await reviewPolicy(original.id,proposed,(await view()).version ? 1 : 0);
     const r = await request(role, changes, p);
     assert.equal(r.statusCode, 200, r.body);
     return r.json().requestId as string;
@@ -284,6 +290,7 @@ try {
     409,
     "INVALID_ACADEMIC_CHANGE",
   );
+  expectError(await request("staff",changes,proposal),409,"PLACEMENT_POLICY_REVIEW_REQUIRED");
   const first = await createChange();
   assert.equal((await view()).current.courseId, course.id);
   expectError(
@@ -292,7 +299,7 @@ try {
     "PERMISSION_DENIED",
   );
   const self = await createChange(proposal, "coordinator");
-  expectError(await decide(self), 403, "SELF_APPROVAL_DENIED");
+  expectError(await decide(self, "approve", "staff"), 403, "PERMISSION_DENIED");
   expectError(
     await decide(first, "cancel", "coordinator"),
     403,
@@ -363,10 +370,10 @@ try {
   );
   const both = await createChange({
     ...proposal,
-    kind: "both",
+    kind: "school_transfer",
     expectedVersion: 2,
     schoolId: school.id,
-    courseId: course.id,
+    courseId: newCourse.id,
   });
   assert.equal((await decide(both)).statusCode, 200);
   const correction = {
@@ -374,7 +381,7 @@ try {
     kind: "year_level_correction",
     expectedVersion: 3,
     schoolId: school.id,
-    courseId: course.id,
+    courseId: newCourse.id,
     yearLevel: "Second year",
   };
   const correctionId = await createChange(correction);
@@ -391,7 +398,7 @@ try {
     "INVALID_EFFECTIVE_DATE",
   );
   pass(
-    "Combined transfer/shift and separate year-level correction preserve a chronological revision chain",
+    "Repeated school transfer and separate year-level correction preserve a chronological revision chain",
   );
   const rename = await request(
     "system_admin",
@@ -408,17 +415,16 @@ try {
     (await view()).requests.find((q) => q.id === first)!.after.course.name,
     "New Degree",
   );
-  const archiveId = await createChange({
-    ...proposal,
-    expectedVersion: 4,
-    yearLevel: "Second year",
-  });
+  const secondShift={...proposal,expectedVersion:4,yearLevel:"Second year",courseId:course.id};
+  const rejectedReview=await request("coordinator",`/api/v1/academic-records/${original.id}/policy-reviews`,{...secondShift,kind:undefined,reason:undefined,reference:undefined,remarks:undefined,priorShiftCount:1,secondYearBoundaryOn:"2027-06-01",permissionGrantedOn:"2026-08-01",permissionReference:"Synthetic prior permission",historyReference:"One recorded prior shift",sourceCategory:"degree",destinationCategory:"degree",reviewed:true});
+  expectError(rejectedReview,409,"SHIFT_LIMIT_REACHED");
+  const archiveId = await createChange({...proposal,kind:"school_transfer",schoolId:newSchool.id,expectedVersion:4,yearLevel:"Second year"});
   const archived = await request(
     "system_admin",
-    `/api/v1/configuration/courses/${newCourse.id}`,
+    `/api/v1/configuration/schools/${newSchool.id}`,
     {
       action: "archive",
-      expectedVersion: rename.json().version,
+      expectedVersion: newSchool.version,
       reason: "Archive synthetic course",
     },
   );
@@ -483,6 +489,8 @@ try {
     [annualResponse.json().id],
   );
   expectError(await decide(retryId), 409, "MASTERLIST_AMENDMENT_REQUIRED");
+  assert.equal((await view()).blockedReason, "activated_scholarship");
+  assert.equal((await view()).officialMasterlist, null);
   expectError(
     await request("staff", changes, retryBody),
     409,
@@ -494,10 +502,12 @@ try {
     "Activated official records require amendment and cannot be rewritten; cancellation remains available",
   );
   const nextPath = `/api/v1/academic-records/${priorYear.id}/changes`;
+  const availableSchool=await config("schools",{code:"ANOTHER-TRANSFER",name:"Another permitted transfer destination"});
+  await reviewPolicy(priorYear.id,{...proposal,kind:"school_transfer",schoolId:availableSchool.id,courseId:course.id},1);
   const pendingResponse = await request("staff", nextPath, {
     ...proposal,
     kind: "school_transfer",
-    schoolId: newSchool.id,
+    schoolId: availableSchool.id,
     courseId: course.id,
   });
   assert.equal(pendingResponse.statusCode, 200, pendingResponse.body);
@@ -511,6 +521,7 @@ try {
     },
   );
   assert.equal(locked.statusCode, 200, locked.body);
+  assert.equal((await request("staff", nextPath)).json().blockedReason, "year_locked");
   expectError(
     await decide(pendingResponse.json().requestId),
     409,

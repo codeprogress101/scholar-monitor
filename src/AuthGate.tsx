@@ -138,7 +138,7 @@ export default function AuthGate() {
         generation.current++;
         setSession(value);
         setMessage("");
-        window.location.hash = "overview";
+        window.location.hash = "dashboard";
       }}
       onReset={() => {
         generation.current++;

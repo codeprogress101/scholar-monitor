@@ -10,6 +10,7 @@ const body = {
   reason: "Record physical document custody",
 };
 describe("physical receipt contracts", () => {
+  it("leaves routine date resolution to the transaction after retry lookup",()=>{expect(parseReceipt({...body,receivedOn:undefined}).receivedOn).toBeUndefined();});
   it("accepts storage and optional reference/remarks", () => {
     expect(parseReceipt(body)).toEqual(body);
     expect(
@@ -20,11 +21,18 @@ describe("physical receipt contracts", () => {
       }).physicalReference,
     ).toBe("REGISTER-01");
   });
-  it("rejects future/invalid dates, missing custody and forged receiver or status", () => {
+  it("records routine receiving without requiring repeated operator prose or storage", () => {
+    expect(parseReceipt({ ...body, reason: "", storageLocation: null })).toEqual({ ...body, reason: "Physical document received", storageLocation: "" });
+    const { reason: _reason, storageLocation: _storage, ...minimal } = body;
+    void _reason; void _storage;
+    expect(parseReceipt(minimal).reason).toBe("Physical document received");
+    expect(parseReceipt(minimal).storageLocation).toBe("");
+  });
+  it("rejects future/invalid dates, invalid custody and forged receiver or status", () => {
     for (const change of [
       { receivedOn: "9999-01-01" },
       { receivedOn: "2026-02-30" },
-      { storageLocation: " " },
+      { storageLocation: { forged: true } },
       { expectedVersion: -1 },
       { actorId: randomUUID() },
       { receivedBy: "Another person" },

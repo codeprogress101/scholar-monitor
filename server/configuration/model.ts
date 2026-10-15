@@ -16,6 +16,7 @@ export const CONFIG_LABELS: Record<ConfigKind, string> = {
   settings: "Program settings",
 };
 export type ConfigRecord = {
+  rollover?: import("./rollover.js").RolloverSummary;
   id: string;
   code: string;
   name: string;
@@ -23,9 +24,11 @@ export type ConfigRecord = {
   archived: boolean;
   locked: boolean;
   parentUnavailable: boolean;
+  working?: boolean;
   startsOn: string | null;
   endsOn: string | null;
   academicYearId: string | null;
+  termKind?: "first" | "second" | "other" | null;
   valueType: "text" | "date" | null;
   value: string | null;
 };
@@ -41,6 +44,7 @@ export type ConfigFields = {
   startsOn?: string;
   endsOn?: string;
   academicYearId?: string;
+  termKind?: "first" | "second" | "other" | null;
   valueType?: "text" | "date";
   value?: string;
 };

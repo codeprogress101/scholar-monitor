@@ -1,5 +1,12 @@
 import { validationDetails } from "../validation-details.js";
 import { z } from "zod";
+
+export const admissionReviewQuery = z.object({
+  academicYearId: z.uuid(),
+  status: z.enum(["for_validation", "applicant", "exam_passed", "qualified", "selected", "not_selected"]),
+  q: z.string().trim().max(100).default(""),
+  offset: z.coerce.number().int().min(0).max(1000000).default(0),
+}).strict();
 import { AuthError } from "../auth/service.js";
 import { today } from "../scholars/validation.js";
 import type { QualificationAction, QualificationStatus } from "./model.js";
@@ -10,7 +17,7 @@ const text = (min: number, max: number) =>
     .min(min)
     .max(max)
     .regex(/^\P{Cc}*$/u);
-export function parseQualification(body: unknown, create: boolean) {
+export function parseQualification(body: unknown, create: boolean, validate = false) {
   const result = z
     .object({
       expectedVersion: create ? z.literal(0) : z.number().int().min(1),
@@ -23,6 +30,7 @@ export function parseQualification(body: unknown, create: boolean) {
         ),
       reason: text(5, 500),
       reference: text(3, 300),
+      ...(validate ? { priorQualificationConfirmed: z.literal(true) } : {}),
     })
     .strict()
     .refine(
@@ -53,6 +61,7 @@ export function transition(
   from: QualificationStatus,
   action: QualificationAction,
 ): QualificationStatus {
+  if (action === "validate" && ["applicant", "exam_passed"].includes(from)) return "qualified";
   if (action === "exam-passed" && from === "applicant") return "exam_passed";
   if (action === "qualify" && from === "exam_passed") return "qualified";
   if (action === "select" && from === "qualified") return "selected";

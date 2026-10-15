@@ -106,22 +106,22 @@
   },
   {
     "id": "F21",
-    "title": "OVR Draft Batch and Entries",
+    "title": "Payroll Draft Batch and Entries",
     "phase": "Payouts"
   },
   {
     "id": "F22",
-    "title": "OVR Review and Atomic Finalization",
+    "title": "Payroll Review and Atomic Finalization",
     "phase": "Payouts"
   },
   {
     "id": "F23",
-    "title": "OVR Submission, Processing and Closure",
+    "title": "Payroll Submission, Processing and Closure",
     "phase": "Payouts"
   },
   {
     "id": "F24",
-    "title": "OVR Amendment",
+    "title": "Payroll Amendment",
     "phase": "Payouts"
   },
   {

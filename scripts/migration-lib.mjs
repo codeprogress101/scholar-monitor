@@ -90,10 +90,53 @@ export async function grantAuthRuntime(connection, database, user) {
     throw new Error("Invalid database identity.");
   const table = (name) => `\`${database}\`.\`${name}\``;
   const identity = `${connection.escape(user)}@'localhost'`;
+  await connection.query(`GRANT SELECT ON ${table("notification_events")} TO ${identity}`);
+  await connection.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${table("notification_reads")} TO ${identity}`);
   await connection.query(`GRANT SELECT ON ${table("scholar_profile_audit")} TO ${identity}`);
   await connection.query(`GRANT SELECT ON ${table("export_audit_metadata")} TO ${identity}`);
   await connection.query(`GRANT SELECT ON ${table("audit_event_view")} TO ${identity}`);
+  await connection.query(`GRANT SELECT ON ${table("graduation_record_corrections")} TO ${identity}`);
+  for (const name of ["scholar_semesters", "scholar_semester_revisions", "requirement_coverage", "workflow_scope_versions", "semester_review_events", "semester_entitlements"])
+    await connection.query(`GRANT SELECT ON ${table(name)} TO ${identity}`);
   for (const name of [
+    "payroll_legacy_conversions",
+    "placement_policy_reviews",
+    "payroll_treasury_evidence",
+    "payroll_treasury_confirmations",
+    "payroll_historical_receipts",
+    "regular_payout_periods",
+    "semester_submission_versions",
+    "payroll_submission_windows",
+    "payroll_submission_window_versions",
+    "requirement_document_evidence",
+    "requirement_timing_decisions",
+    "payroll_deferrals",
+    "payroll_unpaid_classifications",
+    "payroll_draft_deferrals",
+    "payroll_reprocessing",
+    "payroll_reprocessing_events",
+    "payroll_reprocessing_attempts",
+    "payroll_allocations",
+    "graduation_confirmations",
+    "entitlement_release_links",
+    "semester_entitlement_events",
+    "semester_entitlements",
+    "continuing_roster_batches",
+    "continuing_roster_entries",
+    "continuing_roster_decisions",
+    "participations",
+    "participation_events",
+    "workflow_authority_versions",
+    "workflow_commands",
+    "semester_review_events",
+    "workflow_policy_versions",
+    "scholar_semesters",
+    "scholar_semester_revisions",
+    "semester_document_reconciliations",
+    "entrant_grading_card_reviews",
+    "requirement_coverage",
+    "workflow_scope_versions",
+    "scholar_intakes",
     "import_jobs",
     "import_confirmations",
     "ovr_amendments",
@@ -126,6 +169,10 @@ export async function grantAuthRuntime(connection, database, user) {
     "requirement_definition_versions",
     "requirement_definition_commands",
     "masterlist_amendments",
+    "masterlist_revisions",
+    "masterlist_addition_events",
+    "masterlist_consolidations",
+    "masterlist_consolidation_links",
     "masterlist_amendment_decisions",
     "masterlist_amendment_versions",
     "masterlist_amendment_commands",
@@ -226,4 +273,29 @@ export async function grantAuthRuntime(connection, database, user) {
     await connection.query(
       `GRANT ${permission} ON ${table(name)} TO ${identity}`,
     );
+}
+
+/** Bring an owned restore to the notification schema before rehearsing older migrations.
+ * The working database is deliberately not upgraded by these regression tests. */
+export async function prepareRestoredNotificationSchema(connection) {
+  const assert = (await import("node:assert/strict")).default;
+  const [[identity]] = await connection.query("SELECT DATABASE() AS db");
+  assert.match(identity.db, /^ldss_restore_\d+_[a-f0-9]{8}$/);
+  const upgrades = ["20261008040000_f37_notifications.sql","20261009010000_f36_unclaimed_reprocessing.sql","20261010020000_f38_treasury_reconciliation.sql","20261010030000_f38_placement_policy_reviews.sql","20261010040000_f38_legacy_conversion.sql"];
+  const [existing] = await connection.query("SELECT version FROM schema_migrations");
+  const pending = upgrades.filter(m=>!existing.some(e=>e.version === m));
+  if (!pending.length) return;
+  const { inventory } = await import("./backup-lib.mjs");
+  const before = await inventory(connection);
+  const oldColumns = before.columns.filter(c=>c.TABLE_NAME === "payment_records").map(c=>c.COLUMN_NAME);
+  for(const column of oldColumns) assert.match(column,/^[a-z_]+$/);
+  const paymentSql=`SELECT ${oldColumns.map(c=>"`"+c+"`").join(",")} FROM payment_records ORDER BY id`;
+  const [originalPayments] = await connection.query({sql:paymentSql,rowsAsArray:true,dateStrings:true});
+  assert.deepEqual(await applyMigrations(connection), pending);
+  const after = await inventory(connection);
+  for (const table of before.tables.filter(t => !["schema_migrations","payment_records"].includes(t.name)))
+    assert.deepEqual(after.tables.find(t => t.name === table.name), table, `Additive upgrade preserves ${table.name}`);
+  assert.deepEqual((await connection.query({sql:paymentSql,rowsAsArray:true,dateStrings:true}))[0],originalPayments,"Every original payment field survives migration unchanged");
+  for (const table of after.tables.filter(t=>!before.tables.some(b=>b.name === t.name))) assert.equal(table.count,0);
+  assert.deepEqual(await applyMigrations(connection), []);
 }

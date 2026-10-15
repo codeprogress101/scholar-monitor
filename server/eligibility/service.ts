@@ -1,3 +1,5 @@
+import { graduationFor } from "../status/graduation.js";
+import { semesterSources } from "./semester-sources.js";
 import { validationDetails } from "../validation-details.js";
 import { overrideHistory, effectiveEligibility } from "./override-state.js";
 import { randomUUID } from "node:crypto";
@@ -12,7 +14,7 @@ import { currentPayout, requireOpenPayout } from "../payouts/service.js";
 import type { PayoutCycle } from "../payouts/model.js";
 import { requirementState } from "../requirements/workflow-state.js";
 import { satisfiesNormalRequirement } from "../requirements/workflow-model.js";
-import type { OfficialSnapshot } from "../masterlists/workflow-model.js";
+import { officialMembership } from "./official-membership.js";
 import { evaluateEligibility } from "./engine.js";
 import type {
   EligibilitySources,
@@ -52,71 +54,9 @@ export async function eligibilitySources(
   db: PoolConnection,
   cycle: PayoutCycle,
   annualId: string,
+  batchId?: string,
 ): Promise<EligibilitySources> {
-  const [records] = await db.execute<RowDataPacket[]>(
-    "SELECT r.*,s.version AS person_version,CONCAT_WS(' ',s.first_name,NULLIF(s.middle_name,''),s.last_name,NULLIF(s.suffix,'')) AS name,i.human_id,DATE_FORMAT(r.status_effective_on,'%Y-%m-%d') AS status_on FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id JOIN scholar_identifiers i ON i.scholar_id=s.id WHERE r.id=? FOR UPDATE",
-    [annualId],
-  );
-  if (!records.length)
-    throw new AuthError(
-      404,
-      "SCHOLARSHIP_NOT_FOUND",
-      "Annual scholarship record not found.",
-    );
-  const r = records[0];
-  if (r.academic_year_id !== cycle.academicYearId)
-    throw new AuthError(
-      409,
-      "WRONG_ACADEMIC_YEAR",
-      "Payout cycle and scholarship record must belong to the same academic year.",
-    );
-  const [activations] = await db.execute<RowDataPacket[]>(
-    "SELECT masterlist_id FROM masterlist_activations WHERE scholarship_id=? LOCK IN SHARE MODE",
-    [annualId],
-  );
-  const rootId = activations[0]?.masterlist_id ?? null;
-  let official: EligibilitySources["official"] = {
-    rootId,
-    masterlistId: null,
-    version: null,
-    amendmentRevision: 0,
-    snapshotHash: null,
-    effectiveOn: null,
-    valid: false,
-  };
-  if (rootId) {
-    const [chain] = await db.execute<RowDataPacket[]>(
-      "SELECT masterlist_id,revision FROM masterlist_amendment_versions WHERE root_id=? ORDER BY revision DESC LOCK IN SHARE MODE",
-      [rootId],
-    );
-    const latestId = chain[0]?.masterlist_id ?? rootId;
-    const [publications] = await db.execute<RowDataPacket[]>(
-      "SELECT m.id,m.academic_year_id,m.status,m.version,p.snapshot,p.snapshot_hash,DATE_FORMAT(p.effective_on,'%Y-%m-%d') AS effective_on FROM masterlist_versions m JOIN masterlist_publications p ON p.masterlist_id=m.id WHERE m.id=? LOCK IN SHARE MODE",
-      [latestId],
-    );
-    if (publications.length) {
-      const p = publications[0],
-        snapshot = decode<OfficialSnapshot>(p.snapshot);
-      official = {
-        rootId,
-        masterlistId: latestId,
-        version: p.version,
-        amendmentRevision: chain[0]?.revision ?? 0,
-        snapshotHash: p.snapshot_hash,
-        effectiveOn: p.effective_on,
-        valid:
-          ["published", "locked"].includes(p.status) &&
-          p.academic_year_id === cycle.academicYearId &&
-          snapshot.academicYearId === cycle.academicYearId &&
-          snapshot.masterlistId === latestId &&
-          snapshot.entries.some(
-            (e) =>
-              e.scholarId === r.scholar_id &&
-              e.snapshot.scholarshipId === annualId,
-          ),
-      };
-    }
-  }
+  const { r, official } = await officialMembership(db, cycle, annualId);
   const [checklists] = await db.execute<RowDataPacket[]>(
     "SELECT id,payout_version_id,DATE_FORMAT(policy_date,'%Y-%m-%d') AS policy_date FROM requirement_checklists WHERE scholarship_record_id=? AND payout_cycle_id=? LOCK IN SHARE MODE",
     [annualId, cycle.id],
@@ -146,7 +86,7 @@ export async function eligibilitySources(
         : false,
     });
   }
-  return {
+  const sources: EligibilitySources = {
     cycle: {
       id: cycle.id,
       versionId: cycle.versionId,
@@ -179,6 +119,13 @@ export async function eligibilitySources(
       : null,
     requirements,
   };
+  const [reservations] = await db.execute<RowDataPacket[]>("SELECT a.batch_id FROM semester_entitlements e LEFT JOIN payroll_allocations a ON a.entitlement_id=e.id WHERE e.scholar_id=? AND e.semester_id=? LOCK IN SHARE MODE", [r.scholar_id, cycle.semesterId]);
+  if (reservations.some(a => a.batch_id !== batchId)) sources.reservedSemester = true;
+  const graduation = await graduationFor(db, r.scholar_id);
+  if (graduation?.archived) sources.archivedGraduate = true;
+  if (r.operational_status === "graduated" && graduation?.requestId && graduation.semesterId === cycle.semesterId) sources.finalSemesterGraduation = { requestId: graduation.requestId, semesterId: graduation.semesterId };
+  sources.semesterPayroll = await semesterSources(db, sources, batchId);
+  return sources;
 }
 async function history(
   db: PoolConnection,
@@ -203,9 +150,10 @@ export async function eligibilityView(
   db: PoolConnection,
   cycle: PayoutCycle,
   annualId: string,
+  batchId?: string,
 ): Promise<EligibilityView> {
   const current = evaluateEligibility(
-      await eligibilitySources(db, cycle, annualId),
+      await eligibilitySources(db, cycle, annualId, batchId),
     ),
     saved = await history(db, cycle.id, annualId),
     latest = saved[0] ?? null,

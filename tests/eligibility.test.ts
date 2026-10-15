@@ -146,3 +146,9 @@ describe("Normal payout eligibility", () => {
       expect(() => parseCalculation({ ...body, ...extra })).toThrow();
   });
 });
+
+it("blocks archived graduates even if an inconsistent annual record says Active", () => {
+ const result = evaluateEligibility({ ...sources, archivedGraduate: true });
+ expect(result.eligible).toBe(false);
+ expect(result.reasons.some(r => r.code === "GRADUATE_ARCHIVED")).toBe(true);
+});

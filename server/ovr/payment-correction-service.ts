@@ -1,4 +1,7 @@
+import { effectiveRoster } from "./amendment-state.js";
+import { assertNoPaidClaim, claimDeadline, queueUnclaimed } from "./reprocessing.js";
 import { validationDetails } from "../validation-details.js";
+import { checkManagedPayment, entitlementEvent, linkManagedOutcome } from "./managed-release.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
@@ -32,15 +35,17 @@ const change = z
     ...common,
     paymentId: z.string().uuid(),
     outcome: z.enum(["paid", "not_paid"]),
+    unpaidReason: z.enum(["did_not_claim","withheld","review"]).optional(),
     amount: z.string().regex(/^(0|[1-9][0-9]{0,9})\.[0-9]{2}$/),
-    effectiveOn: z.iso.date().refine((d) => d >= "1900-01-01" && d <= today()),
+    effectiveOn: z.iso.date().refine((d) => d >= "1900-01-01" && d <= today()).nullable(),
     remarks: text(0, 1000),
+    priorReceiptConfirmed: z.boolean().optional(),
+    priorReceiptEvidence: text(20,1000).optional(),
   })
   .strict()
   .refine((p) =>
     p.outcome === "paid"
-      ? /^(0|[1-9][0-9]{0,9})\.[0-9]{2}$/.test(p.amount) &&
-        BigInt(p.amount.replace(".", "")) > 0n
+      ? p.amount === "5000.00"
       : p.amount === "0.00" && p.remarks.length >= 5,
   );
 const decision = z
@@ -102,6 +107,7 @@ export class PaymentCorrectionService {
             ? JSON.parse(retry[0].result)
             : retry[0].result;
         }
+        const [[managedPayroll]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE", [id]);
         const previous = (await ovrHistory(db, id))[0],
           cycle = await currentPayout(db, previous.cycleId);
         if (!["processed", "closed"].includes(previous.state))
@@ -116,7 +122,12 @@ export class PaymentCorrectionService {
             "VERSION_CONFLICT",
             "Payment processing changed. Refresh before continuing.",
           );
+        const claimWindow = await claimDeadline(db, cycle.semesterId);
+        const correctingPaid = (action === "correct" || action === "request") && (input as z.infer<typeof change>).outcome === "not_paid" && (await paymentRecords(db,id)).some(p=>p.id === (input as z.infer<typeof change>).paymentId && p.outcome === "paid");
         const closed =
+          correctingPaid ||
+          claimWindow.expired ||
+          Boolean(managedPayroll) ||
           previous.state === "closed" ||
           cycle.state === "closed" ||
           cycle.periodUnavailable;
@@ -152,7 +163,7 @@ export class PaymentCorrectionService {
             throw new AuthError(
               404,
               "PAYMENT_NOT_FOUND",
-              "Payment is not part of this OVR.",
+              "Payment is not part of this Payroll.",
             );
           if (
             all.some((c) => c.paymentId === before.id && c.state === "pending")
@@ -164,7 +175,7 @@ export class PaymentCorrectionService {
             );
           if (
             !previous.processing ||
-            data.effectiveOn < previous.processing.effectiveOn
+            (data.effectiveOn !== null && data.effectiveOn < previous.processing.effectiveOn)
           )
             throw new AuthError(
               422,
@@ -175,6 +186,9 @@ export class PaymentCorrectionService {
             ...before,
             revision,
             outcome: data.outcome,
+            priorReceiptConfirmed: data.priorReceiptConfirmed,
+            priorReceiptEvidence: data.priorReceiptEvidence,
+            unpaidReason: data.outcome === "not_paid" ? data.unpaidReason ?? null : null,
             amount: data.amount,
             effectiveOn: data.effectiveOn,
             reference: data.reference,
@@ -222,12 +236,6 @@ export class PaymentCorrectionService {
               "PAYMENT_CORRECTION_NOT_PENDING",
               "This correction is no longer pending.",
             );
-          if (pending.requestedBy === actor)
-            throw new AuthError(
-              403,
-              "SEPARATE_APPROVER_REQUIRED",
-              "A different Coordinator must decide this correction.",
-            );
           const current = payments.find((p) => p.id === pending.paymentId);
           if (
             !current ||
@@ -261,6 +269,25 @@ export class PaymentCorrectionService {
                 }
               : {}),
           };
+        }
+        const proposedPayment = correction.after ?? correction.proposed;
+        if (action !== "reject" && proposedPayment.outcome === "paid") {
+          await assertNoPaidClaim(db, proposedPayment.scholarshipId, cycle.semesterId, proposedPayment.id);
+          const deadline = await claimDeadline(db, cycle.semesterId);
+          if (deadline.expired && !proposedPayment.priorReceiptConfirmed) throw new AuthError(422,"PRIOR_RECEIPT_CONFIRMATION_REQUIRED","Confirm documentary evidence that the scholar actually received payment before the deadline. A correction cannot authorize a late collection.");
+          if (deadline.expired && !proposedPayment.effectiveOn && !proposedPayment.priorReceiptEvidence) throw new AuthError(422,"PRIOR_RECEIPT_EVIDENCE_REQUIRED","An unknown exact date requires documentary evidence establishing receipt before expiry.");
+          if (!deadline.endsOn || (proposedPayment.effectiveOn !== null && proposedPayment.effectiveOn > deadline.endsOn)) throw new AuthError(409, "CLAIM_PERIOD_ENDED", "A correction can only document a verified payment made within the semester claim period.");
+        }
+        if (managedPayroll) {
+          const proposed = correction.after ?? correction.proposed;
+          const entry = await checkManagedPayment(db, id, proposed.scholarshipId, action === "reject" ? "not_paid" : proposed.outcome, action === "reject" ? "0.00" : proposed.amount);
+          if (correction.after && entry) {
+            if (proposed.outcome === "paid") {
+              const [linked] = await db.execute<RowDataPacket[]>("SELECT payment_id FROM entitlement_release_links WHERE entitlement_id=?", [entry.entitlementId]);
+              if (!linked.length) await linkManagedOutcome(db, entry, proposed.id, actor, { correctionId: correction.id, amount: proposed.amount, reference: input.reference });
+            }
+            await entitlementEvent(db, entry, actor, "correction", input.reason, { correctionId: correction.id, outcome: proposed.outcome, reference: input.reference });
+          }
         }
         const batch: OvrBatch = {
           ...previous,
@@ -297,6 +324,10 @@ export class PaymentCorrectionService {
             actor,
           ],
         );
+        if (correction.after?.outcome === "not_paid" && correction.after.unpaidReason === "did_not_claim" && previous.state === "closed") {
+          const roster=await effectiveRoster(db,id);
+          if(roster) await queueUnclaimed(db,roster.snapshot,[correction.after],actor);
+        }
         await db.execute(
           "INSERT INTO audit_logs(id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES(?,'payment.correction','ovr_batches',?,?,?,'user',UTC_TIMESTAMP(6),?,?,?)",
           [

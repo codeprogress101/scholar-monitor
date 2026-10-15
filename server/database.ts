@@ -1,3 +1,4 @@
+import { schemaReady } from "./schema-readiness.js";
 import mysql from "mysql2/promise";
 import type { AppConfig } from "./config.js";
 
@@ -33,10 +34,11 @@ export function createDatabase(config: AppConfig): Database {
     async check() {
       try {
         const [rows] = await pool.query<mysql.RowDataPacket[]>({
-          sql: "SELECT version FROM schema_migrations WHERE version='20261004180000_f31_audit_viewer.sql'",
+          sql: "SELECT version,checksum FROM schema_migrations",
           timeout: 3000,
         });
-        return rows.length === 1 ? "connected" : "unavailable";
+        const [settings] = await pool.query<(mysql.RowDataPacket & {code: string; setting_value: string})[]>({sql: "SELECT code,setting_value FROM system_settings WHERE code='PAYROLL_SIGNATORIES' AND archived_at IS NULL", timeout: 3000});
+        return schemaReady(rows as (mysql.RowDataPacket & {version: string; checksum: string})[], settings) ? "connected" : "unavailable";
       } catch {
         return "unavailable";
       }

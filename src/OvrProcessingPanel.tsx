@@ -1,3 +1,7 @@
+import LegacyConversion from "./LegacyConversion";
+import TreasuryReconciliation from "./TreasuryReconciliation";
+import { useActionForm } from "./use-action-form";
+import { receivingToday } from "./receiving-selection";
 import RoutineEvidence from "./RoutineEvidence";
 import { useRef, useState, type FormEvent } from "react";
 import type { OvrDetail } from "../server/ovr/model";
@@ -8,36 +12,45 @@ export default function OvrProcessingPanel({
   session,
   permissions,
   onSaved,
+  onTreasurySaved,
 }: {
   detail: OvrDetail;
   session: Session;
   permissions: string[];
   onSaved: () => void;
+  onTreasurySaved?: () => void;
 }) {
   const [action, setAction] = useState(""),
+    [holdTarget, setHoldTarget] = useState(""),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
-    [outcome, setOutcome] = useState("paid");
+    [outcome, setOutcome] = useState("not_paid"),
+    [unpaidReason, setUnpaidReason] = useState("did_not_claim");
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
   const b = detail.batch,
     r = detail.reconciliation,
     members = detail.effectiveFinalization!.snapshot.entries;
   const available =
-    ["open", "locked"].includes(detail.cycle.state) &&
+    Boolean(detail.releases) && ["open", "locked"].includes(detail.cycle.state) &&
     !detail.cycle.periodUnavailable &&
     !detail.amendments.some((a) => a.state === "pending");
   const labels: Record<string, string> = {
     submit: "Submit for administration",
     "mark-processed": "Mark processed",
     payments: "Record payment outcome",
-    close: "Close OVR",
+    close: "Close Payroll",
+    hold: "Hold payment — Coordinator",
+    "release-hold": "Clear hold — Coordinator",
   };
+  const holdAvailable = Boolean(detail.releases) && !detail.amendments.some(a => a.state === "pending");
+  const holding = action === "hold" || action === "release-hold";
   const name = (id: string) => {
     const s = members.find((e) => e.scholarshipId === id)?.evidence.current
       .sources.scholarship;
     return s ? `${s.humanId} — ${s.name}` : id;
   };
+  const actionForm = useActionForm(action);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy.current) return;
@@ -47,6 +60,7 @@ export default function OvrProcessingPanel({
         effectiveOn: String(f.get("effectiveOn")),
         reason: String(f.get("reason")),
         reference: String(f.get("reference")),
+        ...(["hold", "release-hold"].includes(action) ? { scholarshipId: holdTarget, sourceHash: detail.releases!.find(r => r.scholarshipId === holdTarget)!.sourceHash } : {}),
         ...(action === "close"
           ? { reconciled: f.get("reconciled") === "on" }
           : {}),
@@ -54,8 +68,10 @@ export default function OvrProcessingPanel({
           ? {
               scholarshipId: String(f.get("scholarshipId")),
               outcome,
+              ...(outcome === "not_paid" ? { unpaidReason } : {}),
               amount: outcome === "not_paid" ? "0.00" : String(f.get("amount")),
               remarks: String(f.get("remarks")),
+              ...((detail.releases || members.some(m => m.evidence.reprocessing)) && outcome === "paid" ? { receiptConfirmed: f.get("receiptConfirmed") === "on" } : {}),
             }
           : {}),
       };
@@ -86,8 +102,16 @@ export default function OvrProcessingPanel({
     }
   }
   return (
-    <section className="border rounded p-3 my-3" aria-label="OVR processing">
+    <section className="border rounded p-3 my-3" aria-label="Payroll processing">
       <h4>Processing and reconciliation</h4>
+      {!detail.releases && permissions.includes("ovr.finalize") && <LegacyConversion id={detail.batch.id} session={session} onSaved={onSaved}/>}
+      <TreasuryReconciliation detail={detail} session={session} permissions={permissions} onSaved={onTreasurySaved ?? onSaved}/>
+      {detail.claimDeadline && <p role="status">Claim deadline: {detail.claimDeadline.endsOn ?? "Not configured"} (Philippine time). {detail.claimDeadline.expired && "Claim period ended; new payments are blocked."}</p>}
+      {detail.releases && <><p>Staff records actual receipt. Coordinator holds preserve the allocation and cannot waive academic restrictions.</p><ul>{detail.releases.map(entry => <li key={entry.scholarshipId} className="mb-3"><strong>{name(entry.scholarshipId)}</strong> — {entry.state.replaceAll("_", " ")}
+        {entry.state !== "released" && entry.reasons.length > 0 && <ul>{entry.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+        {holdAvailable && entry.state !== "released" && permissions.includes("ovr.finalize") && <button className="btn btn-sm btn-outline-secondary ms-2" disabled={saving || (entry.held && entry.reasons.length > 0)} onClick={() => { setHoldTarget(entry.scholarshipId); setAction(entry.held ? "release-hold" : "hold"); }}>{entry.held ? "Clear hold" : "Hold payment"}</button>}
+        <details><summary>Allocation history</summary>{entry.history.map((e,i) => <p key={i}>{e.action}: {e.reason} · {e.reference} · {e.actor} · {e.recordedAt}</p>)}</details>
+      </li>)}</ul></>}
       {[
         ["Submitted", b.administration],
         ["Processed", b.processing],
@@ -102,10 +126,10 @@ export default function OvrProcessingPanel({
       )}
       <p>
         {r.recorded} of {r.required} outcomes recorded. Paid total:{" "}
-        {r.paidTotal}. Not paid: {r.notPaid}.
+        {r.paidTotal}. Paid: {r.recorded - r.notPaid}. Unclaimed: {r.unclaimed ?? 0}. Review required: {r.needsReview ?? r.notPaid}.
       </p>
       <p>
-        Every frozen member needs an outcome. Not paid requires an explanation.
+        Every frozen member needs an explicit outcome. Payment withheld and Other require an explanation.
         Closure confirms reconciliation of these outcomes; it does not imply
         everyone was paid.
       </p>
@@ -124,7 +148,7 @@ export default function OvrProcessingPanel({
       </ul>
       {b.state === "closed" ? (
         <p role="status">
-          OVR closed. Original processing records and roster are locked; payment
+          Payroll closed. Original processing records and roster are locked; payment
           corrections use the controlled workflow below.
         </p>
       ) : (
@@ -176,11 +200,11 @@ export default function OvrProcessingPanel({
           {error}
         </p>
       )}
-      {action && available && (
-        <form
+      {action && (holding ? holdAvailable : available) && (
+        <form ref={actionForm}
           onSubmit={submit}
           className="mt-3"
-          aria-label="OVR processing command"
+          aria-label="Payroll processing command"
           key={action}
         >
           <fieldset disabled={saving}>
@@ -210,30 +234,34 @@ export default function OvrProcessingPanel({
                     value={outcome}
                     onChange={(e) => setOutcome(e.target.value)}
                   >
-                    <option value="paid">Paid</option>
+                    <option value="paid" disabled>{detail.releases ? "Released — actually received" : "Paid"}</option>
                     <option value="not_paid">Not paid</option>
                   </select>
                 </label>
+                {outcome === "not_paid" && <label className="form-label d-block">Unpaid reason<select className="form-select" value={unpaidReason} onChange={e => setUnpaidReason(e.target.value)}><option value="did_not_claim">Did not claim</option><option value="withheld">Payment withheld</option><option value="review">Other / needs review</option></select></label>}
                 {outcome === "paid" && (
                   <label className="form-label d-block">
-                    Amount (two decimals)
+                    Stipend amount (fixed)
                     <input
                       className="form-control"
                       name="amount"
                       required
                       inputMode="decimal"
                       pattern="(0|[1-9][0-9]{0,9})\.[0-9]{2}"
-                      placeholder="1000.00"
+                      
+                      value="5000.00"
+                      readOnly
                     />
                   </label>
                 )}
+                {(detail.releases || members.some(m => m.evidence.reprocessing)) && outcome === "paid" && <label className="d-block my-2"><input type="checkbox" name="receiptConfirmed" required /> I confirm the scholar actually received the full stipend, supported by the payment reference.</label>}
                 <label className="form-label d-block">
                   Outcome remarks
                   <input
                     className="form-control"
                     name="remarks"
-                    required={outcome === "not_paid"}
-                    minLength={outcome === "not_paid" ? 5 : 0}
+                    required={outcome === "not_paid" && unpaidReason !== "did_not_claim"}
+                    minLength={outcome === "not_paid" && unpaidReason !== "did_not_claim" ? 5 : 0}
                     maxLength={1000}
                   />
                 </label>
@@ -245,11 +273,12 @@ export default function OvrProcessingPanel({
                 className="form-control"
                 type="date"
                 name="effectiveOn"
+                defaultValue={receivingToday()}
                 required
               />
             </label>
-            <RoutineEvidence referenceRequired={action !== "close"}><label className="form-label d-block">
-              Processing reason
+            <RoutineEvidence routine={!["hold", "release-hold"].includes(action)} referenceRequired={holding}><label className="form-label d-block">
+              Additional note
               <input
                 className="form-control"
                 name="reason"
@@ -259,7 +288,7 @@ export default function OvrProcessingPanel({
               />
             </label>
             <label className="form-label d-block">
-              Processing reference
+              Supporting reference (optional)
               <input
                 className="form-control"
                 name="reference"

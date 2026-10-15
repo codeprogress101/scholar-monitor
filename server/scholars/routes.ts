@@ -4,6 +4,7 @@ export function registerScholars(
   app: FastifyInstance,
   service: ScholarService,
 ) {
+  app.get("/api/v1/scholars/eligibility", { config: { permission: "scholars.read" } }, r => service.eligibility(r.authSession!.user.id, r.query));
   app.get(
     "/api/v1/scholars",
     { config: { permission: "scholars.read" } },
@@ -13,7 +14,7 @@ export function registerScholars(
     "/api/v1/scholars/:id",
     { config: { permission: "scholars.read" } },
     (request) =>
-      service.detail(request.authSession!.user.id, request.params.id),
+      service.detail(request.authSession!.user.id, request.params.id, request.query),
   );
   app.post(
     "/api/v1/scholars/duplicate-check",

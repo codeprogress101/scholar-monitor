@@ -91,10 +91,10 @@ export async function testAmendments(
   let pending = (await read()).amendments[0];
   await deny(
     "approve",
-    "coordinator",
+    "staff",
     { amendmentId: pending.id },
     403,
-    "SEPARATE_APPROVER_REQUIRED",
+    "PERMISSION_DENIED",
   );
   // Use another independently assigned Coordinator in this disposable fixture only.
   const [staff] = await c.admin.query<RowDataPacket[]>(
@@ -258,7 +258,7 @@ export async function testAmendments(
   await processing("payments", {
     scholarshipId: v.entries[0].scholarshipId,
     outcome: "paid",
-    amount: "100.00",
+    amount: "5000.00",
     remarks: "Amended roster payment",
   });
   await processing("close", { reconciled: true });

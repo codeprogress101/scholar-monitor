@@ -38,7 +38,7 @@ describe("masterlist inputs", () => {
       expect(() => parseEntry({ ...body, ...patch })).toThrow();
   });
   it("bounds candidate searches and pagination", () => {
-    expect(parsePage({})).toEqual({ q: "", limit: 25, offset: 0 });
+    expect(parsePage({})).toEqual({ q: "", scope: "all", limit: 25, offset: 0 });
     for (const query of [
       { limit: 101 },
       { offset: -1 },

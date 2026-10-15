@@ -1,3 +1,4 @@
+import { amendFrozenForm } from "./amended-form.js";
 import { validationDetails } from "../validation-details.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -6,10 +7,8 @@ import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
 import { parseId, parseKey } from "../configuration/validation.js";
-import { currentPayout, requireOpenPayout } from "../payouts/service.js";
-import { eligibilityView } from "../eligibility/service.js";
-import { ovrEvidence } from "./rules.js";
-import { ovrHistory, validateOvr } from "./service.js";
+import { paymentRecords } from "./processing-state.js";
+import { ovrHistory } from "./service.js";
 import type { OvrBatch, OvrFinalization } from "./model.js";
 import {
   amendments,
@@ -105,15 +104,16 @@ export class OvrAmendmentService {
             ? JSON.parse(retry[0].result)
             : retry[0].result;
         }
+        const [[managedPayroll]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE", [id]);
+        if (managedPayroll) throw new AuthError(409, "MANAGED_RELEASE_REVIEW_REQUIRED", "This numbered payroll has a frozen ordinary semester allocation. Release or amendment needs the corresponding controlled allocation workflow; generating the Payroll Form does not record payment.");
         const previous = (await ovrHistory(db, id))[0];
         requireAmendable(previous.state);
-        const cycle = await currentPayout(db, previous.cycleId);
-        requireOpenPayout(cycle);
+
         if (previous.revision !== input.expectedRevision)
           throw new AuthError(
             409,
             "VERSION_CONFLICT",
-            "The OVR changed. Refresh before continuing.",
+            "The Payroll changed. Refresh before continuing.",
           );
         const frozen = await effectiveRoster(db, id);
         if (!frozen)
@@ -139,6 +139,7 @@ export class OvrAmendmentService {
               "OVR_AMENDMENT_PENDING",
               "Resolve the pending amendment first.",
             );
+          if ("change" in input && input.change === "add") throw new AuthError(409, "LEGACY_PAYROLL_READ_ONLY", "Adding a legacy financial entitlement requires reviewed conversion. Historical removal and name corrections remain available.");
           const change = input as z.infer<typeof requestSchema>,
             proposed: OvrFinalization = structuredClone(frozen.snapshot);
           if (change.change === "rename") {
@@ -168,25 +169,14 @@ export class OvrAmendmentService {
                   "OVR_DUPLICATE_ENTRY",
                   "Member is already in this roster.",
                 );
-              proposed.entries.push({
-                scholarshipId: change.scholarshipId,
-                addedRevision: revision,
-                evidence: ovrEvidence(
-                  await eligibilityView(db, cycle, change.scholarshipId),
-                ),
-              });
+              throw new AuthError(409,"LEGACY_PAYROLL_READ_ONLY","New membership requires reviewed conversion.");
             }
           }
-          for (const e of proposed.entries)
-            e.evidence = ovrEvidence(
-              await eligibilityView(db, cycle, e.scholarshipId),
-            );
-          proposed.validation = await validateOvr(
-            db,
-            previous,
-            cycle,
-            proposed.entries,
-          );
+          if(!proposed.entries.length)throw new AuthError(409,"EMPTY_PAYROLL","An effective payroll must retain at least one member. Preserve the original and reconcile cancellation separately.");
+          if(change.change === "remove" && (await paymentRecords(db,id)).some(p=>p.scholarshipId===change.scholarshipId))throw new AuthError(409,"PAYMENT_HISTORY_PRESENT","A member with payment history cannot be removed from its financial roster. Use controlled payment correction.");
+          proposed.validation={...frozen.snapshot.validation,entries:frozen.snapshot.validation.entries.filter(e=>proposed.entries.some(p=>p.scholarshipId===e.scholarshipId)),issues:frozen.snapshot.validation.issues.filter(i=>!i.scholarshipId || proposed.entries.some(p=>p.scholarshipId===i.scholarshipId))};
+          proposed.legacyPayrollForm=amendFrozenForm(proposed).legacyPayrollForm;
+
           if (!proposed.validation.valid)
             throw new AuthError(
               409,
@@ -221,12 +211,6 @@ export class OvrAmendmentService {
               "OVR_AMENDMENT_NOT_PENDING",
               "This amendment is no longer pending.",
             );
-          if (pending.requestedBy === actor)
-            throw new AuthError(
-              403,
-              "SEPARATE_APPROVER_REQUIRED",
-              "A different Coordinator must decide this amendment.",
-            );
           amendment = {
             ...pending,
             version: 2,
@@ -245,21 +229,11 @@ export class OvrAmendmentService {
                 "VERSION_CONFLICT",
                 "The effective roster changed.",
               );
-            const validation = await validateOvr(
-              db,
-              previous,
-              cycle,
-              pending.proposed.entries,
-            );
-            if (!validation.valid)
-              throw new AuthError(
-                409,
-                "OVR_VALIDATION_FAILED",
-                "The proposed roster changed or is no longer eligible. Reject and request a corrected amendment.",
-                { validation },
-              );
+            if(pending.change === "add")throw new AuthError(409,"LEGACY_PAYROLL_READ_ONLY","Reject pending legacy additions and use reviewed conversion.");
+            if(pending.change === "remove" && (await paymentRecords(db,id)).some(p=>p.scholarshipId===pending.scholarshipId))throw new AuthError(409,"PAYMENT_HISTORY_PRESENT","Payment history now exists for this member; removal is blocked.");
+            const validation=pending.proposed.validation;
             amendment.after = {
-              ...pending.proposed,
+              ...amendFrozenForm(pending.proposed),
               revision,
               validation,
               finalizedAt: now,

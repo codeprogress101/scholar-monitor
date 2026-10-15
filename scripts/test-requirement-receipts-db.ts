@@ -47,7 +47,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -297,7 +297,7 @@ try {
   for (const change of [
     { receivedOn: later(1) },
     { receivedOn: "2026-02-30" },
-    { storageLocation: " " },
+    { storageLocation: { forged: true } },
     { reason: "x" },
     { actorId: accounts.get("coordinator")!.id },
     { receivedBy: "Someone else" },
@@ -319,7 +319,7 @@ try {
     "VERSION_CONFLICT",
   );
   pass(
-    "Dates, required storage/reason, stale revisions and forged identity/status/upload fields are rejected",
+    "Invalid dates/storage/prose, stale revisions and forged identity/status/upload fields are rejected",
   );
   const [original] = await admin.execute<RowDataPacket[]>(
     "SELECT * FROM requirement_instances WHERE id=?",
@@ -391,12 +391,16 @@ try {
   const concurrent = await Promise.all([
     request("staff", receiptPath("COG"), {
       ...body,
+      storageLocation: "",
+      reason: "",
       physicalReference: null,
       remarks: null,
       receivedOn: later(-1),
     }),
     request("coordinator", receiptPath("COG"), {
       ...body,
+      storageLocation: "",
+      reason: "",
       physicalReference: null,
       remarks: null,
       receivedOn: later(-1),
@@ -407,8 +411,17 @@ try {
   assert.equal(cog.receipt!.physicalReference, null);
   assert.equal(cog.receipt!.remarks, null);
   assert.equal(cog.receipt!.receivedOn, later(-1));
+  assert.equal(cog.receipt!.storageLocation, "");
+  assert.equal(cog.receipt!.reason, "Physical document received");
+  const [routineAudits] = await admin.execute<RowDataPacket[]>(
+    "SELECT actor_id,reason FROM audit_logs WHERE event_type='requirements.received' AND entity_id=?",
+    [cog.id],
+  );
+  assert.equal(routineAudits.length, 1);
+  assert.equal(routineAudits[0].reason, "Physical document received");
+  assert.ok([accounts.get("staff")!.id, accounts.get("coordinator")!.id].includes(routineAudits[0].actor_id));
   pass(
-    "Concurrent receivers have one winner; optional reference/remarks and historical receipt dates are supported",
+    "Concurrent receivers have one winner; optional custody/prose preserves authenticated audit and receipt dates",
   );
   const rollbackKey = randomUUID();
   await admin.query(

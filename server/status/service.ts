@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { removeGraduateFromDrafts } from "../masterlists/graduate-removal.js";
+import { graduationFor } from "./graduation.js";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
@@ -41,12 +43,19 @@ async function validate(
   scholarshipId: string,
 ) {
   usable(row);
-  validateStatusEdge(row.operational_status, input.toStatus, input.kind);
-  if (row.status_version !== input.expectedVersion)
+  if (input.reasonCode === "GRADUATION" && (input.toStatus !== "graduated" || input.kind !== "change")) fail("STATUS_REASON_MISMATCH", "Graduation must change the status to Graduated, not reverse it.");
+  if (input.toStatus === "graduated") {
+    const [[person]] = await db.execute<RowDataPacket[]>("SELECT scholar_id FROM scholarship_records WHERE id=?", [scholarshipId]);
+    if (person && await graduationFor(db, person.scholar_id)) fail("ALREADY_GRADUATED", "Graduation is already recorded. Review the existing decision instead of adding another graduation.");
+  }
+  // An activated record may have changed to a terminal state since this request.
+  // Report its stale version before evaluating the transition against that new state.
+  if (row.operational_status && row.status_version !== input.expectedVersion)
     fail(
       "VERSION_CONFLICT",
       "The operational status changed. Refresh and submit a new request.",
     );
+  validateStatusEdge(row.operational_status, input.toStatus, input.kind);
   if (input.effectiveOn < row.effective_on)
     fail(
       "INVALID_EFFECTIVE_DATE",
@@ -85,7 +94,12 @@ export class StatusService {
           "SELECT q.*,DATE_FORMAT(q.effective_on,'%Y-%m-%d') AS effective_date,DATE_FORMAT(q.created_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS created_time,d.decision,d.actor_name AS decider,d.reason AS decision_reason,d.reference_text AS decision_reference,d.resulting_version,DATE_FORMAT(d.occurred_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS decision_time FROM status_change_requests q LEFT JOIN status_change_decisions d ON d.request_id=q.id WHERE q.scholarship_id=? ORDER BY q.created_at DESC,q.id",
           [id],
         );
+        const [[annual]] = await db.execute<RowDataPacket[]>("SELECT scholar_id,academic_year_id FROM scholarship_records WHERE id=?", [id]);
+        const [semesters] = await db.execute<RowDataPacket[]>("SELECT id,name FROM semesters WHERE academic_year_id=? ORDER BY starts_on", [annual.academic_year_id]);
+        const [confirmations] = await db.execute<RowDataPacket[]>("SELECT request_id,semester_id FROM graduation_confirmations WHERE scholarship_id=?", [id]);
         return {
+          graduation: await graduationFor(db, annual.scholar_id),
+          semesters: semesters.map(s => ({ id: String(s.id), name: String(s.name) })),
           status: row.operational_status,
           version: row.status_version,
           effectiveOn: row.effective_on,
@@ -108,6 +122,7 @@ export class StatusService {
             decision: q.decision
               ? {
                   action: q.decision,
+                  finalSemesterId: confirmations.find(c => c.request_id === q.id)?.semester_id ?? null,
                   actorName: q.decider,
                   reason: q.decision_reason,
                   reference: q.decision_reference,
@@ -160,7 +175,7 @@ export class StatusService {
         );
         let target = id;
         let scholarshipId = id;
-        let auditDetails: object;
+        let auditDetails: Record<string, unknown>;
         if (proposal) {
           const row = await current(db, id, true);
           await validate(db, row, proposal, id);
@@ -206,12 +221,6 @@ export class StatusService {
               "INVALID_STATE_TRANSITION",
               "This request already has a final decision.",
             );
-          if (action === "approve" && q.actor_id === actor)
-            throw new AuthError(
-              403,
-              "SELF_APPROVAL_DENIED",
-              "A different Coordinator must approve this request.",
-            );
           if (action === "cancel" && q.actor_id !== actor)
             throw new AuthError(
               403,
@@ -219,7 +228,14 @@ export class StatusService {
               "Only the requester may cancel. Coordinators can reject requests.",
             );
           let version: number | null = null;
+          const finalSemesterId = "finalSemesterId" in input ? input.finalSemesterId : undefined;
+          if (finalSemesterId && (action !== "approve" || q.to_status !== "graduated")) fail("FINAL_SEMESTER_NOT_APPLICABLE", "Final funded semester belongs only to graduation approval.");
           if (action === "approve") {
+            if (q.to_status === "graduated") {
+              if (!finalSemesterId) fail("FINAL_SEMESTER_REQUIRED", "The Coordinator must explicitly confirm the final funded semester.");
+              const [semesters] = await db.execute<RowDataPacket[]>("SELECT s.id FROM semesters s JOIN scholarship_records r ON r.academic_year_id=s.academic_year_id WHERE r.id=? AND s.id=? AND s.starts_on<=? LOCK IN SHARE MODE", [scholarshipId, finalSemesterId, q.effective_date]);
+              if (!semesters.length) fail("INVALID_FINAL_SEMESTER", "Choose a semester of this annual record that has started by the graduation effective date.");
+            }
             const row = await current(db, scholarshipId, true);
             await validate(
               db,
@@ -257,6 +273,7 @@ export class StatusService {
             ],
           );
           auditDetails = {
+            finalSemesterId: finalSemesterId ?? null,
             from: q.from_status,
             to: q.to_status,
             effectiveOn: q.effective_date,
@@ -266,6 +283,11 @@ export class StatusService {
             resultingVersion: version,
             reference: input.reference,
           };
+          if (action === "approve" && q.to_status === "graduated") await db.execute("INSERT INTO graduation_confirmations(request_id,scholarship_id,semester_id,actor_id,recorded_at) VALUES(?,?,?,?,UTC_TIMESTAMP(6))", [id, scholarshipId, finalSemesterId!, actor]);
+          if (action === "approve" && q.to_status === "graduated") {
+            const [[scholar]] = await db.execute<RowDataPacket[]>("SELECT scholar_id FROM scholarship_records WHERE id=?", [scholarshipId]);
+            auditDetails.removedFromDrafts = await removeGraduateFromDrafts(db, scholar.scholar_id, actor, requestId, q.effective_date);
+          }
         }
         const outcome = action === "request" ? "pending" : action;
         await db.execute(

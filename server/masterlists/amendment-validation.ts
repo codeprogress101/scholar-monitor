@@ -18,6 +18,8 @@ export function parseAmendment(body: unknown) {
       kind: z.enum(AMENDMENT_KINDS),
       schoolId: z.uuid().optional(),
       courseId: z.uuid().optional(),
+      schoolName: text(2,160).optional(),
+      courseName: text(2,160).optional(),
       yearLevel: text(1, 60).optional(),
       awardNumber: text(1, 60).nullable().optional(),
       effectiveOn: z.iso
@@ -28,12 +30,13 @@ export function parseAmendment(body: unknown) {
     })
     .strict()
     .superRefine((v, ctx) => {
+      if ((v.schoolId && v.schoolName) || (v.courseId && v.courseName)) ctx.addIssue({code:"custom",message:"Use an existing entry or a typed name, not both."});
       const supplied = [
         "schoolId",
         "courseId",
         "yearLevel",
         "awardNumber",
-      ].filter((k) => Object.hasOwn(v, k) && Reflect.get(v, k) !== undefined);
+      ].filter((k) => (Object.hasOwn(v, k) && Reflect.get(v, k) !== undefined) || (k === "schoolId" && v.schoolName) || (k === "courseId" && v.courseName));
       const expected =
         v.kind === "both"
           ? ["schoolId", "courseId"]

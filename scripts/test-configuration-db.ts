@@ -1,3 +1,5 @@
+import { testRolloverReceiving } from "./test-rollover-receiving.js";
+import { rolloverFixture, correctedGraduateFixture } from "./rollover-fixture.js";
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -50,7 +52,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -623,6 +625,90 @@ try {
   pass(
     "CSRF, valid request keys, absent DELETE endpoints, and restricted grants protect configuration",
   );
+  // Adopt one working year without rewriting the deliberately multi-year legacy fixture.
+  const priorYear = await create("academic-years", { code: "CALENDAR-2024", name: "Previous calendar", startsOn: "2024-01-01", endsOn: "2024-12-31" });
+  const preExistingYear = await create("academic-years", { code: "EXISTING-2026", name: "Existing destination", startsOn: "2026-01-01", endsOn: "2026-12-31" });
+  const working = await create("academic-years", { code: "CALENDAR-2025", name: "Working calendar", startsOn: "2025-01-01", endsOn: "2025-12-31" });
+  const rolloverFixtureData = await rolloverFixture(admin, working.id, priorYear.id, accounts.get("coordinator")!.id);
+  const calendarSetting = await create("settings", { code: "LDSS_WORKING_ACADEMIC_YEAR", name: "Working academic year", valueType: "text", value: working.id });
+  errorCode(await command("settings", calendarSetting, "archive"), 409, "CALENDAR_SETTING_PROTECTED");
+  const nextBody = createBody({ code: "CALENDAR-2026", name: "Next calendar", startsOn: "2026-01-01", endsOn: "2026-12-31" });
+  errorCode(await request("system_admin", path("academic-years"), nextBody), 409, "ACADEMIC_YEAR_UNFINISHED");
+  const terms = [
+    await create("semesters", { code: "CAL-TERM1", name: "First semester", academicYearId: working.id, startsOn: "2025-01-01", endsOn: "2025-06-30" }),
+    await create("semesters", { code: "CAL-TERM2", name: "Second semester", academicYearId: working.id, startsOn: "2025-07-01", endsOn: "2025-12-31" }),
+  ];
+  await correctedGraduateFixture(admin, rolloverFixtureData.people[2].annual, terms[1].id, working.id, accounts.get("coordinator")!.id);
+  rolloverFixtureData.before = (await admin.query<RowDataPacket[]>("SELECT * FROM scholarship_records ORDER BY id"))[0];
+  errorCode(await request("system_admin", path("semesters"), createBody({ code: "CAL-TERM3", name: "Third semester", academicYearId: working.id, startsOn: "2025-07-01", endsOn: "2025-12-31" })), 409, "CALENDAR_SEMESTER_LIMIT");
+  const definitionResponse = await request("system_admin", "/api/v1/requirement-definitions", {
+    action: "create", expectedVersion: 0, code: "CAL-COR", fields: { name: "Calendar COR", instructions: "Present the physical document", appliesTo: "payout", semesterId: null, effectiveFrom: "2025-01-01", effectiveUntil: null },
+  });
+  assert.equal(definitionResponse.statusCode, 200, definitionResponse.body);
+  for (const [i, term] of terms.entries()) {
+    const response = await request("system_admin", "/api/v1/payout-cycles", { action: "create", expectedVersion: 0, code: `CAL-PAY-${i+1}`, semesterId: term.id, expectedSemesterVersion: term.version, fields: { name: "Calendar payroll", targetDate: term.startsOn, requirements: [{ definitionVersionId: definitionResponse.json().id, allowWaiver: false }] } });
+    assert.equal(response.statusCode, 200, response.body);
+    const cycleId = response.json().id;
+    for (const [j, action] of ["open", "close"].entries()) {
+      const result = await request("coordinator", `/api/v1/payout-cycles/${cycleId}/${action}`, { action, expectedVersion: j+1 });
+      assert.equal(result.statusCode, 200, result.body);
+      if (i === 0 || action === "open") errorCode(await request("system_admin", path("academic-years"), nextBody), 409, "ACADEMIC_YEAR_UNFINISHED");
+    }
+  }
+  assert.equal((await request("staff", "/api/v1/academic-calendar")).json().readyForNext, true);
+  errorCode(await request("staff", path("academic-years"), nextBody), 403, "PERMISSION_DENIED");
+  await admin.query("CREATE TRIGGER fail_calendar_audit BEFORE INSERT ON audit_logs FOR EACH ROW BEGIN IF NEW.event_type='configuration.changed' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic failure'; END IF; END");
+  try {
+    assert.equal((await request("system_admin", path("academic-years"), nextBody)).statusCode, 500);
+    assert.equal((await request("staff", "/api/v1/academic-calendar")).json().setting.yearId, working.id);
+    const [afterFailure] = await admin.query<RowDataPacket[]>("SELECT * FROM scholarship_records ORDER BY id");
+    assert.deepEqual(afterFailure, rolloverFixtureData.before);
+  } finally { await admin.query("DROP TRIGGER fail_calendar_audit"); }
+  const nextKey = randomUUID();
+  const results = await Promise.all([request("system_admin", path("academic-years"), nextBody, nextKey), request("system_admin", path("academic-years"), createBody({ ...nextBody.fields, code: "CALENDAR-OTHER" }))]);
+  assert.deepEqual(results.map(r => r.statusCode).sort(), [200,409]);
+  const winner = results.find(r => r.statusCode === 200)!.json<ConfigRecord>();
+  assert.equal((await request("staff", "/api/v1/academic-calendar")).json().setting.yearId, winner.id);
+  assert.deepEqual(winner.rollover?.totals, { created: 2, alreadyPresent: 0, excluded: 3, needsReview: 3 });
+  const [newAnnuals] = await admin.execute<RowDataPacket[]>("SELECT * FROM scholarship_records WHERE academic_year_id=?", [winner.id]);
+  assert.equal(newAnnuals.length, 2);
+  for (const row of newAnnuals) {
+    assert.equal(row.status, "continuing"); assert.equal(row.operational_status, null); assert.equal(row.status_version, 0);
+    assert.ok(rolloverFixtureData.people.some(p => p.id === row.scholar_id && p.annual === row.continuing_from_scholarship_id));
+    for (const table of ["academic_records", "masterlist_activations", "qualification_events", "payment_records"]) {
+      const column = table === "academic_records" ? "academic_year_id" : "scholarship_id";
+      const [found] = await admin.execute<RowDataPacket[]>(`SELECT * FROM ${table} WHERE ${column}=?`, [table === "academic_records" ? winner.id : row.id]);
+      assert.equal(found.length, 0);
+    }
+  }
+  const [retained] = await admin.execute<RowDataPacket[]>("SELECT * FROM scholarship_records WHERE academic_year_id<>? ORDER BY id", [winner.id]);
+  assert.deepEqual(retained, rolloverFixtureData.before);
+  assert.deepEqual((await request("staff", "/api/v1/academic-calendar")).json().rollover, winner.rollover);
+  const configuredYears = (await request("staff", path("academic-years") + "?includeArchived=true&limit=100")).json().items;
+  assert.equal(configuredYears.filter((y: ConfigRecord) => y.working).length, 1);
+  if(results[0].statusCode === 200) assert.equal((await request("system_admin", path("academic-years"), nextBody, nextKey)).json().id, winner.id);
+  pass("Working year requires both semesters' formal payroll closure; third semester, premature years and disabling are blocked; concurrent advance, audit rollback and history are preserved");
+  // Existing-year switch uses the same atomic rollover; preserve compatible and conflicting annuals.
+  for (const [i, person] of rolloverFixtureData.people.slice(0,2).entries()) {
+    await admin.execute("INSERT INTO scholarship_records(id,scholar_id,academic_year_id,status,last_effective_on,continuing_from_scholarship_id,created_at,updated_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))", [randomUUID(), person.id, preExistingYear.id, i ? "continuing" : "selected", "2026-01-01", i ? person.annual : null]);
+  }
+  const [existingBefore] = await admin.execute<RowDataPacket[]>("SELECT * FROM scholarship_records WHERE academic_year_id=? ORDER BY id", [preExistingYear.id]);
+  await admin.execute("UPDATE system_settings SET setting_value=? WHERE id=?", [working.id, calendarSetting.id]);
+  const switchBody = { action: "update", expectedVersion: 2, fields: { code: "LDSS_WORKING_ACADEMIC_YEAR", name: "Working academic year", valueType: "text", value: preExistingYear.id } };
+  const switchKey = randomUUID();
+  errorCode(await request("coordinator", path("settings",calendarSetting.id), switchBody),403,"PERMISSION_DENIED");
+  const switched = await request("system_admin",path("settings",calendarSetting.id),switchBody,switchKey);
+  assert.equal(switched.statusCode,200,switched.body);
+  assert.deepEqual(switched.json().rollover.totals,{created:0,alreadyPresent:1,excluded:3,needsReview:4});
+  assert.deepEqual((await request("system_admin",path("settings",calendarSetting.id),switchBody,switchKey)).json(),switched.json());
+  const [existingAfter] = await admin.execute<RowDataPacket[]>("SELECT * FROM scholarship_records WHERE academic_year_id=? ORDER BY id", [preExistingYear.id]);
+  assert.deepEqual(existingAfter,existingBefore);
+  await assert.rejects(admin.execute("UPDATE scholarship_records SET continuing_from_scholarship_id=id WHERE academic_year_id=? AND status='continuing'",[preExistingYear.id]));
+  await assert.rejects(admin.execute("UPDATE scholarship_records SET continuing_from_scholarship_id=NULL WHERE academic_year_id=? AND status='continuing'",[preExistingYear.id]));
+  // Restore only this disposable fixture's working pointer for the browser/receiving exercise.
+  await admin.execute("UPDATE system_settings SET setting_value=? WHERE id=?",[winner.id,calendarSetting.id]);
+  pass("Existing destination records preserved; incompatible selection flagged, retry summary stable, provenance constraints enforced");
+  await testRolloverReceiving(request, winner.id, terms[1].id, newAnnuals[0].scholar_id, newAnnuals[0].id);
   console.log(
     `All ${passed} configuration scenarios passed in an isolated disposable database.`,
   );

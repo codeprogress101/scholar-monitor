@@ -22,6 +22,13 @@ describe("requirement verification workflow", () => {
       ["submitted", "send-for-verification", "for_verification"],
       ["resubmitted", "send-for-verification", "for_verification"],
       ["for_verification", "verify", "verified"],
+      ["verified", "verify", "verified"], // Service requires changed evidence and links the prior verification.
+      ["submitted", "verify", "verified"],
+      ["resubmitted", "verify", "verified"],
+      ["submitted", "return-for-correction", "for_correction"],
+      ["resubmitted", "return-for-correction", "for_correction"],
+      ["submitted", "reject", "rejected"],
+      ["resubmitted", "reject", "rejected"],
       ["verified", "return-for-correction", "for_correction"],
       ["for_verification", "return-for-correction", "for_correction"],
       ["for_correction", "resubmit", "resubmitted"],
@@ -85,6 +92,13 @@ describe("requirement verification workflow", () => {
       },
     };
     expect(parseRequirementWorkflow("verify", input).action).toBe("verify");
+    const { checks, ...withoutChecks } = input;
+    const attested = parseRequirementWorkflow("verify", {...withoutChecks,attestation:"all-five-checked"});
+    expect(attested.action === "verify" && attested.attestation).toBe("all-five-checked");
+    expect(() => parseRequirementWorkflow("verify", withoutChecks)).toThrow();
+    expect(() => parseRequirementWorkflow("verify", {...input,attestation:false})).toThrow();
+    expect(() => parseRequirementWorkflow("verify", {...input,attestation:"all-five-checked",checks:{...checks,validity:false}})).toThrow();
+
     expect(() =>
       parseRequirementWorkflow("verify", {
         ...input,

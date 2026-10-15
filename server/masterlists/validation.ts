@@ -26,8 +26,8 @@ function parse<T>(schema: z.ZodType<T>, body: unknown) {
 export const parseDraft = (body: unknown) =>
   parse(
     z
-      .object({ academicYearId: z.uuid(), title: text(1, 160), ...evidence })
-      .strict(),
+      .object({ academicYearId: z.uuid(), title: text(1, 160), targetId: z.uuid().optional(), targetVersion: z.number().int().positive().optional(), sourceId: z.uuid().optional(), sourceVersion: z.number().int().positive().optional(), ...evidence })
+      .strict().refine(v => (!!v.targetId === !!v.targetVersion) && (!!v.sourceId === !!v.sourceVersion) && (!v.sourceId || !!v.targetId), "Provide current source and target revisions."),
     body,
   );
 export const parseEntry = (body: unknown) =>
@@ -48,6 +48,7 @@ export const parsePage = (query: unknown) =>
     z
       .object({
         q: text(0, 100).default(""),
+        scope: z.enum(["current", "history", "all"]).default("all"),
         offset: z.coerce.number().int().min(0).default(0),
         limit: z.coerce.number().int().min(1).max(100).default(25),
       })

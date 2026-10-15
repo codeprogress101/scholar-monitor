@@ -2,6 +2,8 @@
 
 Based on the implemented v0.37.0 workflows. Prepared 2026-10-05.
 
+Updated receiving flow, 2026-10-07: Staff/Coordinator can verify received documents directly; routing is recorded automatically. Admission review and masterlist entry now support page-scoped multi-select. See the [current role and bulk-action guide](LDSS_UI_SIMPLIFICATION.md#role-guidance-direct-verification-and-bulk-work-2026-10-07). The previously exported PDF and embedded diagram images retain their original layout; the HTML includes this update notice.
+
 These charts describe the implemented local system. F36 human acceptance and production launch remain pending.
 
 **Roles:** Green = Staff / Coordinator operations; gold = Coordinator decisions; blue = technical administration; gray = system / records; red = blocked or unresolved work. Labels also state the actor; color is not required to understand the flow.
@@ -106,14 +108,13 @@ flowchart TD
   select --> date["Confirm received date; optional custody details"]
   date --> receive["Receive Selected Requirements"]
   receive --> submitted["System: Selected items become Submitted; record receiver"]
-  submitted --> send["Staff / Coordinator: Send for verification"]
-  send --> review["For Verification: Check identity, period, placement, policy and physical document"]
+  submitted --> review["Staff / Coordinator: Verify directly after checking identity, period, placement, policy and physical document"]
   review --> decision{"Review outcome?"}
   decision -->|"Valid and complete"| verified["Verified"]
   decision -->|"Correctable"| correction["For Correction: Record reason"]
   decision -->|"Reject"| rejected["Rejected; does not satisfy requirement"]
   correction --> resubmit["Receive corrected physical copy: Resubmitted"]
-  resubmit --> send
+  resubmit --> review
   verified -.->|"Linked reopening with reason"| correction
   checklist -.->|"Unverified item; authorized exception"| waive["Coordinator: Waive with reason and authority reference"]
   rejected -.->|"Authorized waiver"| waive
@@ -122,7 +123,7 @@ flowchart TD
   waived --> policy{"Cycle permits this waiver?"}
   policy -->|"Yes"| assess
   policy -->|"No"| unsatisfied["Requirement remains unsatisfied for this cycle"]
-  class choose,select,date,receive,send,review,correction,resubmit operator
+  class choose,select,date,receive,review,correction,resubmit operator
   class waive coordinator
   class checklist,submitted,verified,waived,assess system
   class stop,rejected,unsatisfied exception

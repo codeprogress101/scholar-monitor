@@ -1,0 +1,14 @@
+{
+  "environment": "production",
+  "database": "ldss_scholar_monitor_production",
+  "port": 3306,
+  "backupUser": "ldss_backup",
+  "backupPassword": "REPLACE_PRIVATELY",
+  "directory": "C:\\ProgramData\\LDSSBackup\\archives",
+  "keyFile": "C:\\ProgramData\\LDSSBackupKeys\\key.bin",
+  "statusFile": "C:\\ProgramData\\LDSSBackupStatus\\status.json",
+  "dumpTool": "C:\\xampp\\mysql\\bin\\mysqldump.exe",
+  "mysqlTool": "C:\\xampp\\mysql\\bin\\mysql.exe",
+  "mode": "desktop",
+  "syncDirectory": "C:\\LDSS-Drive-Sync"
+}

@@ -11,14 +11,16 @@ import {
 export function evaluateEligibility(
   sources: EligibilitySources,
 ): EligibilityAssessment {
-  const reasons: EligibilityReason[] = [];
+  const reasons: EligibilityReason[] = [...(sources.semesterPayroll?.reasons ?? [])];
+  if (sources.archivedGraduate) reasons.push({ code: "GRADUATE_ARCHIVED", message: "Graduated and archived; no outstanding stipend. Historical paid payrolls remain unchanged." });
+  if (sources.reservedSemester) reasons.push({ code: "SEMESTER_ALREADY_ALLOCATED", message: "An ordinary allocation already reserves this scholar and semester." });
   if (sources.cycle.state === "draft")
     reasons.push({
       code: "CYCLE_NOT_OPEN",
       message: "The payout cycle has not been opened.",
     });
   if (
-    !statusAllowsPayout(sources.scholarship.status as OperationalStatus | null)
+    !statusAllowsPayout(sources.scholarship.status as OperationalStatus | null) && !(sources.scholarship.status === "graduated" && sources.finalSemesterGraduation && sources.finalSemesterGraduation.semesterId === sources.cycle.semesterId)
   )
     reasons.push({
       code: "STATUS_NOT_ACTIVE",

@@ -1,3 +1,9 @@
+import {resolvePlacementReferences} from "../academic/references.js";
+import { workingYear } from "../configuration/calendar.js";
+import { QualificationService } from "../qualification/service.js";
+import { ContinuingService } from "../continuing/service.js";
+import { today } from "../scholars/validation.js";
+import { normalizeReference, normalizeYearLevel, normalizeIntakeStatus } from "./normalization.js";
 import { validationDetails } from "../validation-details.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -11,6 +17,8 @@ import { checkDuplicates, duplicateEvidence } from "../scholars/duplicates.js";
 import { ScholarService } from "../scholars/service.js";
 import { AcademicService, parseAcademic } from "../academic/service.js";
 import { parseWorkbook } from "./workbook.js";
+import { MAX_IMPORT_ROWS } from "./model.js";
+import { encodeImportRows, decodeImportRows } from "./storage.js";
 import type {
   ImportPreview,
   ImportPreviewRow,
@@ -43,10 +51,18 @@ async function validate(
         r.errors.push(`${field}: required.`);
         return null;
       }
-      const [found] = await db.execute<RowDataPacket[]>(
-        `SELECT id,version,archived_at${table === "academic_years" ? ",locked_at" : ""} FROM ${table} WHERE code=? LOCK IN SHARE MODE`,
-        [code],
+      const mapping = raw.mappings?.find(m => m.kind === table && normalizeReference(m.supplied) === normalizeReference(code));
+      const simpleReference = raw.format === "simple" && (table === "schools" || table === "courses");
+      const [all] = await db.execute<RowDataPacket[]>(
+        `SELECT id,code,name,version,archived_at${table === "academic_years" ? ",locked_at" : ""} FROM ${table} ${simpleReference ? "" : "WHERE code=?"} LOCK IN SHARE MODE`,
+        simpleReference ? [] : [code],
       );
+      const found = simpleReference ? all.filter(x => mapping ? x.id === mapping.id : [x.code, x.name].some(v => normalizeReference(v) === normalizeReference(code))) : all;
+      if (found.length > 1) { r.errors.push(`${field}: ambiguous name. Choose the matching reference.`); return null; }
+      if (!found.length && simpleReference && !mapping && code.trim().length >= 2 && code.trim().length <= 160 && /^\P{Cc}*$/u.test(code)) {
+        r.notices = [...(r.notices ?? []), `${field}: ${code.trim()} will be saved with the scholar details.`];
+        return "";
+      }
       if (!found.length || found[0].archived_at || found[0].locked_at) {
         r.errors.push(`${field}: use an active, unlocked configuration code.`);
         return null;
@@ -124,21 +140,32 @@ async function validate(
           );
       }
     }
-    const hasAcademic = [c.schoolCode, c.courseCode, c.yearLevel].some(Boolean);
+    const hasAcademic = raw.format === "simple" || [c.schoolCode, c.courseCode, c.yearLevel].some(Boolean);
     if (c.scholarId && !hasAcademic)
       r.errors.push("An existing scholar row must add an academic record.");
     if (hasAcademic) {
       const schoolId = await reference("schools", c.schoolCode, "schoolCode"),
-        courseId = await reference("courses", c.courseCode, "courseCode");
-      try {
+        courseId = raw.format === "simple" && !c.courseCode ? null : await reference("courses", c.courseCode, "courseCode");
+      if (raw.format === "simple") {
+        const status = normalizeIntakeStatus(raw.status ?? "");
+        if (!["new", "old", "continuing"].includes(status)) r.errors.push("Status: choose New, Continuing or Old.");
+        if (!c.yearLevel || c.yearLevel.length > 60) r.errors.push("Year Level: required, up to 60 characters.");
+        if (!c.courseCode) r.notices = [...(r.notices ?? []), "Course needed: complete academic details before approval or payroll."];
+        if (schoolId !== null && yearId && ["new", "old", "continuing"].includes(status)) r.intake = { ...(schoolId === "" ? {schoolName:c.schoolCode}:{}), ...(courseId === "" ? {courseName:c.courseCode}:{}), academicYearId: yearId, schoolId, courseId, yearLevel: normalizeYearLevel(c.yearLevel), classification: status === "new" ? "new" : "continuing" };
+      }
+      if (raw.format !== "simple" || c.courseCode) try {
         const parsed = parseAcademic({
           academicYearId: yearId,
           schoolId,
           courseId,
-          yearLevel: c.yearLevel,
+          ...(schoolId === "" ? {schoolName:c.schoolCode}:{}),
+          ...(courseId === "" ? {courseName:c.courseCode}:{}),
+          yearLevel: normalizeYearLevel(c.yearLevel),
           ...evidence,
         });
         r.academic = {
+          ...(parsed.schoolName ? {schoolName:parsed.schoolName}:{}),
+          ...(parsed.courseName ? {courseName:parsed.courseName}:{}),
           academicYearId: parsed.academicYearId,
           schoolId: parsed.schoolId,
           courseId: parsed.courseId,
@@ -160,6 +187,8 @@ async function validate(
           );
       }
     }
+    if (raw.approvedSelection && (!r.academic || !r.intake || raw.format !== "simple"))
+      r.errors.push("Already-approved import requires the eight-column template and complete academic details, including course.");
     preview.push(r);
   }
   for (let i = 0; i < preview.length; i++)
@@ -172,6 +201,16 @@ async function validate(
       }
     }
   return preview;
+}
+async function unresolved(db: PoolConnection, rows: ImportPreviewRow[]): Promise<NonNullable<ImportPreview["unresolved"]>> {
+ const result: NonNullable<ImportPreview["unresolved"]> = [];
+ for (const [kind, field] of [["schools", "schoolCode"], ["courses", "courseCode"]] as const) {
+  const names = new Set(rows.filter(r => r.format === "simple" && r.errors.some(e => e.startsWith(`${field}:`))).map(r => r.cells[field]).filter(Boolean));
+  if (!names.size) continue;
+  const [choices] = await db.query<RowDataPacket[]>(`SELECT id,code,name FROM ${kind} WHERE archived_at IS NULL ORDER BY name,id`);
+  for (const supplied of names) if (!result.some(r => r.kind === kind && normalizeReference(r.supplied) === normalizeReference(supplied))) result.push({ kind, supplied, choices: choices.map(c => ({ id: c.id, code: c.code, name: c.name })) });
+ }
+ return result;
 }
 const ready = (rows: ImportPreviewRow[]) =>
   rows.every((r) => !r.errors.length && !r.warnings.length);
@@ -186,6 +225,8 @@ export class ImportService {
     const key = parseKey(rawKey);
     const parsed = z
       .object({
+        approvedSelection: z.object({ reference: z.string().trim().min(3).max(200).regex(/^\P{Cc}+$/u), effectiveOn: z.iso.date().refine(d => d >= "1900-01-01" && d <= today(), "Use a valid non-future approval date.") }).strict().optional(),
+        mappings: z.array(z.object({ kind: z.enum(["schools", "courses"]), supplied: z.string().trim().min(1).max(1000), id: z.uuid() }).strict()).max(MAX_IMPORT_ROWS * 2).default([]),
         fileName: z
           .string()
           .trim()
@@ -215,12 +256,14 @@ export class ImportService {
       async () => {},
     );
     const buffer = Buffer.from(parsed.data.base64, "base64"),
-      fileHash = digest(buffer.toString("base64"));
+      fileHash = digest(JSON.stringify({ base64: buffer.toString("base64"), mappings: parsed.data.mappings, ...(parsed.data.approvedSelection ? { approvedSelection: parsed.data.approvedSelection } : {}) }));
     const rows = await parseWorkbook(buffer);
     return this.authorization.withPermission(
       actor,
       "scholars.create",
-      async (db) => {
+      async (db, access) => {
+        if (parsed.data.approvedSelection && !["scholarship.status.approve", "continuing.approve"].every(code => access.permissions.some(p => p.code === code)))
+          throw new AuthError(403, "PERMISSION_DENIED", "A Coordinator must import an already-approved scholar list.");
         await db.query(
           "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
         );
@@ -240,6 +283,13 @@ export class ImportService {
             );
           return this.view(db, actor, prior[0].id);
         }
+        if (rows.some(r => r.format === "simple")) {
+          const working = await workingYear(db);
+          if (!working) throw new AuthError(409, "WORKING_YEAR_REQUIRED", "Set the working academic year before importing scholars.");
+          const [years] = await db.execute<RowDataPacket[]>("SELECT code FROM academic_years WHERE id=?", [working.yearId]);
+          for (const row of rows) { row.working = { ...working, code: years[0].code }; row.cells.academicYearCode = years[0].code; row.mappings = parsed.data.mappings; }
+        }
+        if (parsed.data.approvedSelection) for (const row of rows) row.approvedSelection = parsed.data.approvedSelection;
         const preview = await validate(db, rows),
           hash = digest(JSON.stringify(preview)),
           id = randomUUID();
@@ -251,8 +301,8 @@ export class ImportService {
             key,
             parsed.data.fileName,
             fileHash,
-            JSON.stringify(rows),
-            JSON.stringify(preview),
+            encodeImportRows(rows),
+            encodeImportRows(preview),
             hash,
           ],
         );
@@ -268,6 +318,8 @@ export class ImportService {
           rows: preview,
           ready: ready(preview),
           result: null,
+          workingYear: rows[0].working?.code,
+          unresolved: await unresolved(db, preview),
         };
       },
     );
@@ -288,7 +340,7 @@ export class ImportService {
         "Import preview not found for your account.",
       );
     const j = jobs[0],
-      rows = JSON.parse(j.preview as string) as ImportPreviewRow[];
+      rows = decodeImportRows<ImportPreviewRow>(j.preview as string);
     const [confirmed] = await db.execute<RowDataPacket[]>(
       "SELECT result FROM import_confirmations WHERE job_id=?",
       [id],
@@ -299,6 +351,8 @@ export class ImportService {
       hash: j.preview_hash,
       rows,
       ready: ready(rows),
+      workingYear: rows[0].working?.code,
+      unresolved: await unresolved(db, rows),
       result: confirmed.length
         ? (JSON.parse(confirmed[0].result as string) as ImportResult)
         : null,
@@ -341,6 +395,9 @@ export class ImportService {
           "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
         );
         const staged = await this.view(db, actor, id);
+        const approved = staged.rows[0]?.approvedSelection;
+        if (approved && !["scholarship.status.approve", "continuing.approve"].every(code => access.permissions.some(p => p.code === code)))
+          throw new AuthError(403, "PERMISSION_DENIED", "A Coordinator must confirm an already-approved scholar list.");
         if (input.data.hash !== staged.hash)
           throw new AuthError(
             409,
@@ -368,9 +425,13 @@ export class ImportService {
           "SELECT raw_rows FROM import_jobs WHERE id=?",
           [id],
         );
+        if (staged.rows[0].working) {
+          const working = await workingYear(db), before = staged.rows[0].working;
+          if (!working || working.id !== before.id || working.version !== before.version || working.yearId !== before.yearId) throw new AuthError(409, "IMPORT_STALE", "Working academic year changed. Upload again to review the new year.");
+        }
         const fresh = await validate(
           db,
-          JSON.parse(raw[0].raw_rows as string) as ImportRow[],
+          decodeImportRows<ImportRow>(raw[0].raw_rows as string),
         );
         if (!ready(fresh) || digest(JSON.stringify(fresh)) !== staged.hash)
           throw new AuthError(
@@ -393,9 +454,11 @@ export class ImportService {
             return run(db, access);
           },
         };
-        const scholars = new ScholarService(scoped),
+        const scholars = new ScholarService({...scoped, readSnapshot: (user,permission,run) => scoped.withPermission(user,permission ?? "scholars.read",run)}),
           academic = new AcademicService(scoped),
+          qualification = new QualificationService(scoped),
           result: ImportResult = { items: [] };
+        const continuing: { scholarId: string; version: number; sourceRow: number; originalName: string }[] = [];
         for (const row of fresh) {
           const person = row.existingId
             ? { id: row.existingId, scholarId: row.cells.scholarId }
@@ -423,12 +486,34 @@ export class ImportService {
                 requestId,
               )
             : null;
+          if (row.intake) {
+            const intake = row.intake;
+            const resolved = await resolvePlacementReferences(db,{...intake,courseId:intake.courseId ?? ""},actor,requestId);
+            intake.schoolId=resolved.schoolId; intake.courseId=resolved.courseId || null;
+            await db.execute("INSERT INTO scholar_intakes(id,scholar_id,academic_year_id,school_id,course_id,year_level,classification,supplied_details,import_job_id,source_row,actor_id,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))", [randomUUID(), person.id, intake.academicYearId, intake.schoolId, intake.courseId, intake.yearLevel, intake.classification, JSON.stringify(row.cells), id, row.row, actor]);
+            if (approved) {
+              const selectionEvidence = { effectiveOn: approved.effectiveOn, reference: approved.reference, reason: `Already approved for working year; import ${id}, row ${row.row}` };
+              const annual = await qualification.command(actor, person.id, "create", randomUUID(), { expectedVersion: 0, academicYearId: intake.academicYearId, ...selectionEvidence }, requestId);
+              const qualified = await qualification.command(actor, annual.id, "validate", randomUUID(), { expectedVersion: annual.version, priorQualificationConfirmed: true, ...selectionEvidence }, requestId);
+              await qualification.command(actor, annual.id, "select", randomUUID(), { expectedVersion: qualified.version, ...selectionEvidence }, requestId);
+              result.selectedCount = (result.selectedCount ?? 0) + 1;
+            } else if (intake.classification === "new") await qualification.command(actor, person.id, "create", randomUUID(), { expectedVersion: 0, academicYearId: intake.academicYearId, effectiveOn: today(), ...evidence }, requestId);
+            if (intake.classification === "continuing") continuing.push({ scholarId: person.id, version: 1, sourceRow: row.row, originalName: `${row.cells.lastName}, ${row.cells.firstName}` });
+          }
           result.items.push({
             row: row.row,
             id: person.id,
             scholarId: person.scholarId,
             ...(record ? { academicRecordId: record.id } : {}),
           });
+        }
+        if (continuing.length) {
+          const roster = await new ContinuingService(undefined, scoped).command(actor, null, randomUUID(), { sourceReference: `Import ${id}: ${staged.fileName}`, entries: continuing }, requestId);
+          result.continuingRosterId = roster.id;
+          if (approved) {
+            const [actors] = await db.execute<RowDataPacket[]>("SELECT full_name FROM users WHERE id=?", [actor]);
+            await new ContinuingService(undefined, scoped).command(actor, roster.id, randomUUID(), { expectedRevision: 0, decision: "accepted", effectiveOn: approved.effectiveOn, issuer: actors[0].full_name, reference: approved.reference, reviewed: true, reason: `Already-approved scholar import ${id}` }, requestId);
+          }
         }
         await db.execute(
           "INSERT INTO import_confirmations(job_id,actor_id,command_id,result,confirmed_at) VALUES(?,?,?,?,UTC_TIMESTAMP(6))",

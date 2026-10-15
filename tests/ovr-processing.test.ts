@@ -14,11 +14,14 @@ describe("OVR processing", () => {
     reference: "REF-023",
     scholarshipId: "11111111-1111-4111-8111-111111111111",
     outcome: "paid",
-    amount: "1.00",
+    amount: "5000.00",
     remarks: "",
   };
   it("rejects malformed money as validation errors", () => {
     for (const amount of [
+      "1000.00",
+      "4999.99",
+      "5000.01",
       "abc",
       "1e3",
       "NaN",
@@ -31,18 +34,21 @@ describe("OVR processing", () => {
         parseProcessing("record-payment", { ...input, amount }),
       ).toThrow(expect.objectContaining({ code: "VALIDATION_FAILED" }));
   });
+  it("accepts the full fixed stipend", () => {
+    expect(parseProcessing("record-payment", input)).toMatchObject({ amount: "5000.00" });
+  });
   it("requires explicit explained not-paid outcomes", () => {
     expect(() =>
       parseProcessing("record-payment", {
         ...input,
-        outcome: "not_paid",
+        outcome: "not_paid", unpaidReason: "review",
         amount: "0.00",
       }),
     ).toThrow();
     expect(
       parseProcessing("record-payment", {
         ...input,
-        outcome: "not_paid",
+        outcome: "not_paid", unpaidReason: "review",
         amount: "0.00",
         remarks: "Not collected",
       }),

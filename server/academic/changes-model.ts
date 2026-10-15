@@ -27,9 +27,12 @@ export type AcademicChange = {
   };
 };
 export type AcademicChangeView = {
+  scholarId: string;
   version: number;
   current: Placement;
   effectiveOn: string | null;
   unavailable: boolean;
+  blockedReason: "year_locked" | "year_archived" | "official_membership" | "activated_scholarship" | null;
+  officialMasterlist: {id:string;title:string;status:string} | null;
   requests: AcademicChange[];
 };

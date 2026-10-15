@@ -1,4 +1,5 @@
 export const QUALIFICATION_ACTIONS = [
+  "validate",
   "exam-passed",
   "qualify",
   "select",
@@ -7,7 +8,13 @@ export const QUALIFICATION_ACTIONS = [
 ] as const;
 export type QualificationAction = (typeof QUALIFICATION_ACTIONS)[number];
 export type QualificationStatus =
-  "applicant" | "exam_passed" | "qualified" | "selected" | "not_selected";
+  "applicant" | "exam_passed" | "qualified" | "selected" | "not_selected" | "continuing";
+export type AdmissionStage = QualificationStatus | "for_validation";
+export const ADMISSION_LABELS: Record<AdmissionStage, string> = {
+  continuing: "Continuing",
+  for_validation: "For validation", applicant: "For validation", exam_passed: "For validation",
+  qualified: "Validated / for selection", selected: "Selected", not_selected: "Not selected",
+};
 export type ScholarshipRecord = {
   id: string;
   scholarId: string;
@@ -18,7 +25,10 @@ export type ScholarshipRecord = {
   version: number;
   lastEffectiveOn: string;
   periodUnavailable: boolean;
+  continuingFromScholarshipId?: string | null;
 };
+export type AdmissionReviewRow = ScholarshipRecord & { humanId: string; name: string };
+export type AdmissionReviewPage = { items: AdmissionReviewRow[]; total: number; offset: number; limit: number };
 export type QualificationEvent = {
   id: string;
   action: string;
@@ -40,6 +50,7 @@ export type QualificationResult = {
   status: QualificationStatus;
 };
 export const STATUS_LABELS: Record<QualificationStatus, string> = {
+  continuing: "Continuing",
   applicant: "Applicant",
   exam_passed: "Exam Passed",
   qualified: "Qualified",

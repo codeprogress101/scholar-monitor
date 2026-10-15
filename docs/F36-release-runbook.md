@@ -5,7 +5,7 @@ Status: candidate preparation only. The local application remains on loopback/XA
 ## Freeze the candidate
 
 1. Finish code changes, then run `npm run test:uat`. Require every suite to pass. Keep the generated report, logs, encrypted backup and restore report together in the private release evidence store; preserve the encryption key separately.
-2. Match all 29 migration names/checksums and the dependency-lock/build/source hashes in the report. No schema change is introduced by v0.37.0. Do not edit historical migrations, regenerate dependencies or rebuild under a changed source tree and reuse the old acceptance report.
+2. Match all migration names/checksums (40 in the current candidate) and the dependency-lock/build/source hashes in the report. No schema change is introduced by v0.37.0. Do not edit historical migrations, regenerate dependencies or rebuild under a changed source tree and reuse the old acceptance report.
 3. Retain an immutable copy of the accepted application artifact, lockfile, source and deployment configuration in the administrator's release store. Keep `.env` and secrets outside the public artifact. This repository's accumulated working changes must be reviewed and committed/tagged through the owner's normal release process; no commit or production tag is created automatically.
 4. Preserve the exact prior working artifact/configuration before a real deployment. A mutable local `dist/` directory is not a rollback archive. This checkpoint does not claim a previously deployed production artifact exists.
 
@@ -14,7 +14,7 @@ Status: candidate preparation only. The local application remains on loopback/XA
 1. Complete the [acceptance checklist](F36-acceptance-checklist.md), name the operators and approve a maintenance window. Stage the exact frozen candidate in a production-equivalent environment.
 2. Stop new writes and take a fresh verified backup immediately before deployment. The F35 commands support local recovery only; use the reviewed production backup procedure for the actual production host. Do not bypass the local safeguards by relabeling a production database as development.
 3. Keep the application source and private configuration outside public document roots. Serve only the built application through the approved HTTPS endpoint. Use dedicated restricted SQL runtime credentials, separate migration credentials and correct `APP_ENV`/`APP_ORIGIN` settings.
-4. Apply only reviewed pending migrations with the migration administrator. This candidate has no new migration. Never grant the web runtime schema-administration privileges to make startup work.
+4. Apply only reviewed pending migrations with the migration administrator. Compare the deployed schema to the validated 40-migration manifest; do not infer that no migration is needed from the application version alone. Never grant the web runtime schema-administration privileges to make startup work.
 5. Start the frozen artifact, verify health/readiness, and repeat separate Staff/Coordinator/System Administrator smoke tests: login, receiving, scoped reports, approval restrictions and audit evidence. Release traffic only when the named owners accept the results.
 6. Record deployment time, exact candidate/report hash, migration state and backup ID. Monitor failures, database readiness and backup completion.
 

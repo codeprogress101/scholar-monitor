@@ -20,7 +20,12 @@ export default function RoutineEvidence({ children, routine = true, referenceReq
           list: !isReference && required && node.type === "input" ? reasonList : undefined,
         });
       }
-      return cloneElement(node, { children: simplify(node.props.children, hint) });
+      const children = simplify(node.props.children, hint);
+      if (node.type === "label" && routine) {
+        const label = hint.includes("reference") ? "Supporting reference (optional)" : hint.includes("reason") ? "Note (optional)" : null;
+        if (label) return cloneElement(node, { children: Children.map(children, child => typeof child === "string" && child.trim() ? label : child) });
+      }
+      return cloneElement(node, { children });
     });
   }
   const fields = <>{simplify(children)}<datalist id={reasonList}>

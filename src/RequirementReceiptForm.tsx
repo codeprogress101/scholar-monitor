@@ -1,4 +1,7 @@
+import { useActionForm } from "./use-action-form";
 import { useRef, useState, type FormEvent } from "react";
+import RoutineEvidence from "./RoutineEvidence";
+import { receivingToday } from "./receiving-selection";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
@@ -21,13 +24,14 @@ export default function RequirementReceiptForm({
   const [open, setOpen] = useState(false),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
-  const [receivedOn, setReceivedOn] = useState(""),
+  const [receivedOn, setReceivedOn] = useState(receivingToday),
     [physicalReference, setReference] = useState(""),
     [storageLocation, setStorage] = useState(""),
     [remarks, setRemarks] = useState(""),
     [reason, setReason] = useState("");
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
+  const actionForm = useActionForm(open);
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy.current) return;
@@ -81,7 +85,7 @@ export default function RequirementReceiptForm({
           <div>
             Received on {receipt.receivedOn} by {receipt.receiverName}
           </div>
-          <div>Storage: {receipt.storageLocation}</div>
+          <div>Storage: {receipt.storageLocation || "Not recorded"}</div>
           <div>
             Physical reference: {receipt.physicalReference ?? "Not recorded"}
           </div>
@@ -120,15 +124,14 @@ export default function RequirementReceiptForm({
         </p>
       )}
       {open && (
-        <form
+        <form ref={actionForm}
           className="border rounded p-3 mt-2"
           aria-label={`Receive ${instance.code}`}
           onSubmit={submit}
         >
           <h5>Receive {instance.code} hard copy</h5>
           <p>
-            Receiver: {session.user.fullName}. Record where the physical
-            document is stored. No file upload is needed.
+            Received by {session.user.fullName}. Confirm the date shown on the receiving record.
           </p>
           {error && (
             <div className="alert alert-danger" role="alert">
@@ -141,12 +144,13 @@ export default function RequirementReceiptForm({
               <input
                 className="form-control"
                 type="date"
+                max={receivingToday()}
                 required
                 value={receivedOn}
                 onChange={(e) => setReceivedOn(e.target.value)}
               />
             </label>
-            <label className="form-label d-block">
+            <RoutineEvidence><label className="form-label d-block">
               Physical reference (optional)
               <input
                 className="form-control"
@@ -156,10 +160,9 @@ export default function RequirementReceiptForm({
               />
             </label>
             <label className="form-label d-block">
-              Folder / box / storage location
+              Folder / box / storage location (optional)
               <input
                 className="form-control"
-                required
                 maxLength={300}
                 value={storageLocation}
                 onChange={(e) => setStorage(e.target.value)}
@@ -175,7 +178,7 @@ export default function RequirementReceiptForm({
               />
             </label>
             <label className="form-label d-block">
-              Receipt reason
+              Additional note
               <input
                 className="form-control"
                 required
@@ -184,7 +187,7 @@ export default function RequirementReceiptForm({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
-            </label>
+            </label></RoutineEvidence>
             <div className="d-flex gap-2 flex-wrap">
               <button className="btn configuration-primary">
                 {saving ? "Recording..." : "Record physical receipt"}

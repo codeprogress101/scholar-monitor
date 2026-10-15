@@ -1,5 +1,11 @@
+import ContinuingSemesterSetup from "./ContinuingSemesterSetup";
+import { StatusBadge } from "./WorkspaceUI";
+import { payrollPeriods, type PayrollPeriodScope } from "./payroll-periods";
+import { receivingToday } from "./receiving-selection";
+import PayrollSubmissionWindows from "./PayrollSubmissionWindows";
 import RoutineEvidence from "./RoutineEvidence";
 import OvrDrafts from "./OvrDrafts";
+import { payrollSelection, rememberPayroll } from "./payroll-navigation";
 import EligibilityReport from "./EligibilityReport";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
@@ -29,9 +35,20 @@ async function allSemesters(signal: AbortSignal) {
     if (offset >= r.total || !r.items.length) return items;
   }
 }
+async function allPayoutCycles(signal: AbortSignal) {
+  const items: PayoutCycle[] = [];
+  for (let offset = 0; ;) {
+    const page = await request<{ items: PayoutCycle[]; total: number }>(`payout-cycles?limit=100&offset=${offset}`, { signal });
+    items.push(...page.items);
+    offset += page.items.length;
+    if (offset >= page.total || !page.items.length) return { items, total: items.length };
+  }
+}
 export default function PayoutCyclesPage({ session }: { session: Session }) {
-  const [ovrCycle, setOvrCycle] = useState<string | null>(null);
-  const [reportCycle, setReportCycle] = useState<string | null>(null);
+  const [scope, setScope] = useState<PayrollPeriodScope>("current");
+  const [ovrCycle, updateOvrCycle] = useState<string | null>(() => payrollSelection("cycle"));
+  const setOvrCycle = (id: string | null) => { rememberPayroll(id); updateOvrCycle(id); };
+  const [reportCycle, setReportCycle] = useState<string | null>(() => new URLSearchParams(window.location.hash.split("?")[1]).get("view") === "eligibility" ? payrollSelection("cycle") : null);
   const [data, setData] = useState<{ items: PayoutCycle[]; total: number }>({
       items: [],
       total: 0,
@@ -52,11 +69,17 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
     [date, setDate] = useState(""),
     [reason, setReason] = useState(""),
     [reference, setReference] = useState("");
+  const [inherited, setInherited] = useState<NonNullable<PayoutCycle["semesterDocuments"]>>([]);
   const [choices, setChoices] = useState<RequirementVersion[] | null>(null),
     [selected, setSelected] = useState<Record<string, boolean>>({});
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null),
     panel = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const followLink = () => {updateOvrCycle(payrollSelection("cycle"));setReportCycle(new URLSearchParams(window.location.hash.split("?")[1]).get("view") === "eligibility" ? payrollSelection("cycle") : null);};
+    window.addEventListener("hashchange",followLink);
+    return () => window.removeEventListener("hashchange",followLink);
+  },[]);
   const manage = permissions.includes("configuration.manage"),
     operate = permissions.includes("payouts.operate");
   useEffect(() => {
@@ -65,10 +88,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
     const timeout = window.setTimeout(() => c.abort(), 15000);
     Promise.all([
       request<Access>("me/permissions", { signal: c.signal }),
-      request<{ items: PayoutCycle[]; total: number }>(
-        `payout-cycles?limit=25&offset=${offset}`,
-        { signal: c.signal },
-      ),
+      allPayoutCycles(c.signal),
       allSemesters(c.signal),
     ])
       .then(([access, list, refs]) => {
@@ -90,7 +110,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
       window.clearTimeout(timeout);
       c.abort();
     };
-  }, [offset, reload]);
+  }, [reload]);
   useEffect(() => {
     if (editor) {
       panel.current?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -118,7 +138,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
         ]) ?? [],
       ),
     );
-    setChoices(null);
+    setChoices(null); setInherited(cycle?.semesterDocuments ?? []);
     setReason("");
     setReference("");
     setError("");
@@ -130,9 +150,11 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
     setSaving(true);
     setError("");
     try {
-      const r = await request<{ items: RequirementVersion[] }>(
-        `requirement-definitions/applicable?semesterId=${encodeURIComponent(semesterId)}&appliesTo=payout&effectiveOn=${encodeURIComponent(date)}`,
-      );
+      const results = await Promise.all((["payout", "semester"] as const).map(appliesTo => request<{ items: RequirementVersion[] }>(`requirement-definitions/applicable?semesterId=${encodeURIComponent(semesterId)}&appliesTo=${appliesTo}&effectiveOn=${encodeURIComponent(date)}`)));
+      const shared = await request<{items: NonNullable<PayoutCycle["semesterDocuments"]>}>(`semesters/${semesterId}/document-sources`);
+      setInherited(shared.items);
+      const ids = new Set(shared.items.flatMap(s=>[s.corDefinitionVersionId,s.cogDefinitionVersionId]));
+      const r = { items: results.flatMap(r => r.items).filter(r=>!ids.has(r.id)) };
       setChoices(r.items);
       setSelected((old) =>
         Object.fromEntries(
@@ -226,26 +248,32 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
       setSaving(false);
     }
   }
+  const day = receivingToday();
+  const periods = payrollPeriods(data.items, parents, scope, day);
+  const pageOffset = Math.min(offset, Math.max(0, Math.ceil(periods.length / 25) - 1) * 25);
+  const shown = ovrCycle ? data.items.filter(c => c.id === ovrCycle) : periods.slice(pageOffset, pageOffset + 25);
+  const scopeLabels: Record<PayrollPeriodScope, string> = { current: "Current periods", past: "Past periods & batches", upcoming: "Upcoming periods", all: "All periods" };
   return (
     <section
       className="configuration-page"
       style={{ overflowWrap: "anywhere" }}
     >
       <div className="d-flex justify-content-between gap-2 flex-wrap">
-        <h1>Payout cycles</h1>
+        <h1>Payroll</h1>
         <button
           className="btn btn-outline-secondary"
           disabled={saving}
           onClick={refresh}
         >
-          Refresh payout cycles
+          Refresh
         </button>
       </div>
-      <p>
-        Configure each semester payout date and its document requirements.
-        Opening a cycle freezes its policy; locking or closing it stops document
-        changes.
-      </p>
+      <p>{scope === "past" ? "Open a past period to view its payroll batches." : scope === "current" ? "Review candidates and prepare payroll for the current semester." : "Choose a period to view its payroll batches."}</p>
+      {!ovrCycle && <nav className="filter-pills" aria-label="Payroll periods">{(["current", "past", "upcoming", "all"] as const).map(value => {
+        const count = payrollPeriods(data.items, parents, value, day).length;
+        if (value === "upcoming" && !count) return null;
+        return <button type="button" key={value} aria-pressed={scope === value} disabled={loading || saving} onClick={() => { setScope(value); setOffset(0); setEditor(null); setHistory(null); setNotice(""); }}>{scopeLabels[value]}{!loading && ` (${count})`}</button>;
+      })}</nav>}
       {error && (
         <div className="alert alert-danger" role="alert">
           {error}
@@ -301,7 +329,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
                     value={semesterId}
                     onChange={(e) => {
                       setSemesterId(e.target.value);
-                      setChoices(null);
+                      setChoices(null); setInherited([]);
                       setSelected({});
                     }}
                   >
@@ -342,7 +370,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
                     value={date}
                     onChange={(e) => {
                       setDate(e.target.value);
-                      setChoices(null);
+                      setChoices(null); setInherited([]);
                       setSelected({});
                     }}
                   />
@@ -353,15 +381,15 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
                   disabled={!semesterId || !date}
                   onClick={() => void loadChoices()}
                 >
-                  Load applicable payout requirements
+                  Load document setup
                 </button>
+                {inherited.length > 0 && <p role="status"><strong>Uses semester documents</strong> ? {inherited.length} cohort setup(s). COR/COG are inherited per scholar.</p>}
                 {choices !== null && (
                   <>
                     <p>
-                      Select required documents and whether a recorded waiver
-                      can satisfy each one.
+                      Select any separate payout obligations. COR/COG use the approved semester setup.
                     </p>
-                    {!choices.length && (
+                    {!choices.length && !inherited.length && (
                       <p>
                         No payout definitions apply. Configure them in
                         Requirement definitions first.
@@ -444,7 +472,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
                 className="btn configuration-primary"
                 disabled={
                   ["create", "configure"].includes(editor.action) &&
-                  (!choices || !Object.keys(selected).length)
+                  (!choices || (!Object.keys(selected).length && !inherited.some(s=>s.mode==="enabled")))
                 }
               >
                 Save payout cycle command
@@ -465,9 +493,10 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
       ) : (
         <>
           {!data.items.length && <p>No payout cycles configured.</p>}
-          {data.items.map((c) => (
-            <PayoutCycleCard
-              key={c.id}
+          {!ovrCycle && data.items.length > 0 && !periods.length && <p className="empty-state">{scope === "current" ? "No payroll period matches today's semester dates. Use Past periods & batches or All periods to find another payroll." : "No payroll periods in this view."}</p>}
+          {ovrCycle && <button type="button" className="btn btn-outline-secondary back-link" disabled={saving} onClick={() => { setOvrCycle(null); setReportCycle(null); setHistory(null); }}>Back to {scopeLabels[scope].toLowerCase()}</button>}
+          {shown.map((c) => (
+            <div key={c.id}><PayoutCycleCard
               cycle={c}
               manage={manage}
               operate={operate}
@@ -475,35 +504,35 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
               onInspect={inspect}
               onEdit={edit}
               onOvr={
-                permissions.includes("ovr.prepare")
-                  ? () => setOvrCycle(c.id)
+                permissions.includes("ovr.prepare") && ovrCycle !== c.id
+                  ? () => { setOvrCycle(c.id); setReportCycle(null); setHistory(null); window.scrollTo(0, 0); }
                   : undefined
               }
               onReport={
                 permissions.includes("scholars.read")
-                  ? () => setReportCycle(c.id)
+                  ? () => { setOvrCycle(c.id); setReportCycle(c.id); setHistory(null); window.scrollTo(0, 0); }
                   : undefined
               }
-            />
+            />{ovrCycle === c.id && <PayrollSubmissionWindows cycleId={c.id} session={session} canManage={permissions.includes("payroll.windows.manage")} />}</div>
           ))}
-          <div className="d-flex gap-3 align-items-center">
+          <div className="d-flex gap-3 align-items-center" hidden={!!ovrCycle || periods.length <= 25}>
             <button
               className="btn btn-outline-secondary"
-              disabled={!offset || saving}
+              disabled={!pageOffset || saving}
               onClick={() => {
-                setOffset((n) => Math.max(0, n - 25));
-                refresh();
+                setOffset(Math.max(0, pageOffset - 25));
+                setHistory(null);
               }}
             >
               Previous cycles
             </button>
-            <span>{data.total} cycles</span>
+            <span>{pageOffset + 1}–{Math.min(pageOffset + 25, periods.length)} of {periods.length} periods</span>
             <button
               className="btn btn-outline-secondary"
-              disabled={offset + 25 >= data.total || saving}
+              disabled={pageOffset + 25 >= periods.length || saving}
               onClick={() => {
-                setOffset((n) => n + 25);
-                refresh();
+                setOffset(pageOffset + 25);
+                setHistory(null);
               }}
             >
               Next cycles
@@ -511,13 +540,14 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
           </div>
         </>
       )}
-      {ovrCycle && (
-        <OvrDrafts
+      {ovrCycle && <nav className="filter-pills" aria-label="Semester work areas"><button type="button" aria-pressed={!reportCycle} onClick={() => setReportCycle(null)}>Payroll batches</button><button type="button" aria-pressed={!!reportCycle} onClick={() => setReportCycle(ovrCycle)}>Eligibility report</button></nav>}
+      {ovrCycle && !reportCycle && (
+        <><div className="my-2">{data.items.find(c=>c.id===ovrCycle)?.semesterDocuments?.map((s,i)=><div key={s.scopeId}><strong>Uses semester documents{(data.items.find(c=>c.id===ovrCycle)?.semesterDocuments?.length ?? 0)>1 ? ` ? Group ${i+1}` : ""}</strong>{permissions.includes("semesters.configure") && <ContinuingSemesterSetup compact initialSemesterId={data.items.find(c=>c.id===ovrCycle)!.semesterId} batchId={s.cohort} session={session} canConfigure />}</div>)}</div><OvrDrafts
           key={`${ovrCycle}-${reload}`}
           cycleId={ovrCycle}
           session={session}
           permissions={permissions}
-        />
+        /></>
       )}
       {reportCycle && (
         <EligibilityReport
@@ -582,20 +612,16 @@ function PayoutCycleCard({
 }) {
   return (
     <article
-      className="card p-3 mb-3"
+      className="card compact-card"
       key={c.id}
       aria-label={`Payout ${c.code}`}
     >
-      <h2>
-        {c.code} - {c.name}
-      </h2>
-      <p>
-        {c.yearCode} / {c.semesterCode}
-        <br />
-        Target: {c.targetDate} - <strong>{c.state}</strong> - revision{" "}
-        {c.version}
-        {c.periodUnavailable ? " (period unavailable)" : ""}
-      </p>
+      <div className="card-heading"><div><h2>{c.name}</h2><p className="muted-line">{c.yearCode} / {c.semesterCode} · Target {c.targetDate}</p></div><StatusBadge tone={c.state === "open" ? "success" : "neutral"}>{c.state}</StatusBadge>
+        {onOvr && <button className="btn configuration-primary" disabled={saving} onClick={onOvr}>Open payroll</button>}
+      </div>
+      {c.periodUnavailable && <p className="text-muted">This period is unavailable for changes.</p>}
+      <details className="secondary-details"><summary>Documents & semester options</summary>
+      <p className="muted-line">{c.code} · Revision {c.version}</p>
       <ul>
         {c.requirements.map((r) => (
           <li key={r.definitionVersionId}>
@@ -612,24 +638,15 @@ function PayoutCycleCard({
           disabled={saving}
           onClick={() => void onInspect(c)}
         >
-          History {c.code}
+          View history
         </button>
-        {onOvr && (
-          <button
-            className="btn btn-outline-secondary"
-            disabled={saving}
-            onClick={onOvr}
-          >
-            OVR drafts {c.code}
-          </button>
-        )}
         {onReport && (
           <button
             className="btn btn-outline-secondary"
             disabled={saving}
             onClick={onReport}
           >
-            Eligibility {c.code}
+            Eligibility report
           </button>
         )}
         {manage && c.state === "draft" && !c.periodUnavailable && (
@@ -638,7 +655,7 @@ function PayoutCycleCard({
             disabled={saving}
             onClick={() => onEdit("configure", c)}
           >
-            Configure {c.code}
+            Edit setup
           </button>
         )}
         {operate &&
@@ -656,10 +673,11 @@ function PayoutCycleCard({
               disabled={saving}
               onClick={() => onEdit(a as Editor["action"], c)}
             >
-              {a} {c.code}
+              {a === "open" ? "Open semester" : a === "lock" ? "Lock semester" : "Close semester"}
             </button>
           ))}
       </div>
+      </details>
     </article>
   );
 }

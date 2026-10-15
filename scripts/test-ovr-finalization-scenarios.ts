@@ -525,14 +525,14 @@ export async function testFinalization(c: {
     ],
   );
   deny(
-    await request("coordinator", `/api/v1/ovr-batches/${self.id}/finalize`, {
+    await request("staff", `/api/v1/ovr-batches/${self.id}/finalize`, {
       expectedRevision: 2,
       ...evidence,
     }),
     403,
-    "SEPARATE_FINALIZER_REQUIRED",
+    "PERMISSION_DENIED",
   );
-  pass("A Coordinator cannot finalize their own submission");
+  pass("Staff cannot finalize a Coordinator submission");
   console.log(`All ${passed} F22 finalization scenarios passed.`);
   return { batch, ready, reopen };
 }

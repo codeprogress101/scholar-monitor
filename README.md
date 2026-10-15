@@ -1,16 +1,51 @@
 # LDSS Scholarship Monitor
 
+Payout terminology: the working application uses **Payroll**. The supplied `payroll sample.docx` is the sole planned payout form; there is no separate OVR form. The bounded main workflow now connects automatic semester candidates to a sample-based draft preview and frozen official printable Payroll Form, using the approved PHP 5,000 degree stipend. See [delivery and test steps](docs/LDSS_MAIN_PAYROLL_DELIVERY.md) for prerequisites and limitations. Printing does not record release. Existing internal `ovr` API/table identifiers and historical delivery documents are retained for compatibility. See [the current workflow tracker](docs/LDSS_WORKFLOW_CHANGE_IMPLEMENTATION_PLAN.md).
+
+Current approval policy (2026-10-08): one Coordinator may prepare and explicitly approve their own submitted work. Staff and System Administrators do not gain approval permission. Requests, approvals, publication and actual payment remain distinct audited actions. Earlier delivery reports describe the former two-person rule.
 Current candidate: **F36 - UAT and Production Go-Live Preparation (v0.37.0)**. F00 through F35 are accepted. Automated acceptance tooling and the release checklist are prepared; Coordinator/technical-owner sign-off and production readiness remain pending. No production launch has occurred.
 
 React + TypeScript + Bootstrap, Fastify, and **XAMPP MariaDB/MySQL**. XAMPP is the user-authorized amendment to the original PostgreSQL plan.
 
+8 October diagnostic fixes: accepted continuing scholars can complete official masterlist membership without fabricated qualification events; stale document verification can be rechecked without duplicating paper receipt; payroll selection survives reload. See [fixes, verification and operating steps](docs/LDSS_DIAGNOSTIC_FIXES_20261008.md). Current local schema: 42 migrations. Large-cohort loading improved; human operational acceptance remains pending.
+
 ## Run on this computer
+
+### System Administrator walkthrough
+
+Sign in with the technical Administrator account and start at **Home → System administration**. The cards link directly to the relevant setup screen.
+
+1. **Academic calendar:** AY2026-2027 is the designated working year. Review its dates and existing semesters. Under **Semesters**, add the missing second semester using the actual dates within that year. The current local first-semester payroll is still open.
+2. **Schools & courses:** add missing choices once; Staff reuses them for academic records and year-level tracking. Retain old reference records for history.
+3. **Required documents:** configure COR/enrollment evidence and COG separately. A document definition is setup; Staff receives and verifies each scholar's actual paper.
+4. **Payroll setup:** prepare the semester cycle and its requirements. The Coordinator opens it, manages submission windows and approves payroll decisions. Administrator access does not grant these approvals.
+5. **Roles & permissions / System health:** inspect access and connection status. Account creation, resets and role changes still use the local commands below; the browser access page is informational.
+6. **Next academic year:** available only after both semesters exist and all their payroll cycles are formally closed and reconciled. Creating the next year advances the working year atomically. Other years remain available as history; do not delete them or use a year lock to bypass unfinished payroll.
+
+Daily scholar work is consolidated in **Scholar registry**. Staff/Coordinators use **All scholars** for profiles and **Continuing roster review** for names-only onboarding and review. This is one registry, not a second set of student identities.
+
+Academic reviews now show enrollment and separate failed/dropped/INC findings. To clear INC, return the COG for correction, receive the updated paper, verify it and record the new findings. Clearing INC does not clear a failed subject. Reconsideration exceptions still await authorization-policy clarification; a letter alone cannot unlock payment.
+
+### Payroll release and graduation
+
+1. **Coordinator:** open **Payroll → current or past period → batch**, finalize the reviewed payroll and submit it for administration. Finalization reserves each scholar's semester entitlement; printing does not record receipt.
+2. **Staff:** after financial processing, choose **Mark processed**, then **Record payment outcome**. For actual receipt, select the scholar, supply the signed payment reference and confirm full receipt. The degree stipend is fixed at PHP 5,000. Use **Unclaimed / not received** with an explanation when payment has not been collected.
+3. **Coordinator:** use **Hold payment / Clear hold** for an unpaid member, with the decision reason and reference. Academic restrictions also withhold release automatically. Clearing a manual hold cannot waive those restrictions. Holds keep the original allocation reserved, including after closure.
+4. **Coordinator:** reconcile every outcome and close the payroll. A later claim or payment correction uses **Request correction**, followed by approval from the Coordinator. The original outcome, frozen payroll and closure evidence remain intact; no new entitlement is created.
+5. **Graduation:** in **Scholar registry → profile → Scholarship records**, Staff submits the status request. The Coordinator approves it and explicitly selects the **final funded semester**. Only that semester may retain eligibility, with all document and academic checks still required. No automatic graduation is inferred from year level or payment.
+6. **Find graduates:** the profile shows **Final stipend pending** until full actual receipt is recorded. Confirmed graduation plus that receipt produces **Graduated / Archived** and removes the scholar from the default current list. Use **Registry view → Graduated / Archived** or **All records** to find the preserved profile and history. New annual/semester renewal is blocked outside the confirmed final semester.
+
+Older graduation decisions with no recorded final semester remain marked for review. Migration 38 adds the confirmation record without backfilling historical decisions. See [delivery evidence and boundaries](docs/LDSS_MANAGED_RELEASE_DELIVERY.md) and the [single workflow tracker](docs/LDSS_WORKFLOW_CHANGE_IMPLEMENTATION_PLAN.md).
+
+### Local startup
 
 Start MySQL in XAMPP, then run `npm run dev` in this folder. Open **http://127.0.0.1:5173**. The API runs on port 3001. The local database is already provisioned and migrated.
 
 The workspace requires an individual account. Apache is not needed; `.htaccess` blocks this source folder and credentials from Apache access.
 
 ## Scholar registry
+
+Daily navigation now starts at **Home**, with shortcuts for receiving documents, finding a scholar and preparing payroll. **Setup & administration** contains occasional configuration and technical tools. Open one scholar, masterlist or payroll batch at a time; use its back action to return to the list. History and policy details expand when needed. See the [UI walkthrough](docs/LDSS_UI_SIMPLIFICATION.md).
 
 Open **http://127.0.0.1:5173/#scholars** with a Staff or Coordinator account. Michael retains only System Administrator, so the registry deliberately shows a restricted-access message for his account. No operational role or approval permission was added automatically. Use the existing account/role commands for a separately authorized individual assignment.
 
@@ -42,7 +77,13 @@ Drafts preserve source snapshots. Subsequent identity, qualification or approved
 
 ## Official masterlist workflow
 
-Open **Masterlists**, open a draft, and use **Verification and official release**. Staff/Coordinators submit for verification, record completion of verification with a reference, then submit for approval. A different Coordinator approves the submission. Coordinators may return an unpublished list to Draft with a reason; entries remain read-only outside Draft.
+For bulk additions, open a draft's **Add scholars** tab. The selection bar stays visible as you scroll. **Select all eligible** selects only eligible scholars on the current page; **Add selected** opens a confirmation dialog in place. Cancel keeps the selection. After a partial failure, retry only the remaining records or close and refresh. Saved records stay saved.
+
+Expand **Needs attention** for a direct link to the relevant academic or scholarship record. Payroll document/compliance issues link to **Receive / review documents** for that payroll semester. Closed periods remain subject to their normal history/receiving restrictions. Browser Back returns to the draft, tab, search and candidate page. An accepted continuing baseline still needs the planned official-membership connection; do not invent new examination records to get past this prerequisite.
+
+Year level is recorded from academic evidence, not automatically increased when two semesters close. The official masterlist covers an academic year; semester compliance is assessed separately for each payroll. Staff reconciles the accounting list through the batch's payment outcomes: actual full receipt versus unclaimed/not received, with date and reference. Approval is not proof of payment; outcomes are currently recorded individually.
+
+Open **Masterlists**, open a draft, and use **Verification and official release**. Staff/Coordinators submit for verification, record completion of verification with a reference, then submit for approval. The Coordinator approves the submission. Coordinators may return an unpublished list to Draft with a reason; entries remain read-only outside Draft.
 
 The ordered workflow is Draft -> For Verification -> Submitted for Approval -> Approved -> Published -> Locked. Each command requires the current revision, a reason and decision/verification reference. Approval and publication revalidate every candidate and its source snapshot. Resolve stale data by returning to Draft and reviewing/refreshing the affected entry.
 
@@ -54,7 +95,7 @@ The ordered workflow is Draft -> For Verification -> Submitted for Approval -> A
 
 Open a locked masterlist and choose **Request official amendment** under **Amendments and official versions**. Staff or Coordinators can request a course shift, school transfer, both, year-level correction, award-number correction, or refresh of the name from the authoritative registry. Select one scholar and provide an effective date, reason and physical-record reference. Correct the registry first when refreshing a name.
 
-A different Coordinator approves or rejects the request. Approval preserves the current official record; **Publish approved amendment** creates a new locked version such as 1.1, with links to earlier releases. Academic amendments also append approved academic history in the same transaction. Scholarship activation and operational status remain unchanged.
+The Coordinator approves or rejects the request. Approval preserves the current official record; **Publish approved amendment** creates a new locked version such as 1.1, with links to earlier releases. Academic amendments also append approved academic history in the same transaction. Scholarship activation and operational status remain unchanged.
 
 Requests and publication require the latest locked version and an active, unlocked academic year. Superseded requests cannot publish; submit a new request against the latest version. Only the requester can cancel a pending request. Original snapshots, before/after values, requester and decision attribution remain preserved. This checkpoint corrects existing entries; roster additions/removals are not exposed. See [F12 delivery](docs/F12-delivery.md).
 
@@ -62,15 +103,15 @@ Requests and publication require the latest locked version and an active, unlock
 
 Open a scholar profile and choose **Request academic change** under the relevant annual record. Select course shift, school transfer, both, or year-level correction; provide the new placement, effective date, reason, physical-record reference and optional remarks. Submit year-level corrections separately from school/course changes.
 
-Requests preserve the current placement until a different Coordinator approves them. Coordinators can reject requests; requesters can cancel their own. Before/after values and attributed decisions remain visible. Stale requests must be rejected/cancelled and resubmitted against the current revision. System Administrators have no approval authority.
+Requests preserve the current placement until the Coordinator approves them. Coordinators can reject requests; requesters can cancel their own. Before/after values and attributed decisions remain visible. Stale requests must be rejected/cancelled and resubmitted against the current revision. System Administrators have no approval authority.
 
 Locked/archived years, activated scholarship records and approved/official masterlist membership block direct placement changes. Use the F12 official amendment workflow for corrections to locked official lists; F09 cannot bypass this boundary. See [F09 delivery](docs/F09-delivery.md) for the API and integration requirements.
 
 ## Annual qualification
 
-Open a scholar profile and use **Add academic year record**. Each scholar has at most one record per academic year, separate from their permanent identity and registration year. Staff and Coordinators can create Applicant records and record Exam Passed. Coordinators alone confirm Qualified, select scholars, or record Not Selected. Every command requires an effective date, reason, and physical-record/decision reference; history preserves the actor and recorded time.
+Open a scholar profile and use **Add academic year record**, or use **Admission review** for bulk decisions. Names entered here have already passed the LGU examination and qualification outside the system. The daily stages are **For validation → Validated / for selection → Selected**. Staff or Coordinator validates the prior qualification and current academic record; only a Coordinator selects or records Not Selected. A single confirmation checkbox records the validation basis; routine evidence is generated automatically, with optional supporting detail.
 
-Applicant -> Exam Passed -> Qualified -> Selected. Not Selected is terminal for that year and can be recorded before selection. Selected is not Active and does not establish payout eligibility. Activation occurs only through publication of an approved official masterlist. Locked/archived years remain readable but cannot receive new commands. Refresh stale records before trying a changed decision.
+Validation appends one `validate` event and reuses the existing internal `qualified` state. It does not synthesize exam events or rewrite existing history. Earlier Applicant/Exam Passed records appear together under For validation. Legacy command endpoints remain compatible with historical integrations; the daily screens do not require them. Not Selected remains terminal for that year. Selection does not activate the scholarship or establish payout eligibility; official publication and semester compliance remain separate.
 
 Effective dates cannot be future dates or precede the last event. They may fall outside academic-year dates because applications/exams can occur before a year starts and late recording is possible. No exam cutoff, qualification threshold, or selection quota is invented; the Coordinator records a referenced decision.
 
@@ -80,7 +121,7 @@ See [F06 delivery](docs/F06-delivery.md) for transition rules, endpoints, and ve
 
 Open a scholar profile, select an annual record, and see **Operational status**. Qualification and operational status are separate. Records remain **Not activated** until a Coordinator publishes their approved official masterlist; status commands provide no activation shortcut.
 
-For an activated record, Staff or Coordinator requests a change with effective date, uppercase reason code, explanation, and physical-record/decision reference. The current status stays unchanged until a different Coordinator approves. Coordinators may reject; only the requester may cancel. Locked/archived years block new requests and approvals but allow rejection/cancellation.
+For an activated record, Staff or Coordinator requests a change with effective date, uppercase reason code, explanation, and physical-record/decision reference. The current status stays unchanged until the Coordinator approves. Coordinators may reject; only the requester may cancel. Locked/archived years block new requests and approvals but allow rejection/cancellation.
 
 Active can move to On Hold, Suspended, Graduated, Dropped, Withdrawn, Disqualified, or Not Renewed. On Hold/Suspended can resume Active or reach a terminal outcome with approval. A terminal reversal requires **Request controlled correction**, referencing the latest approved terminal decision and restoring its immediately prior state. The original history is retained.
 
@@ -140,19 +181,19 @@ Use **Calculate and save** or **Recalculate and save** with a reason and referen
 
 ## Eligibility overrides
 
-In **Payout cycles > Eligibility > Review eligibility**, save a fresh normal calculation, then choose **Request eligibility override**. Staff or Coordinator requesters supply the desired result, reason code, justification and authority reference, then submit for review. A separate Coordinator approves or rejects; no one can approve their own request.
+In **Payout cycles > Eligibility > Review eligibility**, save a fresh normal calculation, then choose **Request eligibility override**. Staff or Coordinator requesters supply the desired result, reason code, justification and authority reference, then submit for review. A the Coordinator approves or rejects; no one can approve their own request.
 
 Source changes block submission/approval with `ELIGIBILITY_DATA_CHANGED`. Save a fresh calculation, **Re-evaluate override**, and submit again. The original calculation is preserved. Only an approval matching current sources changes the effective result, clearly labeled **Eligible - Override Approved** or **Not Eligible - Override Approved** in the panel and report. All override commands require an open cycle and available academic period. See [F20 delivery](docs/F20-delivery.md) for lifecycle, supersession and audit contracts.
 
-## OVR draft rosters
+## Payroll draft rosters
 
-Staff and Coordinators open **Payout cycles > OVR drafts**, create a batch, and use **Add OVR entry** to search same-year scholarship records. Each addition runs fresh server eligibility checks. Active status, current official membership and complete cycle-specific documents are mandatory, including for approved eligibility exceptions. Unresolved Draft/Pending overrides, stale approvals and duplicate membership anywhere in the cycle block admission.
+Staff and Coordinators open **Payout cycles > Payroll drafts**, create a batch, and use **Add Payroll entry** to search same-year scholarship records. Each addition runs fresh server eligibility checks. Active status, current official membership and complete cycle-specific documents are mandatory, including for approved eligibility exceptions. Unresolved Draft/Pending overrides, stale approvals and duplicate membership anywhere in the cycle block admission.
 
 **Record draft validation** preserves a passing result or structured issues. Source changes flag entries as stale; review, remove and re-add them to capture current evidence. Removal preserves history. Only Draft batches in open, available payout cycles accept changes. F22 adds review and finalization below. See [F21 delivery](docs/F21-delivery.md).
 
-## OVR review and finalization
+## Payroll review and finalization
 
-Open a prepared OVR and choose **Submit OVR for review**. Every entry must pass current validation. Membership stays locked during review. A Coordinator can **Return OVR to Draft** for corrections or **Finalize OVR**; the finalizer must be a different individual from the submitter.
+Open a prepared Payroll and choose **Submit Payroll for review**. Every entry must pass current validation. Membership stays locked during review. A Coordinator can **Return Payroll to Draft** for corrections or **Finalize Payroll**; the finalizer must be a different individual from the submitter.
 
 Finalization rechecks the entire roster in one transaction. Any invalid or stale member blocks the whole command and displays structured issues. A successful result freezes all entries, source evidence, submitter/finalizer metadata and a snapshot hash. The frozen roster remains unchanged if current source records later change. F23 adds processing and payment outcomes below. See [F22 delivery](docs/F22-delivery.md).
 
@@ -339,7 +380,7 @@ Optional: `npm run test:auth-db -- --browser` serves synthetic accounts on port 
 
 `test:masterlists-db` runs nine isolated MariaDB scenarios covering access, same-year candidate validation, derived counts, duplicate entries, cross-user concurrency, stale snapshots, award numbers, audit rollback, period locks, and restricted grants. `-- --browser` serves a disposable Staff/Coordinator fixture on port 3003; stop via `/__fixture/stop`.
 
-`test:masterlist-workflow-db` runs nine isolated MariaDB scenarios for ordered transitions, permission/version/self-approval checks, source validation, immutable entries, publication/activation rollback, repeat activation prevention, downloads, concurrent locks and closing a published list after its year closes. `-- --browser` runs eight scenarios and leaves one fresh draft for browser verification; stop via `/__fixture/stop`.
+`test:masterlist-workflow-db` runs nine isolated MariaDB scenarios for ordered transitions, permission/version/Coordinator approval checks, source validation, immutable entries, publication/activation rollback, repeat activation prevention, downloads, concurrent locks and closing a published list after its year closes. `-- --browser` runs eight scenarios and leaves one fresh draft for browser verification; stop via `/__fixture/stop`.
 
 ## Build preview and environment
 
@@ -363,7 +404,7 @@ Development permits exact localhost/127.0.0.1 origins at the frontend and config
 
 Runtime may create/read annual scholarship records, update their current state/version/effective date, and append qualification events and retry records. It cannot rewrite annual scholar/year identity or update/delete qualification history. Runtime may create/read scholars and their contacts, update allowed profile/contact fields, allocate ID sequences, append retry records, create/read reference records and update their allowed fields, read users and role policy/assignments, update password/version fields, manage session activity/revocation and rate limits, consume reset tokens, and append audit events. It cannot rewrite scholar identifiers, delete scholars/contacts/history, delete references, change permanent codes or semester parent IDs, rewrite configuration retry history, edit roles, create/disable accounts, issue reset links, delete identities, rewrite/delete audits, change schema, or grant privileges.
 
-MariaDB does not provide PostgreSQL RLS. F02 uses server-enforced default-deny permissions, restricted grants, and constraints. Future scholarship services must enforce their own record scope and workflow rules. Scholarship approval, immutable-history, and audit rules remain unchanged. F04 provides scholar records and permanent IDs; F05 adds duplicate-person warnings and audited resolution. F06 adds annual qualification with Coordinator decisions; F07 adds status requests and controlled corrections; F08 adds annual academic history and the qualification prerequisite; F09 adds approved placement changes; F10 adds candidate drafts and validation; F11 adds official approval, publication, activation and locking; F12 adds approved amendments and preserved official versions; F13 adds effective-dated requirement policies; F14 adds semester requirement checklists; F15 adds physical receiving; F16 adds verification and controlled correction; F17 adds Coordinator waivers; F18 adds payout cycles and payout checklists; F19 adds calculated eligibility, source fingerprints and shared cycle reports; F20 adds audited eligibility exceptions and separate approval; F21 adds guarded OVR drafts and roster validation; F22 adds review and immutable atomic finalization; F23 adds administrative processing and reconciled closure; F24 adds controlled OVR amendments; F25 adds payment corrections and reconciliation; F26 adds unified scholar profile timelines; F27 adds reviewable Excel import staging and atomic confirmation; F28 adds minimal-PII Excel exports and disclosure audits; F29 adds source-backed operational reports; F30 adds report-backed dashboard cards; F31 adds a scoped read-only audit viewer and role snapshots; F32 verifies critical concurrency and retry behavior; F33 adds structured errors and actionable validation feedback; F34 hardens runtime configuration and verifies access restrictions; F35 adds encrypted backups and isolated recovery verification; F36 adds a repeatable acceptance gate and release/rollback checklist; human acceptance and production readiness remain pending.
+MariaDB does not provide PostgreSQL RLS. F02 uses server-enforced default-deny permissions, restricted grants, and constraints. Future scholarship services must enforce their own record scope and workflow rules. Scholarship approval, immutable-history, and audit rules remain unchanged. F04 provides scholar records and permanent IDs; F05 adds duplicate-person warnings and audited resolution. F06 adds annual qualification with Coordinator decisions; F07 adds status requests and controlled corrections; F08 adds annual academic history and the qualification prerequisite; F09 adds approved placement changes; F10 adds candidate drafts and validation; F11 adds official approval, publication, activation and locking; F12 adds approved amendments and preserved official versions; F13 adds effective-dated requirement policies; F14 adds semester requirement checklists; F15 adds physical receiving; F16 adds verification and controlled correction; F17 adds Coordinator waivers; F18 adds payout cycles and payout checklists; F19 adds calculated eligibility, source fingerprints and shared cycle reports; F20 adds audited eligibility exceptions and separate approval; F21 adds guarded Payroll drafts and roster validation; F22 adds review and immutable atomic finalization; F23 adds administrative processing and reconciled closure; F24 adds controlled Payroll amendments; F25 adds payment corrections and reconciliation; F26 adds unified scholar profile timelines; F27 adds reviewable Excel import staging and atomic confirmation; F28 adds minimal-PII Excel exports and disclosure audits; F29 adds source-backed operational reports; F30 adds report-backed dashboard cards; F31 adds a scoped read-only audit viewer and role snapshots; F32 verifies critical concurrency and retry behavior; F33 adds structured errors and actionable validation feedback; F34 hardens runtime configuration and verifies access restrictions; F35 adds encrypted backups and isolated recovery verification; F36 adds a repeatable acceptance gate and release/rollback checklist; human acceptance and production readiness remain pending.
 
 See [migration conventions](db/migrations/README.md), [F00 historical report](docs/F00-delivery.md), [F01 historical report](docs/F01-delivery.md), [F02 historical report](docs/F02-delivery.md), [F03 historical report](docs/F03-delivery.md), [F04 historical report](docs/F04-delivery.md), [F05 historical report](docs/F05-delivery.md), [F06 historical report](docs/F06-delivery.md), [F07 historical report](docs/F07-delivery.md), [F08 historical report](docs/F08-delivery.md), [F09 historical report](docs/F09-delivery.md), [F10 historical report](docs/F10-delivery.md), [F11 historical report](docs/F11-delivery.md), [F12 historical report](docs/F12-delivery.md), [F13 historical report](docs/F13-delivery.md), [F14 historical report](docs/F14-delivery.md), [F15 historical report](docs/F15-delivery.md), [F16 historical report](docs/F16-delivery.md), [F17 historical report](docs/F17-delivery.md), [F18 delivery report](docs/F18-delivery.md), [F19 delivery report](docs/F19-delivery.md), [F20 delivery report](docs/F20-delivery.md), [F21 delivery report](docs/F21-delivery.md), [F22 delivery report](docs/F22-delivery.md), and [implementation plan](LDSS_Codex_Function_by_Function_Implementation_Plan.md).
 
@@ -383,29 +424,29 @@ Technical references: [Fastify cookies](https://github.com/fastify/fastify-cooki
 
 `test:payout-cycles-db` runs eleven isolated MariaDB scenarios for separate configuration/operation authority, dates/history, policy applicability, payout generation and document guards, retries, races, rollback and immutable grants. `-- --browser` runs ten and serves a disposable fixture on port 3003 until `/__fixture/stop`.
 
-## OVR processing and closure (F23)
+## Payroll processing and closure (F23)
 
-Under **Payout cycles ? OVR drafts ? Open OVR**, a Coordinator submits a finalized batch for administration. Staff or Coordinator records processing date/reference, then an initial outcome for every frozen member: Paid with a positive two-decimal amount, or Not paid with an explanation and zero amount. A Coordinator explicitly confirms reconciliation before closure. Closed batches cannot be edited. Close batches before closing their payout cycle; processing is available in open or locked cycles. Batch closure does not close the entire cycle. F25 provides payment corrections below.
+Under **Payout cycles ? Payroll drafts ? Open Payroll**, a Coordinator submits a finalized batch for administration. Staff or Coordinator records processing date/reference, then an initial outcome for every frozen member: Paid with a positive two-decimal amount, or Not paid with an explanation and zero amount. A Coordinator explicitly confirms reconciliation before closure. Closed batches cannot be edited. Close batches before closing their payout cycle; processing is available in open or locked cycles. Batch closure does not close the entire cycle. F25 provides payment corrections below.
 
 Commands: POST `/api/v1/ovr-batches/:id/submit`, `/mark-processed`, `/payments`, `/close`. Each requires current revision, effective date, reason, reference, CSRF and an idempotency key. Submission/closure are Coordinator-only; processing/outcomes require `ovr.process`. System Administrator has no operational approval rights.
 
 Run `npm run test:ovr-processing-db` for 25 isolated scenarios covering eligibility, finalization and processing. See [F23 delivery](docs/F23-delivery.md).
 
-## OVR amendments (F24)
+## Payroll amendments (F24)
 
-In **Payout cycles ? OVR drafts ? Open OVR**, request a member addition/removal or batch-name correction. A different Coordinator approves or rejects with a reason and reference. Pending amendments pause processing. Approval freshly validates the proposed roster, preserves the original and prior versions, and returns the batch to Finalized for administrative resubmission. Only finalized/submitted batches in open, available cycles can be amended; processing and closed batches are locked.
+In **Payout cycles ? Payroll drafts ? Open Payroll**, request a member addition/removal or batch-name correction. The Coordinator approves or rejects with a reason and reference. Pending amendments pause processing. Approval freshly validates the proposed roster, preserves the original and prior versions, and returns the batch to Finalized for administrative resubmission. Only finalized/submitted batches in open, available cycles can be amended; processing and closed batches are locked.
 
-POST `/api/v1/ovr-batches/:id/amendments/request`, `/approve`, `/reject` require current revision, audit evidence, CSRF and an idempotency key. Staff/Coordinator request; separate Coordinator decides. Run `npm run test:ovr-amendments-db`. See [F24 delivery](docs/F24-delivery.md).
+POST `/api/v1/ovr-batches/:id/amendments/request`, `/approve`, `/reject` require current revision, audit evidence, CSRF and an idempotency key. Staff/Coordinator request; the Coordinator decides. Run `npm run test:ovr-amendments-db`. See [F24 delivery](docs/F24-delivery.md).
 
 ## Payment corrections and reconciliation (F25)
 
-Open **Payout cycles ? OVR drafts ? Open OVR ? Payment evidence and corrections**. Staff/Coordinator can correct an existing payment before closure with an outcome, amount, effective date, remarks, reason and reference. After batch, payout cycle or academic-period closure, submit a correction request for a different Coordinator to approve or reject. Pending/rejected proposals do not affect totals. Original outcomes and closure reconciliation remain visible beside effective corrected totals; neither corrections nor approval reopen the batch.
+Open **Payout cycles ? Payroll drafts ? Open Payroll ? Payment evidence and corrections**. Staff/Coordinator can correct an existing payment before closure with an outcome, amount, effective date, remarks, reason and reference. After batch, payout cycle or academic-period closure, submit a correction request for the Coordinator to approve or reject. Pending/rejected proposals do not affect totals. Original outcomes and closure reconciliation remain visible beside effective corrected totals; neither corrections nor approval reopen the batch.
 
 POST `/api/v1/ovr-batches/:id/payment-corrections/correct`, `/request`, `/approve`, `/reject` require current batch revision, audit evidence, CSRF and an idempotency key. `payments.correct` is Staff/Coordinator; `payments.corrections.approve` is Coordinator-only. Corrections retain the same unique scholar/cycle payment identity and append immutable evidence. Run `npm run test:payments-db`. See [F25 delivery](docs/F25-delivery.md).
 
 ## Scholar profile timeline (F26)
 
-Open **Scholar registry ? Open profile ? History** for current academic placement, annual qualification/status, published membership versions, requirement states, OVR membership and effective payment totals. Filter historical events by area and page through them. Original payments, receipt events and correction decisions stay separately labeled. Existing workflow panels continue to enforce their permissions.
+Open **Scholar registry ? Open profile ? History** for current academic placement, annual qualification/status, published membership versions, requirement states, Payroll membership and effective payment totals. Filter historical events by area and page through them. Original payments, receipt events and correction decisions stay separately labeled. Existing workflow panels continue to enforce their permissions.
 
 GET `/api/v1/scholars/:id/profile?category=all&offset=0&limit=25` requires `scholars.read`; System Administrator-only and unassigned accounts receive no profile or PII. Staff audit metadata is restricted to their own scholar-specific actions; Coordinator visibility follows `audit.view_all`. Raw audit details, credentials and other scholars' roster data are excluded. The `scholar_profile_audit` view exposes only permitted metadata columns; runtime retains no raw audit SELECT or view mutation privileges. Run `npm run test:profile-db`. See [F26 delivery](docs/F26-delivery.md).
 
@@ -417,19 +458,25 @@ The production four-connection database pool now queues bursts (bounded to 100 w
 
 ## Local demo data
 
-Run `npm run demo:seed` against the local XAMPP development database. It adds 17 clearly labeled DEMO scholars spanning application, qualification, missing/submitted/verified documents, correction, waiver, eligibility, OVR review, processing, and paid/unpaid closure. It also adds scoped configuration, semester and payout checklists, and a locked official masterlist. Business actions use the existing authorized APIs and audit trails; no real funds move.
+The current sample cohort contains **50 students under AY2026-2027: 25 new applicants, 20 continuing scholars and 5 graduates**. Each has school, course and year-level information. All names include `Sample New`, `Sample Continuing` or `Sample Graduate` for easy searching; email addresses use `example.invalid`.
 
-Use your existing Staff or Coordinator login, search **Demo** in Scholar registry, then open **Demo, Missing Documents > Receive requirements** to practice receiving. Use **DEMO-YEAR** and **DEMO-PAYOUT**. The generated `output/demo-data-guide.md` lists each scholar ID and scenario.
+Use your existing Staff or Coordinator login. **Scholar registry** lists all 50; **Admission review** contains the 25 applicants. **Continuing roster review** contains the accepted 20-person baseline without invented exam/admission history. **Registry view → Graduated / Archived** shows the five graduates with confirmed final semesters and **Final stipend pending**. No stipend has been marked paid, so these graduates also remain in the default current list. See the [sample guide](output/demo-data-guide.md) for all IDs and stages.
 
-Keep `output/demo-data-manifest.json`: it allows interrupted runs to resume and completed runs to leave testing changes untouched. The seed never resets existing user accounts or records. Dedicated DEMO actors use random, unsaved passwords and are not interactive testing logins. The command is restricted to the local development database and requires the same XAMPP administrator access as local setup.
+`npm run demo:seed` now uses `scripts/seed-sample-cohort.ts` and `output/sample-cohort-manifest.json`. Interrupted commands resume safely; completed runs verify the cohort and preserve testing changes. Keep the manifest for future scoped removal. Personal login accounts and roles are unchanged. Synthetic seed actors use unsaved random passwords. This local-only seed does not create another academic year or change receiving/submission policy. Accepted continuing participation and graduation alone do not establish payroll eligibility.
+
+On 2026-10-07, the user explicitly confirmed removal of the old 11 demo scholars plus Juan Dela Cruz and James Patrick Villanueva. `scripts/remove-sample-data.mjs` rehearsed and removed those exact records and their demo dependencies after encrypted backup/restore verification. Working-year configuration, accounts, permissions, identifier sequences and audit history were preserved. This one-time cleanup refuses a repeat or unknown scope. Recovery and smoke evidence are in `output/sample-cleanup/`; old manifests remain historical records. The full receiving-to-payroll smoke test runs in a disposable database and does not add test transactions to this cohort.
 
 ## Excel import (F27)
 
 Open **Scholar registry > Import Excel** as Staff or Coordinator. Download the template, fill it in, upload it, and review every row. Check the confirmation box and click **Confirm import** only after all errors and duplicate warnings are resolved. Optional instructions and row details stay collapsed.
 
-The template accepts one `Scholars` worksheet, up to 200 data rows and 2 MB. New people need firstName, lastName and academicYearCode; leave scholarId blank for system allocation. Optional academic placement requires schoolCode, courseCode and yearLevel together. Existing Scholar IDs can add a missing academic record using only ID, year and placement columns. The importer never overwrites identity or academic history, approves qualification, or activates scholars.
+The simple template accepts one worksheet of any name, up to 200 data rows / 2 MB:
+`Last name | First name | Middle Name | Name Extension | School | Year Level | Status | Course`.
+The working academic year is automatic and is checked again on confirmation. Middle name, extension and course may be blank. Status accepts New, Continuing or Old (normalized to Continuing). Match unresolved school/course references once, then review again. Duplicate warnings remain blocking; names are never automatically merged.
 
-Preview does not create operational records. Confirmation revalidates current references and duplicate candidates, then uses the existing scholar/academic services in one transaction. Failed confirmation rolls back every row, ID allocation and audit entry. Stage and confirmation history are append-only and owned by the uploading account. Safe retries survive application restarts.
+Blank-course rows retain provisional school/year details and a **Complete academic details** link. They cannot satisfy academic approval or payroll checks until completed. New imports enter validation; Continuing imports form a pending Coordinator-review roster. No earlier grades, admission decisions or payments are invented. Legacy code-based templates remain supported.
+
+Registry **Sort by** and **Direction** apply before pagination. The compact payroll column shows authoritative current-period eligibility, reasons and separate payment/inclusion labels. Filters survive profile navigation. Download the [eight-column template](docs/templates/scholar-import-template.xlsx).
 
 Run `npm run test:imports-db`. See [F27 delivery and file inventory](docs/F27-delivery.md). Apply `npm run db:migrate` on another existing local installation before running this release.
 
@@ -445,7 +492,7 @@ Run `npm run test:exports-db`; see [F28 delivery](docs/F28-delivery.md). Migrati
 
 ## Operational reports (F29)
 
-Open **Reports**, choose a payout cycle, then select Scholar status, Missing requirements, For verification, Eligibility, OVR status, Paid and unpaid, or Masterlist versions. Staff and Coordinators retain their existing operational permissions; System Administrators receive no additional scholarship access.
+Open **Reports**, choose a payout cycle, then select Scholar status, Missing requirements, For verification, Eligibility, Payroll status, Paid and unpaid, or Masterlist versions. Staff and Coordinators retain their existing operational permissions; System Administrators receive no additional scholarship access.
 
 `GET /api/v1/reports/operational?kind=eligibility&cycleId=<UUID>&limit=25&offset=0` returns current rows, whole-report counts, scope, generation time and a content fingerprint. Payment outcomes include approved corrections and distinguish pending outcomes from recorded not-paid outcomes. Reports are live reads, not archived exports. No database migration is needed; the 28 existing migrations remain unchanged.
 
@@ -467,13 +514,13 @@ Migration `20261004180000_f31_audit_viewer.sql` adds a SELECT-only view, time in
 
 ## Concurrency and retries (F32)
 
-Run `npm run test:concurrency-db` for six isolated XAMPP/MariaDB integration suites covering concurrent Scholar IDs/edits, stale approvals, atomic receiving, import retries, OVR finalization, payment corrections and roster amendments. The runner stops on failure; each suite uses disposable data.
+Run `npm run test:concurrency-db` for six isolated XAMPP/MariaDB integration suites covering concurrent Scholar IDs/edits, stale approvals, atomic receiving, import retries, Payroll finalization, payment corrections and roster amendments. The runner stops on failure; each suite uses disposable data.
 
 Completed import confirmations now reject retry keys already assigned to a different import with `409 IDEMPOTENCY_CONFLICT`. Exact retries retain the original result. No migration is required; all 29 existing migrations remain unchanged. See [F32 delivery](docs/F32-delivery.md) for the locking and retry contract.
 
 ## Error feedback (F33)
 
-API failures retain `{error:{code,message,request_id,details?}}`. Schema failures include bounded `details.issues` with field paths and zero-based row indexes; the UI presents rows starting at one. Scholar, receiving, configuration, masterlist and OVR forms display readable issue lists, recovery guidance and a collapsible support reference. Existing business error codes and form inputs are preserved.
+API failures retain `{error:{code,message,request_id,details?}}`. Schema failures include bounded `details.issues` with field paths and zero-based row indexes; the UI presents rows starting at one. Scholar, receiving, configuration, masterlist and Payroll forms display readable issue lists, recovery guidance and a collapsible support reference. Existing business error codes and form inputs are preserved.
 
 Unexpected failures never expose database messages or stack traces. Oversized and unsupported-format requests use `PAYLOAD_TOO_LARGE` and `UNSUPPORTED_MEDIA_TYPE`. No migration is needed. See [F33 delivery](docs/F33-delivery.md).
 
@@ -489,7 +536,7 @@ MariaDB uses server-side default-deny authorization and restricted runtime grant
 
 Run `npm run backup -- create` to save an encrypted database backup. The private key is already initialized outside the web root at `%USERPROFILE%\.ldss-backup\key.bin`; preserve a separate secure recovery copy. Run `npm run backup -- verify --file "output/backups/FILE.ldssbackup"` to restore and check all records in a disposable database. Add `--keep` to retain a verified isolated recovery copy. These are local OS/database administrator commands, not browser features.
 
-The current 76-table database passed a full recovery drill, including audit, masterlist and OVR history. See the [F35 recovery runbook](docs/F35-recovery-runbook.md) for commands, retention, recovery targets and production limitations. Daily scheduling and offsite copies require operator setup; this release does not automatically upload or prune backups. Backup creation briefly pauses database writes. See [F35 delivery](docs/F35-delivery.md).
+The current 76-table database passed a full recovery drill, including audit, masterlist and Payroll history. See the [F35 recovery runbook](docs/F35-recovery-runbook.md) for commands, retention, recovery targets and production limitations. Daily scheduling and offsite copies require operator setup; this release does not automatically upload or prune backups. Backup creation briefly pauses database writes. See [F35 delivery](docs/F35-delivery.md).
 
 ## Acceptance and release preparation (F36)
 
@@ -499,4 +546,4 @@ Use the [F36 acceptance checklist](docs/F36-acceptance-checklist.md) for Staff, 
 
 ## Full-process flowcharts
 
-Open the [offline flowchart viewer](docs/LDSS_FULL_PROCESS.html) in a browser for six zoomable flows covering registration, requirements, eligibility, OVR/payment processing, controlled changes and oversight. The [six-page PDF](docs/LDSS_FULL_PROCESS.pdf) is suitable for sharing, and the [Mermaid source and notes](docs/LDSS_FULL_PROCESS.md) remain editable. Individual SVG/Mermaid files are in `docs/process/`. These diagrams describe v0.37.0; they do not change the application or grant production approval.
+Open the [offline flowchart viewer](docs/LDSS_FULL_PROCESS.html) in a browser for six zoomable flows covering registration, requirements, eligibility, Payroll/payment processing, controlled changes and oversight. The [six-page PDF](docs/LDSS_FULL_PROCESS.pdf) is suitable for sharing, and the [Mermaid source and notes](docs/LDSS_FULL_PROCESS.md) remain editable. Individual SVG/Mermaid files are in `docs/process/`. These diagrams describe v0.37.0; they do not change the application or grant production approval.

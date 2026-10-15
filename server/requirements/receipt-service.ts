@@ -1,3 +1,8 @@
+import { reusedOwner, requireActiveDocument, legacyReceiptBlocker } from "./reused-source.js";
+import { today } from "../scholars/validation.js";
+import { semesterRequirementContext } from "./semester-context.js";
+import { loadRequirementTiming, type RequirementTimingView } from "./timing-service.js";
+import { receivedDocumentType, recordDocumentEvidence } from "./document-evidence.js";
 import { guardPayoutRequirement } from "../payouts/service.js";
 import { requirementState } from "./workflow-state.js";
 import { randomUUID } from "node:crypto";
@@ -8,6 +13,7 @@ import { digest } from "../auth/crypto.js";
 import { parseId, parseKey } from "../configuration/validation.js";
 import { parseBatchReceipt, parseReceipt } from "./receipt-validation.js";
 export type ReceiptResult = {
+  timing?: RequirementTimingView;
   id: string;
   instanceId: string;
   version: 1;
@@ -88,6 +94,7 @@ export class RequirementReceiptService {
             items: ReceiptResult[];
           };
         }
+        const receivedOn = input.receivedOn ?? today();
         const results: ReceiptResult[] = [];
         for (const item of [...input.items].sort((a, b) =>
           a.id.localeCompare(b.id),
@@ -96,7 +103,9 @@ export class RequirementReceiptService {
             "SELECT checklist_id FROM requirement_instances WHERE id=? FOR UPDATE",
             [item.id],
           );
-          if (rows[0]?.checklist_id !== checklistId)
+          const [[target]] = await db.execute<RowDataPacket[]>("SELECT scholar_semester_id FROM requirement_checklists WHERE id=?", [checklistId]);
+          const reuse = target?.scholar_semester_id ? await reusedOwner(db, item.id) : null;
+          if (rows[0]?.checklist_id !== checklistId && (!reuse || reuse !== target?.scholar_semester_id))
             throw new AuthError(
               422,
               "WRONG_CHECKLIST",
@@ -109,7 +118,9 @@ export class RequirementReceiptService {
               item.id,
               {
                 expectedVersion: item.expectedVersion,
-                receivedOn: input.receivedOn,
+                documentType: item.documentType,
+                entrantCardId: item.entrantCardId,
+                receivedOn,
                 physicalReference: input.physicalReference,
                 storageLocation: input.storageLocation ?? "",
                 remarks: input.remarks,
@@ -129,16 +140,18 @@ export class RequirementReceiptService {
       },
     );
   }
-  private async record(
+  /** Caller must hold mutation authorization and transaction. */
+  async record(
     db: PoolConnection,
     actor: string,
     id: string,
-    input: ReturnType<typeof parseReceipt>,
+    rawInput: ReturnType<typeof parseReceipt>,
     requestId: string,
     key: string,
   ): Promise<ReceiptResult> {
+    const input = { ...rawInput, receivedOn: rawInput.receivedOn ?? today() };
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT i.status,i.definition_version_id,c.id AS checklist_id,c.scholarship_record_id,s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=s.academic_year_id WHERE i.id=? FOR UPDATE",
+      "SELECT i.status,i.definition_version_id,c.id AS checklist_id,c.scholarship_record_id,c.scholar_semester_id,s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=s.academic_year_id WHERE i.id=? FOR UPDATE",
       [id],
     );
     if (!rows.length)
@@ -160,6 +173,14 @@ export class RequirementReceiptService {
         "REFERENCE_ARCHIVED",
         "The semester or academic year is archived.",
       );
+    await requireActiveDocument(db, id, row.scholar_semester_id);
+    const sourceBlocker = row.scholar_semester_id ? await legacyReceiptBlocker(db, row.scholar_semester_id) : null;
+    if (sourceBlocker) throw new AuthError(409, "DOCUMENT_SOURCE_REVIEW_REQUIRED", sourceBlocker);
+    row.scholar_semester_id ??= await reusedOwner(db, id);
+    const coverage = await semesterRequirementContext(db, id, row.scholar_semester_id);
+    if(coverage?.entrantCard?.mode==='initial_requirements')throw new AuthError(409,'DOCUMENT_NOT_REQUIRED','COG is not required under the approved first-semester exception. Receive the current COR only.');
+    if(input.entrantCardId!==coverage?.entrantCard?.id) throw new AuthError(409,'SOURCE_CHANGED','The approved grading-card coverage changed. Reload before receiving.');
+    const documentType = receivedDocumentType(coverage?.documentKind, input.documentType, Boolean(coverage?.entrantCard));
     await guardPayoutRequirement(db, id);
     const [receipts] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM requirement_receipts WHERE instance_id=? FOR UPDATE",
@@ -201,7 +222,10 @@ export class RequirementReceiptService {
         users[0].full_name,
       ],
     );
+    await recordDocumentEvidence(db, actor, id, documentType, { receiptId },coverage?.entrantCard?.id);
+    const timing = row.scholar_semester_id ? await loadRequirementTiming(db, id) : null;
     const result: ReceiptResult = {
+      ...(timing?.mode === "managed" ? { timing } : {}),
       id: receiptId,
       instanceId: id,
       version: 1,
@@ -218,7 +242,9 @@ export class RequirementReceiptService {
         JSON.stringify({
           before: { status: "not_submitted", version: 0 },
           after: {
+            ...(timing?.mode === "managed" ? { timing } : {}),
             ...input,
+            documentType,
             status: "submitted",
             version: 1,
             receiptId,
@@ -227,6 +253,7 @@ export class RequirementReceiptService {
           },
           checklistId: row.checklist_id,
           scholarshipRecordId: row.scholarship_record_id,
+          ...(row.scholar_semester_id ? { scholarSemesterId: row.scholar_semester_id } : {}),
           definitionVersionId: row.definition_version_id,
           idempotency_key: key,
         }),

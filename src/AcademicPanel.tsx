@@ -1,4 +1,8 @@
+import PlacementInput, {placementValue} from "./PlacementInput";
+import type { ScholarDetail } from "../server/scholars/model";
+import { useActionForm } from "./use-action-form";
 import RoutineEvidence from "./RoutineEvidence";
+import { academicYears, newRecordYear } from "./academic-year-options";
 import AcademicChanges from "./AcademicChanges";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Session } from "./auth-api";
@@ -27,16 +31,22 @@ export default function AcademicPanel({
   access,
   years,
   initialYearId = "",
+  registrationYearId = "",
+  onSaved,
 }: {
   scholarId: string;
   session: Session;
   access: Access;
   years: ConfigRecord[];
   initialYearId?: string;
+  registrationYearId?: string;
+  onSaved?: () => void;
 }) {
+  const [intake, setIntake] = useState<ScholarDetail["placement"]>(null);
   const [records, setRecords] = useState<AcademicRecord[]>([]),
     [schools, setSchools] = useState<ConfigRecord[]>([]),
     [courses, setCourses] = useState<ConfigRecord[]>([]);
+  const [currentYears, setCurrentYears] = useState(years);
   const [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
     [editing, setEditing] = useState(false),
@@ -54,6 +64,7 @@ export default function AcademicPanel({
   const pending = useRef<{ signature: string; key: string } | null>(null),
     busy = useRef(false);
   const editable = access.permissions.some((p) => p.code === "academic.edit");
+  const actionForm = useActionForm(editing);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -64,13 +75,17 @@ export default function AcademicPanel({
       ),
       choices("schools", controller.signal),
       choices("courses", controller.signal),
+      academicYears(controller.signal),
+      request<ScholarDetail>(`scholars/${scholarId}${initialYearId?`?contextAcademicYearId=${initialYearId}`:""}`, { signal: controller.signal }),
     ])
-      .then(([list, s, c]) => {
+      .then(([list, s, c, freshYears, scholar]) => {
         if (active) {
+          setIntake(scholar.placement);
           setError("");
           setRecords(list.items);
           setSchools(s);
           setCourses(c);
+          setCurrentYears(freshYears);
         }
       })
       .catch((e) => {
@@ -83,7 +98,7 @@ export default function AcademicPanel({
       active = false;
       controller.abort();
     };
-  }, [scholarId, revision]);
+  }, [scholarId, revision, initialYearId]);
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy.current) return;
@@ -96,13 +111,14 @@ export default function AcademicPanel({
     setNotice("");
     try {
       await request(`scholars/${scholarId}/academic-records`, {
-        body: fields,
+        body: {...fields, ...placementValue(fields.schoolId,schools,"school"), ...placementValue(fields.courseId,courses,"course")},
         csrf: session.csrfToken,
         key: pending.current.key,
       });
       pending.current = null;
       setEditing(false);
       setNotice("Academic record saved. Earlier years are preserved.");
+      onSaved?.();
       setLoading(true);
       setRevision((n) => n + 1);
     } catch (e) {
@@ -112,12 +128,17 @@ export default function AcademicPanel({
       setSaving(false);
     }
   }
-  const available = years.filter(
+  const available = currentYears.filter(
     (y) =>
       !y.archived &&
       !y.locked &&
       !records.some((r) => r.academicYearId === y.id),
   );
+  const previousAcademic = records.find(r => {
+    const previousYear = currentYears.find(y => y.id === r.academicYearId);
+    const targetYear = currentYears.find(y => y.id === fields.academicYearId);
+    return previousYear?.endsOn && targetYear?.startsOn && previousYear.endsOn < targetYear.startsOn;
+  });
   return (
     <section className="border-top mt-4 pt-4" aria-label="Academic history">
       <div className="section-heading">
@@ -131,6 +152,7 @@ export default function AcademicPanel({
             setEditing(false);
             setError("");
             setRevision((n) => n + 1);
+            onSaved?.();
           }}
         >
           Refresh academic history
@@ -152,12 +174,7 @@ export default function AcademicPanel({
         </p>
       )}
       {loading && <p role="status">Loading academic history...</p>}
-      {!loading && !error && (!schools.length || !courses.length) && (
-        <p className="alert alert-info">
-          A System Administrator must configure active schools and courses
-          before academic records can be added.
-        </p>
-      )}
+      {!loading && !error && !available.length && <p>There is already an academic record for every available year. To correct this year's details, use Placement changes below.</p>}
       {!editing && !error && editable && (
         <button
           type="button"
@@ -165,16 +182,16 @@ export default function AcademicPanel({
           disabled={
             loading ||
             saving ||
-            !available.length ||
-            !schools.length ||
-            !courses.length
+            !available.length
           }
           onClick={() => {
+            const targetYear = newRecordYear(currentYears, records.map(r => r.academicYearId), initialYearId, registrationYearId);
+            const supplied = intake?.academicYearId === targetYear && intake.provisional ? intake : null;
             setFields({
-              academicYearId: initialYearId,
-              schoolId: "",
-              courseId: "",
-              yearLevel: "",
+              academicYearId: targetYear,
+              schoolId: supplied?.school ?? "",
+              courseId: supplied?.course ?? "",
+              yearLevel: supplied?.yearLevel ?? "",
               reason: "",
               reference: "",
             });
@@ -184,13 +201,19 @@ export default function AcademicPanel({
             setNotice("");
           }}
         >
-          Add academic record
+          {intake?.provisional && intake.schoolId ? "Complete academic details" : "Add academic record"}
         </button>
       )}
+      {intake?.provisional && intake.school && <p>Provisional import: {intake.school} / Year {intake.yearLevel} / {intake.course ?? "Course needed"}. Confirm against the current COR.</p>}
       {editing && (
-        <form className="border rounded p-3 mb-3" onSubmit={submit}>
+        <form ref={actionForm} className="border rounded p-3 mb-3" onSubmit={submit}>
           <fieldset disabled={saving || loading}>
             <legend className="h5">Add academic record</legend>
+            {previousAcademic && <aside className="alert alert-info">
+              <strong>Previous academic details - suggestions only</strong>
+              <p>{previousAcademic.school.name}; {previousAcademic.course.name}; {previousAcademic.yearLevel}</p>
+              <p>Confirm school, course and year level against the new COR. Year level does not increase automatically.</p>
+            </aside>}
             <div className="row g-3">
               {(
                 [
@@ -199,8 +222,6 @@ export default function AcademicPanel({
                     label: "Academic record year",
                     items: available,
                   },
-                  { key: "schoolId", label: "School", items: schools },
-                  { key: "courseId", label: "Course", items: courses },
                 ] as const
               ).map(({ key, label, items }) => (
                 <div className="col-md-4" key={key}>
@@ -225,6 +246,7 @@ export default function AcademicPanel({
                   </select>
                 </div>
               ))}
+              {([{key:"schoolId",label:"School",items:schools},{key:"courseId",label:"Course",items:courses}] as const).map(({key,label,items})=><div className="col-md-4" key={key}><PlacementInput id={"academic-"+key} label={label} items={items} value={fields[key]} onChange={value=>setFields({...fields,[key]:value})}/></div>)}
               <div className="col-md-4"><label className="form-label" htmlFor="academic-year-level">Year level</label><input id="academic-year-level" className="form-control" list="academic-year-levels" required maxLength={60} value={fields.yearLevel} onChange={(e) => setFields({...fields, yearLevel:e.target.value})} /><datalist id="academic-year-levels">{["First Year", "Second Year", "Third Year", "Fourth Year", "Fifth Year", "Sixth Year"].map((level)=><option key={level} value={level}/>)}</datalist></div>
 <RoutineEvidence>{(["reason", "reference"] as const).map((key)=><label className="form-label d-block" key={key}>{key === "reason" ? "Additional note" : "Supporting reference"}<input className="form-control" name={key} value={fields[key]} maxLength={key === "reason" ? 500 : 300} onChange={(e)=>setFields({...fields,[key]:e.target.value})}/></label>)}</RoutineEvidence>
             </div>
@@ -253,7 +275,7 @@ export default function AcademicPanel({
           academic year.
         </p>
       )}
-      {records.map((r) => (
+      {[...records].sort((a,b)=>Number(b.academicYearId===initialYearId)-Number(a.academicYearId===initialYearId)).map((r) => (
         <article className="border rounded p-3 mb-3" key={r.id}>
           <h4>
             {r.academicYear.code} - {r.academicYear.name}
@@ -262,13 +284,13 @@ export default function AcademicPanel({
             <div>
               <dt>School</dt>
               <dd>
-                {r.school.name} ({r.school.code})
+                {r.school.name}
               </dd>
             </div>
             <div>
               <dt>Course</dt>
               <dd>
-                {r.course.name} ({r.course.code})
+                {r.course.name}
               </dd>
             </div>
             <div>
@@ -276,7 +298,7 @@ export default function AcademicPanel({
               <dd>{r.yearLevel}</dd>
             </div>
           </dl>
-          <p>
+          <details><summary>Original entry details</summary><p>
             Reference: {r.reference}
             <br />
             {r.reason}
@@ -284,14 +306,14 @@ export default function AcademicPanel({
           <small>
             Initial entry recorded by {r.actorName} -{" "}
             {new Date(r.createdAt).toLocaleString()}
-          </small>
+          </small></details>
           <AcademicChanges
             id={r.id}
             session={session}
             access={access}
             schools={schools}
             courses={courses}
-            onSaved={() => setRevision((n) => n + 1)}
+            onSaved={() => { setRevision((n) => n + 1); onSaved?.(); }}
           />
           {r.periodUnavailable && (
             <p className="mt-2 mb-0">Historical period: locked or archived.</p>

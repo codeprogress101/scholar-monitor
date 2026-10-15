@@ -10,6 +10,10 @@ export type EligibilityReason = {
   requirementCode?: string;
 };
 export type EligibilitySources = {
+  archivedGraduate?: boolean;
+  finalSemesterGraduation?: { requestId: string; semesterId: string };
+  reservedSemester?: boolean;
+  semesterPayroll?: import("./semester-sources.js").SemesterPayrollSources;
   cycle: {
     id: string;
     versionId: string;
@@ -52,6 +56,7 @@ export type EligibilitySources = {
     status: RequirementStatus | null;
     latestEventId: string | null;
     satisfied: boolean;
+    documentException?: import("../requirements/entrant-grading-card.js").EntrantCard;
   }[];
 };
 export type EligibilityAssessment = {

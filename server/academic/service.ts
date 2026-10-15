@@ -1,4 +1,5 @@
 import { validationDetails } from "../validation-details.js";
+import {placementReferences,hasPlacementReferences,resolvePlacementReferences} from "./references.js";
 import { academicCurrent } from "./changes-service.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -19,13 +20,13 @@ export function parseAcademic(body: unknown) {
   const value = z
     .object({
       academicYearId: z.uuid(),
-      schoolId: z.uuid(),
-      courseId: z.uuid(),
+      ...placementReferences,
       yearLevel: text(1, 60),
       reason: text(5, 500),
       reference: text(3, 300),
     })
     .strict()
+    .refine(hasPlacementReferences, "Provide a school and course, using either their existing entry or typed name.")
     .safeParse(body);
   if (!value.success)
     throw new AuthError(
@@ -152,6 +153,7 @@ export class AcademicService {
         if (!people.length)
           throw new AuthError(404, "SCHOLAR_NOT_FOUND", "Scholar not found.");
         const refs: RowDataPacket[] = [];
+        Object.assign(input, await resolvePlacementReferences(db,input,actor,requestId));
         for (const [table, refId] of [
           ["academic_years", input.academicYearId],
           ["schools", input.schoolId],

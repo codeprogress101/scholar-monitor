@@ -7,6 +7,11 @@ export type ProcessingStamp = {
   recordedAt: string;
 };
 export type PaymentRecord = {
+  treasuryEvidenceRevision?: number;
+  confirmedAt?: string;
+  priorReceiptConfirmed?: boolean;
+  priorReceiptEvidence?: string;
+  unpaidReason?: import("./reprocessing.js").UnpaidReason | null;
   id: string;
   batchId: string;
   revision: number;
@@ -14,7 +19,7 @@ export type PaymentRecord = {
   scholarshipId: string;
   outcome: "paid" | "not_paid";
   amount: string;
-  effectiveOn: string;
+  effectiveOn: string | null;
   reference: string;
   remarks: string;
   actorId: string;
@@ -27,5 +32,9 @@ export type Reconciliation = {
   recorded: number;
   missingScholarshipIds: string[];
   paidTotal: string;
+  paid?: number;
+  unpaid?: number;
   notPaid: number;
+  unclaimed?: number;
+  needsReview?: number;
 };

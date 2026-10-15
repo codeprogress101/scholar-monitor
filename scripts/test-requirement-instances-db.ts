@@ -51,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 29);
+  assert.equal((await applyMigrations(admin)).length, 53);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -480,11 +480,11 @@ try {
     "Concurrent generation creates one complete checklist; another semester independently selects its applicable versions",
   );
   const snapshotPolicy = await define("SNAPSHOT-POLICY");
-  await new AuthorizationService(runtime).withPermission(
-    accounts.get("staff")!.id,
-    "requirements.generate",
-    async (dbConnection) => {
-      // withPermission has already established the authorization read snapshot.
+  const dbConnection=await runtime.getConnection();
+  try {
+      await dbConnection.beginTransaction();
+      // Explicit stale read fixture: guarded authorization now acquires the business lock first.
+      await dbConnection.query("SELECT id FROM requirement_definitions LIMIT 1");
       await ok(
         request(
           "system_admin",
@@ -518,10 +518,9 @@ try {
           .revision,
         2,
       );
-    },
-  );
+  } finally {await dbConnection.rollback();dbConnection.release();}
   pass(
-    "Policy resolution sees committed versions even when authorization established an older read snapshot",
+    "Policy resolution sees committed versions even when the caller established an older read snapshot",
   );
   const rollbackSem = await config("semesters", {
       code: "ROLLBACK-SEM",

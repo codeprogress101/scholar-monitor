@@ -65,12 +65,6 @@ export function overrideTransition(
   owner: boolean,
 ): OverrideState {
   if (action === "request" && state === null) return "draft";
-  if ((action === "approve" || action === "reject") && owner)
-    throw new AuthError(
-      403,
-      "SEPARATE_APPROVER_REQUIRED",
-      "A separate Coordinator must review this request.",
-    );
   if (["submit-review", "reevaluate", "cancel"].includes(action) && !owner)
     throw new AuthError(
       403,

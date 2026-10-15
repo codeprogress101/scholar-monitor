@@ -1,4 +1,7 @@
+import { registryEligibility } from "./registry-eligibility.js";
+import { placementJoinsForYear, placementJoins, placementColumns, registryPlacement, school, yearLevelSort, classification } from "./registry-placement.js";
 import { checkDuplicates } from "./duplicates.js";
+import { graduationFor, graduationRecords } from "../status/graduation.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
@@ -24,6 +27,7 @@ const joins =
   "FROM scholars s JOIN scholar_identifiers i ON i.scholar_id=s.id JOIN academic_years y ON y.id=s.academic_year_id LEFT JOIN barangays b ON b.id=s.barangay_id";
 function summary(row: RowDataPacket): ScholarSummary {
   return {
+    placement: registryPlacement(row),
     id: row.id,
     scholarId: row.human_id,
     displayName: [
@@ -44,10 +48,11 @@ function summary(row: RowDataPacket): ScholarSummary {
 export async function detail(
   db: PoolConnection,
   id: string,
+  contextYear?: string,
 ): Promise<ScholarDetail> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${summaryColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? LOCK IN SHARE MODE`,
-    [id],
+    `SELECT ${summaryColumns},${placementColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} ${placementJoinsForYear(contextYear)} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? LOCK IN SHARE MODE`,
+    [...(contextYear ? [contextYear] : []), id],
   );
   const row = rows[0];
   if (!row)
@@ -58,6 +63,7 @@ export async function detail(
     );
   return {
     ...summary(row),
+    graduation: await graduationFor(db, id),
     version: row.version,
     firstName: row.first_name,
     middleName: row.middle_name,
@@ -130,33 +136,46 @@ async function references(
 }
 export class ScholarService {
   constructor(
-    private authorization: Pick<AuthorizationService, "withPermission">,
+    private authorization: Pick<AuthorizationService, "withPermission" | "readSnapshot">,
   ) {}
+  async eligibility(actor: string, raw: unknown) {
+    return this.authorization.readSnapshot(actor, "scholars.read", db => registryEligibility(db, raw));
+  }
   async list(actor: string, rawQuery: unknown): Promise<ScholarList> {
     const query = parseScholarQuery(rawQuery);
-    return this.authorization.withPermission(
+    return this.authorization.readSnapshot(
       actor,
       "scholars.read",
       async (db) => {
+        const graduates = await graduationRecords(db);
+        const ids = [...graduates].filter(([, g]) => query.scope === "graduated" || g.archived).map(([id]) => id);
+        const scopeFilter = query.scope === "all" ? "" : ids.length ? ` AND s.id ${query.scope === "current" ? "NOT " : ""}IN (${ids.map(() => "?").join(",")})` : query.scope === "graduated" ? " AND 1=0" : "";
         const search =
           "%" + query.q.replace(/[!%_]/g, (value) => "!" + value) + "%";
-        const where = `(i.human_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',s.first_name,NULLIF(s.middle_name,''),s.last_name,NULLIF(s.suffix,'')) LIKE ? ESCAPE '!' OR CONCAT(s.last_name,', ',s.first_name) LIKE ? ESCAPE '!')${query.academicYearId ? " AND s.academic_year_id=?" : ""}`;
+        const contextYear = query.contextAcademicYearId ?? query.scholarshipYearId;
+        const selectedPlacementJoins = placementJoinsForYear(contextYear);
+        const where = `(i.human_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',s.first_name,NULLIF(s.middle_name,''),s.last_name,NULLIF(s.suffix,'')) LIKE ? ESCAPE '!' OR CONCAT(s.last_name,', ',s.first_name) LIKE ? ESCAPE '!')${query.academicYearId ? " AND s.academic_year_id=?" : ""}${query.scholarshipYearId ? " AND EXISTS(SELECT 1 FROM scholarship_records sy WHERE sy.scholar_id=s.id AND sy.academic_year_id=?)" : ""}${query.classification === "all" ? "" : query.classification === "unknown" ? ` AND (${classification}) IS NULL` : ` AND (${classification})=?`}`;
         const params = [
+          ...(contextYear ? [contextYear] : []),
           search,
           search,
           search,
           ...(query.academicYearId ? [query.academicYearId] : []),
+          ...(query.scholarshipYearId ? [query.scholarshipYearId] : []),
+          ...(["new", "continuing"].includes(query.classification) ? [query.classification] : []),
         ];
         const [count] = await db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS total ${joins} WHERE ${where}`,
-          params,
+          `SELECT COUNT(*) AS total ${joins} ${selectedPlacementJoins} WHERE ${where}${scopeFilter}`,
+          [...params, ...(query.scope !== "all" ? ids : [])],
         );
+        const sort = { name: "s.last_name", scholarId: "i.human_id", school, yearLevel: yearLevelSort, classification }[query.sort];
+        const direction = query.direction === "desc" ? "DESC" : "ASC";
         const [rows] = await db.execute<RowDataPacket[]>(
-          `SELECT ${summaryColumns} ${joins} WHERE ${where} ORDER BY s.last_name,s.first_name,s.id LIMIT ? OFFSET ?`,
-          [...params, query.limit, query.offset],
+          `SELECT ${summaryColumns},${placementColumns} ${joins} ${selectedPlacementJoins} WHERE ${where}${scopeFilter} ORDER BY (${sort} IS NULL) ASC,${sort} ${direction},s.last_name ${direction},s.first_name ${direction},s.id ASC LIMIT ? OFFSET ?`,
+          [...params, ...(query.scope !== "all" ? ids : []), query.limit, query.offset],
         );
         return {
-          items: rows.map(summary),
+          items: rows.map(row => ({ ...summary(row), graduation: graduates.get(row.id) ?? null })),
           total: Number(count[0].total),
           offset: query.offset,
           limit: query.limit,
@@ -164,15 +183,15 @@ export class ScholarService {
       },
     );
   }
-  async detail(actor: string, rawId: unknown) {
+  async detail(actor: string, rawId: unknown, rawQuery: unknown = {}) {
     const id = parseId(rawId);
-    return this.authorization.withPermission(actor, "scholars.read", (db) =>
-      detail(db, id),
+    return this.authorization.readSnapshot(actor, "scholars.read", (db) =>
+      detail(db, id, parseScholarQuery(rawQuery).contextAcademicYearId),
     );
   }
   async duplicates(actor: string, body: unknown) {
     const { fields } = parseDuplicateCheck(body);
-    return this.authorization.withPermission(
+    return this.authorization.readSnapshot(
       actor,
       "scholars.create",
       async (db) => {
@@ -240,7 +259,7 @@ export class ScholarService {
             );
           // Use a current locking read for all profile fields after the writer mutex.
           const [current] = await db.execute<RowDataPacket[]>(
-            `SELECT ${summaryColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? FOR UPDATE`,
+            `SELECT ${summaryColumns},${placementColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} ${placementJoins} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? FOR UPDATE`,
             [id],
           );
           const row = current[0];

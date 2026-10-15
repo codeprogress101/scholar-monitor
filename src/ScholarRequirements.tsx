@@ -1,167 +1,77 @@
-import { useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import type { Access } from "../server/authorization/policy";
 import type { ScholarshipRecord } from "../server/qualification/model";
+import { ADMISSION_LABELS } from "../server/qualification/model";
 import { ApiError, type Session } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
 import ReceivingRequirements from "./ReceivingRequirements";
 import type { ConfigList, ConfigRecord } from "../server/configuration/model";
-import { receivingToday } from "./receiving-selection";
-async function currentYears(signal: AbortSignal) {
+import type { ReceivingPeriod } from "../server/requirements/instances-model";
+import { receivingToday, selectedReceivingContext, type ReceivingContext } from "./receiving-selection";
+import { receivingYears, receivingAdmission, type ReceivingAvailability } from "./receiving-workspace";
+
+async function allYears(signal: AbortSignal) {
   const items: ConfigRecord[] = [];
   for (let offset = 0; ;) {
-    const page = await request<ConfigList>(
-      `configuration/academic-years?includeArchived=true&limit=100&offset=${offset}`,
-      { signal },
-    );
-    items.push(...page.items);
-    offset += page.items.length;
+    const page = await request<ConfigList>(`configuration/academic-years?includeArchived=true&limit=100&offset=${offset}`, { signal });
+    items.push(...page.items); offset += page.items.length;
     if (offset >= page.total || !page.items.length) return items;
   }
 }
-export default function ScholarRequirements({
-  scholarId,
-  scholarLabel,
-  session,
-  access,
-  onSetup,
-  onAcademicSetup,
-}: {
-  scholarId: string;
-  scholarLabel: string;
-  session: Session;
-  access: Access;
-  onSetup: () => void;
-  onAcademicSetup?: (yearId: string) => void;
+export default function ScholarRequirements({ scholarId, scholarLabel, registrationYearId, session, access, onSetup, onAcademicSetup, savedContext, onContextChange }: {
+  scholarId: string; scholarLabel: string; registrationYearId: string; session: Session; access: Access;
+  onSetup: () => void; onAcademicSetup?: (yearId: string) => void;
+  savedContext?: ReceivingContext;
+  onContextChange?: (scholarId: string, context: ReceivingContext) => void;
 }) {
-  const [records, setRecords] = useState<ScholarshipRecord[] | null>(null),
-    [selected, setSelected] = useState(""),
-    [error, setError] = useState(""),
-    [reload, setReload] = useState(0);
+  const [data, setData] = useState<{ records: ScholarshipRecord[]; years: ConfigRecord[]; availability: ReceivingAvailability } | null>(null);
+  const [error, setError] = useState(""), [reload, setReload] = useState(0);
+  const [history, setHistory] = useState<boolean | null>(null), [historyYear, setHistoryYear] = useState("");
+  const rememberPeriod = useCallback((ownerId: string, period: ReceivingPeriod, explicit = false) => onContextChange?.(scholarId, selectedReceivingContext(ownerId, scholarId, period, savedContext, explicit)), [onContextChange, scholarId, savedContext]);
   useEffect(() => {
-    const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 15000);
+    const c = new AbortController(), timeout = window.setTimeout(() => c.abort(), 15000);
     Promise.all([
-      request<{ items: ScholarshipRecord[] }>(
-        `scholars/${scholarId}/scholarships`,
-        { signal: c.signal },
-      ),
-      currentYears(c.signal),
-    ])
-      .then(([r, years]) => {
-        const current = r.items.filter((record) =>
-          years.some(
-            (y) =>
-              y.id === record.academicYearId &&
-              !y.locked &&
-              !y.archived &&
-              y.startsOn &&
-              y.startsOn <= receivingToday() &&
-              y.endsOn &&
-              y.endsOn >= receivingToday(),
-          ),
-        );
-        if (active) {
-          setRecords(r.items);
-          setSelected((previous) =>
-            r.items.some((i) => i.id === previous)
-              ? previous
-              : current.length === 1
-                ? current[0].id
-                : r.items.length === 1
-                  ? r.items[0].id
-                  : "",
-          );
-          setError("");
-        }
-      })
-      .catch((e) => {
-        if (active) {
-          setRecords(null);
-          setError(
-            e instanceof ApiError
-              ? e.message
-              : "Could not load requirement years. Please retry.",
-          );
-        }
-      })
+      request<{ items: ScholarshipRecord[] }>(`scholars/${scholarId}/scholarships`, { signal: c.signal }),
+      allYears(c.signal),
+      request<ReceivingAvailability>(`scholars/${scholarId}/semester-receiving-availability`, { signal: c.signal }),
+    ]).then(([r, years, availability]) => { if (active && !c.signal.aborted) { setData({ records: r.items, years, availability }); setError(""); } })
+      .catch(e => { if (active) setError(e instanceof ApiError ? e.message : "Could not load receiving. Refresh to retry."); })
       .finally(() => window.clearTimeout(timeout));
-    return () => {
-      active = false;
-      c.abort();
-      window.clearTimeout(timeout);
-    };
+    return () => { active = false; c.abort(); window.clearTimeout(timeout); };
   }, [scholarId, reload]);
-  const annual = records?.find((r) => r.id === selected);
-  return (
-    <section aria-label="Receive scholar requirements">
-      <div className="d-flex justify-content-between flex-wrap gap-2">
-        <h3>Receive requirements</h3>
-        <button
-          className="btn btn-outline-secondary"
-          onClick={() => {
-            setRecords(null);
-            setError("");
-            setReload((n) => n + 1);
-          }}
-        >
-          Reload requirement years
-        </button>
-      </div>
-      <p>Scholar: {scholarLabel}</p>
-      <p>
-        Select the documents physically received. Verification follows
-        separately.
-      </p>
-      {error ? (
-        <p role="alert" className="alert alert-danger">
-          Requirements could not be loaded. {error} Use Reload requirement years
-          to retry.
-        </p>
-      ) : !records ? (
-        <p role="status">Loading requirement years...</p>
-      ) : !records.length ? (
-        <div className="alert alert-info">
-          <h4>Set up this scholar's academic year first</h4>
-          <p>
-            The personal profile is saved, but no annual scholarship record
-            exists yet. Add the relevant year in Scholarship records, then
-            return here to receive its requirements. The registration year shown
-            on the profile does not create this record automatically.
-          </p>
-          <button className="btn configuration-primary" onClick={onSetup}>
-            Set up scholarship year
-          </button>
-        </div>
-      ) : (
-        <>
-          <label className="form-label d-block">
-            Requirements academic year
-            <select
-              className="form-select"
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-            >
-              <option value="">Choose academic year</option>
-              {records.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.yearCode}
-                  {r.periodUnavailable ? " (locked or archived)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {annual && (
-            <ReceivingRequirements
-              key={annual.id}
-              id={annual.id}
-              session={session}
-              access={access}
-              onAcademicSetup={() => onAcademicSetup?.(annual.academicYearId)}
-            />
-          )}
-        </>
-      )}
-    </section>
-  );
+  const { current, previous } = receivingYears(data?.years ?? [], registrationYearId, receivingToday());
+  const requestedYear = savedContext?.academicYearId ?? data?.records.find(r => r.id === savedContext?.annualId)?.academicYearId;
+  const showingHistory = history ?? Boolean(requestedYear && previous.some(y => y.id === requestedYear));
+  const invalidYear = history === null && requestedYear && requestedYear !== current?.id && !previous.some(y => y.id === requestedYear);
+  const year = showingHistory ? previous.find(y => y.id === (historyYear || requestedYear)) ?? previous[0] : current;
+  const context = savedContext;
+  const annual = data?.records.find(r => r.academicYearId === year?.id);
+  const semester = Boolean(year && data?.availability.supported);
+  const published = data?.availability.memberships.find(m => m.academicYearId === year?.id)?.published ?? false;
+  const admission = receivingAdmission(annual, published);
+  const ownerId = semester ? scholarId : annual?.id;
+  return <section aria-label="Receive scholar requirements">
+    <p className="visually-hidden">Scholar: {scholarLabel}</p>
+    <div className="list-toolbar">
+      <button className="btn btn-outline-secondary" onClick={() => { const next = showingHistory ? current : previous[0]; setHistory(!showingHistory); if (next) { setHistoryYear(next.id); onContextChange?.(scholarId, {academicYearId: next.id}); } }}>{showingHistory ? "Back to current semester" : "Earlier academic years"}</button>
+    </div>
+    {error ? <p role="alert" className="alert alert-danger">{error} <button onClick={()=>{setData(null);setError("");setReload(n=>n+1);}}>Retry</button></p> : !data ? <p role="status">Loading requirements…</p> : invalidYear ? <p role="alert">The requested academic year is unavailable for receiving. Use Back to current semester to choose the working year.<button className="btn btn-outline-secondary" onClick={() => { setHistory(false); if (current) onContextChange?.(scholarId, {academicYearId: current.id}); }}>Back to current semester</button></p> : showingHistory ? <>
+      {!previous.length ? <p>No earlier academic years are recorded.</p> : <>
+        <label className="form-label d-block">Earlier academic year<select className="form-select" value={year?.id ?? ""} onChange={e => { setHistoryYear(e.target.value); onContextChange?.(scholarId, {academicYearId: e.target.value}); }}>{previous.map(y => <option key={y.id} value={y.id}>{y.code}</option>)}</select></label>
+        <p>Saved documents from previous academic years. This view does not receive or change documents.</p>
+        {annual && <ReceivingRequirements key={`history-annual-${annual.id}`} id={annual.id} session={session} access={access} readOnly academicYearId={year?.id} />}
+        {data.availability.supported && <ReceivingRequirements key={`history-semester-${year?.id}`} id={scholarId} continuing session={session} access={access} readOnly academicYearId={year?.id} />}
+        {!annual && !data.availability.supported && <p>No saved requirements for this academic year.</p>}
+      </>}
+    </> : data.availability.graduation?.archived || (data.availability.graduation && !data.availability.graduation.semesterId) ? <p className="alert alert-info">This scholar has graduated. Document receiving is closed. Use Earlier academic years to view saved documents.</p> : !current ? <p className="alert alert-info">No working academic year is configured. Ask the System Administrator to check the academic calendar.</p> : <>
+      {admission && <p role="status" className="small">{admission}{!published && <> Receiving documents does not require repeating selection. <a href="#masterlists">View masterlists</a></>}</p>}
+      {!admission && annual && <p>Admission: {ADMISSION_LABELS[annual.status]}. <button className="btn btn-outline-secondary" onClick={onSetup}>View scholarship record</button></p>}
+
+      {ownerId ? <ReceivingRequirements key={`${ownerId}-${semester}-${reload}`} id={ownerId} continuing={semester} session={session} access={access} academicYearId={current.id}
+        setupCohort={data.availability.cohort ?? undefined}
+        allowedSemesterId={data.availability.graduation?.semesterId ?? undefined} receivingContext={context} onPeriodChange={rememberPeriod} onAcademicSetup={yearId => onAcademicSetup?.(yearId ?? current.id)} />
+        : <div className="alert alert-info"><p>No scholarship record exists for this academic year.</p><button className="btn configuration-primary" onClick={onSetup}>Set up scholarship year</button></div>}
+    </>}
+  </section>;
 }
