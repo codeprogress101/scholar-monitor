@@ -35,6 +35,8 @@ export async function placementPolicySource(db:PoolConnection,scholarId:string,b
 }
 export const placementProposalHash=(target:Pick<Placement,"schoolId"|"courseId"|"yearLevel">,effectiveOn:string)=>digest(JSON.stringify({schoolId:target.schoolId,courseId:target.courseId,yearLevel:target.yearLevel,effectiveOn}));
 export async function requirePlacementPolicy(db:PoolConnection,academicId:string,scholarId:string,before:Placement,target:Pick<Placement,"schoolId"|"courseId"|"yearLevel">,effectiveOn:string) {
+  // Recording a previously unknown course is not evidence of a course shift.
+  if(before.coursePending && !before.courseId && target.courseId && before.schoolId===target.schoolId && before.yearLevel===target.yearLevel) return;
   if(before.schoolId===target.schoolId && before.courseId===target.courseId)return;
   const source=await placementPolicySource(db,scholarId,before);
   const [[row]]=await db.execute<RowDataPacket[]>("SELECT snapshot FROM placement_policy_reviews WHERE academic_record_id=? AND proposal_hash=? AND source_hash=? ORDER BY recorded_at DESC LIMIT 1",[academicId,placementProposalHash(target,effectiveOn),source.hash]);

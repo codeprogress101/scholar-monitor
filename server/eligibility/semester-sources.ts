@@ -15,6 +15,7 @@ export type SemesterPayrollSources = {
   ownerId: string | null; reviewId: string | null; authorityId: string | null;
   complianceHash: string | null; batchId: string | null; amountCentavos: 500000;
   reasons: EligibilityReason[]; onTimeSubmission: boolean; allocated: boolean;
+  priorApproval?: import("../requirements/prior-approval-source.js").PriorApproval;
   timing: { instanceId: string; sourceHash: string; status: string; decisionRevision: number }[];
 };
 /** Extend the existing authoritative assessment; never writes eligibility or payment. */
@@ -23,9 +24,14 @@ export async function semesterSources(db: PoolConnection, s: EligibilitySources,
   if (!mapped) return undefined;
   const result: SemesterPayrollSources = { ownerId: null, reviewId: null, authorityId: null, complianceHash: null, batchId: batchId ?? null, amountCentavos: 500000, reasons: [], onTimeSubmission: false, allocated: false, timing: [] };
   const add = (code: string, message: string) => result.reasons.push({ code, message });
+  const [[historical]] = await db.execute<RowDataPacket[]>("SELECT batch_id,import_job_id FROM historical_payout_setups WHERE cycle_id=? ORDER BY revision DESC LIMIT 1",[s.cycle.id]);
+  if(!batchId && historical)batchId=historical.batch_id;
+  result.batchId=batchId??null;
   if (!batchId) add("BATCH_REVIEW_REQUIRED", "Open a numbered payroll batch to assess its cutoff.");
   try {
     const c = await loadSemesterCompliance(db, s.scholarship.scholarId, s.cycle.semesterId), v = c.view;
+    if(v.priorApproval?.valid)result.priorApproval=v.priorApproval;
+    if(historical && (!v.priorApproval?.valid || v.priorApproval.importId!==historical.import_job_id || batchId!==historical.batch_id))add("HISTORICAL_BATCH_APPROVAL_REQUIRED","This historical batch requires current prior approval for the same confirmed import.");
     const [[academic]] = await db.execute<RowDataPacket[]>("SELECT id FROM academic_records WHERE scholar_id=? AND academic_year_id=? LOCK IN SHARE MODE", [s.scholarship.scholarId, s.cycle.academicYearId]);
     const placement = academic ? (await academicCurrent(db, academic.id)).placement : null;
     const year = placement ? payrollYear(placement.yearLevel) : null;
@@ -39,11 +45,12 @@ export async function semesterSources(db: PoolConnection, s: EligibilitySources,
     result.ownerId = c.owner.id; result.reviewId = v.history[0]?.id ?? null; result.complianceHash = v.sourceHash;
     const [[policy]] = await db.execute<RowDataPacket[]>("SELECT authority_version_id FROM workflow_policy_versions WHERE id=? LOCK IN SHARE MODE", [c.scope.policy_version_id]);
     result.authorityId = policy?.authority_version_id ?? null;
+    if(v.priorApproval?.valid)result.authorityId=v.priorApproval.authorityId;
     if (!c.source.available || c.scope.starts > today() || s.cycle.periodUnavailable || s.cycle.state !== "open") add("SEMESTER_UNAVAILABLE", "Semester receiving and payout must be open and available.");
     if (v.category !== "degree") add("DEGREE_POLICY_REQUIRED", "This payroll supports the approved full PHP 5,000 degree stipend; record a degree program category.");
     if (!v.history[0] || v.stale || v.result !== "compliant") add("ACADEMIC_COMPLIANCE_REQUIRED", v.blockers.join(" ") || "Review the semester academic findings; a current Compliant result is required.");
     if (v.unresolvedFindings.length) add("ADVERSE_FINDING_UNRESOLVED", "Resolve recorded failed/dropped findings through the authorized decision process.");
-    if (v.history[0]?.academicOnly || v.ended) add("ENDED_SEMESTER_REVIEW", "An ended-semester academic review cannot authorize a new retroactive allocation.");
+    if (v.history[0]?.academicOnly || (v.ended && !(historical && v.priorApproval?.valid))) add("ENDED_SEMESTER_REVIEW", "An ended-semester academic review cannot authorize a new retroactive allocation.");
     const [[checklist]] = await db.execute<RowDataPacket[]>("SELECT id,DATE_FORMAT(policy_date,'%Y-%m-%d') AS policy_date FROM requirement_checklists WHERE scholar_semester_id=? LOCK IN SHARE MODE", [c.owner.id]);
     s.checklist = checklist ? { id: checklist.id, policyDate: checklist.policy_date, cycleVersionId: s.cycle.versionId } : null;
     // Preserve all configured obligations. Match only the explicitly covered definition.

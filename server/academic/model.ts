@@ -1,4 +1,5 @@
 export type AcademicRecord = {
+  coursePending?: import("./changes-model.js").Placement["coursePending"];
   id: string;
   scholarId: string;
   academicYearId: string;

@@ -14,6 +14,10 @@ import ScholarTimeline from "./ScholarTimeline";
 import AcademicPanel from "./AcademicPanel";
 import ScholarAcademicSummary, { yearLevelLabel } from "./ScholarAcademicSummary";
 import QualificationPanel from "./QualificationPanel";
+import BatchDocumentVerification from "./BatchDocumentVerification";
+import PriorBatchApproval from "./PriorBatchApproval";
+import {pendingPrior} from "./prior-command";
+import { hasPendingBatch } from "./batch-result";
 import {
   useCallback,
   useEffect,
@@ -85,6 +89,8 @@ export default function ScholarsPage({ session }: { session: Session }) {
   const receivingTask = route.get("task") === "receive" || route.get("section") === "requirements";
   const requestedSection = scholarSection(route);
   const [showImport, setShowImport] = useState(route.has("importJob"));
+  const [batchVerification, setBatchVerification] = useState(() => hasPendingBatch(session.user.id));
+  const [priorBatch,setPriorBatch]=useState(()=>pendingPrior(session.user.id)?.route==="scholars");
   const [access, setAccess] = useState<Access | null>(null);
   const [list, setList] = useState<ScholarList | null>(null);
   const [years, setYears] = useState<ConfigRecord[]>([]),
@@ -509,6 +515,10 @@ export default function ScholarsPage({ session }: { session: Session }) {
               </button>
             )}
           </div>
+          {allowed("requirements.verify") && !profile && !editing && <button className="btn btn-outline-secondary my-2" disabled={saving || opening} onClick={() => setBatchVerification(true)}>Verify batch documents</button>}
+          {allowed("academic.changes.approve")&&!profile&&!editing&&<button className="btn configuration-primary my-2 ms-2" disabled={saving||opening||batchVerification} onClick={()=>setPriorBatch(true)}>Record prior batch approval</button>}
+          {priorBatch&&<PriorBatchApproval session={session} semesters={eligibility.data?.semesters??[]} initialSemester={semesterChoice||eligibility.data?.semesterId||""} onClose={()=>setPriorBatch(false)} onChanged={()=>setRevision(n=>n+1)}/>}
+          {batchVerification && <BatchDocumentVerification session={session} semesters={eligibility.data?.semesters ?? []} initialSemester={semesterChoice || eligibility.data?.semesterId || ""} canReviewPlacement={Boolean(allowed("semesters.configure") && allowed("academic.edit"))} onClose={() => setBatchVerification(false)} onChanged={() => setRevision(n => n + 1)} />}
           {showImport && !profile && !editing && allowed("scholars.create") && (
             <ScholarImport
               session={session}

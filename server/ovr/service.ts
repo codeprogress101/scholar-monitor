@@ -1,6 +1,8 @@
 import { cachedReads } from "../read-cache.js";
+import { cohortReads } from "../eligibility/cohort-reads.js";
 import { semesterClaim } from "./reprocessing.js";
 import { treasuryEvidence, historicalReceipts } from "./treasury-state.js";
+import {encodeStoredJson,decodeStoredJson} from "../stored-json.js";
 import { requireNumberedPayroll } from "./legacy-boundary.js";
 import { assertPayrollRoster, amendFrozenForm } from "./amended-form.js";
 import { claimDeadline, requireClaimOpen, assertNoPaidClaim, draftDeferral, writeDeferral, reprocessingQueue, retryEvidence, assignRetry, queueUnclaimed, UNPAID_REASONS } from "./reprocessing.js";
@@ -39,7 +41,7 @@ import type {
   OvrFinalization,
 } from "./model.js";
 const decode = <T>(v: string | T): T =>
-  typeof v === "string" ? JSON.parse(v) : v;
+  decodeStoredJson<T>(v);
 const text = (min: number, max: number) =>
   z
     .string()
@@ -143,6 +145,7 @@ export async function validateOvr(
   cycle: PayoutCycle,
   entries: OvrEntry[],
 ): Promise<OvrValidation> {
+  db = await cohortReads(db, cycle.academicYearId, cycle.semesterId, cycle.id);
   const result: OvrValidation = {
     valid: false,
     checkedAt: new Date().toISOString(),
@@ -340,9 +343,9 @@ export class OvrService {
       }
       const [[user]]=await db.execute<RowDataPacket[]>("SELECT full_name FROM users WHERE id=?",[actor]);
       const result:OvrBatch={...previous,revision:previous.revision+1,action,actorId:actor,actorName:user.full_name,recordedAt:new Date().toISOString(),reason:input.reason,reference:"Coordinator payroll decision"};
-      await db.execute("INSERT INTO ovr_batch_events(batch_id,revision,state,action,snapshot,actor_id,occurred_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6))",[id,result.revision,result.state,action,JSON.stringify(result),actor]);
+      await db.execute("INSERT INTO ovr_batch_events(batch_id,revision,state,action,snapshot,actor_id,occurred_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6))",[id,result.revision,result.state,action,encodeStoredJson(result),actor]);
       await db.execute("INSERT INTO audit_logs(id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES(?,'payroll.reprocessing','ovr_batches',?,?,?,'user',UTC_TIMESTAMP(6),?,?,?)",[randomUUID(),id,action,actor,requestId,input.reason,JSON.stringify(input)]);
-      await db.execute("INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",[actor,key,hash,JSON.stringify(result)]);
+      await db.execute("INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",[actor,key,hash,encodeStoredJson(result)]);
       return result;
     });
   }
@@ -594,7 +597,7 @@ export class OvrService {
             batch.revision,
             batch.state,
             action,
-            JSON.stringify(batch),
+            encodeStoredJson(batch),
             actor,
           ],
         );
@@ -624,7 +627,7 @@ export class OvrService {
             [
               batch.id,
               batch.revision,
-              JSON.stringify(frozenSnapshot),
+              encodeStoredJson(frozenSnapshot),
               batch.finalizationHash!,
               frozenSnapshot.entries.length,
               actor,
@@ -641,7 +644,7 @@ export class OvrService {
             actor,
             requestId,
             input.reason,
-            JSON.stringify({
+            encodeStoredJson({
               revision: batch.revision,
               cycleId: cycle.id,
               scholarshipId: annualId ?? null,
@@ -657,7 +660,7 @@ export class OvrService {
         );
         await db.execute(
           "INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",
-          [actor, key, hash, JSON.stringify(batch)],
+          [actor, key, hash, encodeStoredJson(batch)],
         );
         return batch;
       },

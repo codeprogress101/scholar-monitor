@@ -61,6 +61,7 @@ export default function SemesterCompliance({ scholarId, semesterId, session, can
     <div className="d-flex justify-content-between gap-2"><h5>3. Academic compliance{data ? `: ${labels[data.result]}` : ""}</h5><button className="btn btn-outline-secondary" disabled={busy} onClick={() => { setData(null); setReload((n) => n + 1); }}>Refresh</button></div>
     <ErrorNotice error={error} />{notice && <p role="status">{notice}</p>}
     {data && <>
+      {data.priorApproval&&<p role="status" className={data.priorApproval.valid?"alert alert-success":"alert alert-warning"}><strong>{data.priorApproval.valid?"Approved - prior batch assessment":"Prior batch assessment needs review"}</strong>. {data.priorApproval.reference}. Source: {data.priorApproval.sourceLocation}. {data.priorApproval.issue} Individual grades and findings remain as originally recorded.</p>}
       {data.history[0] && <div className="border rounded p-2 mb-2" aria-label="Recorded academic standing">
         <strong>Latest recorded findings</strong>
         <dl className="row mb-0 mt-2">

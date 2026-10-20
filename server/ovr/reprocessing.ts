@@ -106,7 +106,7 @@ export async function reprocessingQueue(db: PoolConnection, cycle: PayoutCycle):
     if (q.entitlement_id) {
       const [[released]] = await db.execute<RowDataPacket[]>("SELECT payment_id FROM entitlement_release_links WHERE entitlement_id=?",[q.entitlement_id]);
       if(released && (await semesterClaim(db,q.scholarship_id,cycle.semesterId)).paid) reasons.push("A prior release is recorded for this entitlement. Review its payment corrections before any further collection.");
-      const release = (await managedRelease(db, q.root_batch_id))?.find(r => r.entitlementId === q.entitlement_id);
+      const release = (await managedRelease(db, q.root_batch_id,q.scholarship_id))?.find(r => r.entitlementId === q.entitlement_id);
       if (!release) reasons.push("Original stipend allocation is unavailable.");
       else { reasons.push(...release.reasons); if (release.held) reasons.push("The Coordinator has held this stipend."); currentHash = release.sourceHash; }
     } else if (root) {

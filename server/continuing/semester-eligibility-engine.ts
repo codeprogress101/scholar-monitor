@@ -3,6 +3,7 @@ import type { ComplianceResult } from "./compliance-engine.js";
 export const SEMESTER_ELIGIBILITY_ENGINE = "semester-preview-v1";
 export type PreviewReason = { code: string; message: string };
 export type SemesterEligibilitySources = {
+  priorApproval?: import("../requirements/prior-approval-source.js").PriorApproval;
   scholarId: string; semesterId: string; semesterOwnerId: string; academicYearId: string;
   participation: { rollover?: { scholarshipId: string; auditId: string } | null; id: string; basis: string; eventId: string; revision: number; action: string };
   period: { starts: string; ends: string; available: boolean; asOf: string };
@@ -14,7 +15,7 @@ export type SemesterEligibilitySources = {
 /** Read-only candidate assessment, never a payment authorization or an entitlement balance. */
 export function assessSemesterEligibility(s: SemesterEligibilitySources) {
   const reasons: PreviewReason[] = [], add = (code: string, message: string) => reasons.push({ code, message });
-  if ((s.participation.basis !== "continuing_baseline" && !s.participation.rollover) || s.participation.action !== "accepted") add("ACCEPTED_PARTICIPATION_REQUIRED", "Accepted continuing admission or prior-year rollover is required for this preview.");
+  if (((s.participation.basis !== "continuing_baseline" && !s.participation.rollover) && !s.priorApproval?.valid) || s.participation.action !== "accepted") add("ACCEPTED_PARTICIPATION_REQUIRED", "Accepted participation or current reviewed prior batch approval is required for this preview.");
   if (!s.period.available) add("PERIOD_UNAVAILABLE", "The semester setup or its authority is unavailable, locked or archived.");
   if (s.period.starts > s.period.asOf) add("FUTURE_SEMESTER", "The semester has not started.");
   if (s.period.ends < s.period.asOf) add("ENDED_SEMESTER_REVIEW", "This semester has ended. Preserve existing earned entitlements; a new entitlement needs period-specific reconciliation.");

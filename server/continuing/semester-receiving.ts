@@ -155,7 +155,7 @@ export async function provisionSemesterRecords(db: PoolConnection, access: impor
         const [priorContexts] = await db.execute<RowDataPacket[]>("SELECT r.* FROM scholar_semesters ss JOIN scholar_semester_revisions r ON r.scholar_semester_id=ss.id WHERE ss.scholar_id=? AND ss.semester_id=? ORDER BY r.revision DESC LIMIT 1 LOCK IN SHARE MODE", [scholar, rules.predecessorSemesterId]);
         const prior = priorContexts[0];
         const priorPlacement = prior ? decode<{ placement?: { courseId: string } }>(prior.placement_snapshot).placement : null;
-        const reuseCategory = academic && priorPlacement?.courseId === academic.placement.courseId && prior.program_category !== "unknown";
+        const reuseCategory = academic && Boolean(academic.placement.courseId) && priorPlacement?.courseId === academic.placement.courseId && prior.program_category !== "unknown";
         const placementSnapshot = academic ? { placement: academic.placement, version: academic.version, effectiveOn: academic.effectiveOn,
           ...(reuseCategory ? { categorySource: { scholarSemesterId: prior.scholar_semester_id, revision: prior.revision } } : {}) } : {};
         const [users] = await db.execute<RowDataPacket[]>("SELECT full_name FROM users WHERE id=?", [actor]);

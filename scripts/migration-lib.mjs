@@ -99,6 +99,7 @@ export async function grantAuthRuntime(connection, database, user) {
   for (const name of ["scholar_semesters", "scholar_semester_revisions", "requirement_coverage", "workflow_scope_versions", "semester_review_events", "semester_entitlements"])
     await connection.query(`GRANT SELECT ON ${table(name)} TO ${identity}`);
   for (const name of [
+    "prior_batch_approvals", "prior_batch_members", "prior_batch_documents", "prior_batch_waiver_corrections", "historical_payout_setups",
     "payroll_legacy_conversions",
     "placement_policy_reviews",
     "payroll_treasury_evidence",
@@ -137,6 +138,8 @@ export async function grantAuthRuntime(connection, database, user) {
     "requirement_coverage",
     "workflow_scope_versions",
     "scholar_intakes",
+    "course_pending_exceptions",
+    "course_pending_events",
     "import_jobs",
     "import_confirmations",
     "ovr_amendments",
@@ -245,8 +248,9 @@ export async function grantAuthRuntime(connection, database, user) {
         : name === "system_settings"
           ? ", value_type, setting_value"
           : "");
+    const periodColumns = columns + (name === "semesters" ? ", term_kind" : "");
     await connection.query(
-      `GRANT UPDATE (${columns}) ON ${table(name)} TO ${identity}`,
+      `GRANT UPDATE (${periodColumns}) ON ${table(name)} TO ${identity}`,
     );
   }
   await connection.query(

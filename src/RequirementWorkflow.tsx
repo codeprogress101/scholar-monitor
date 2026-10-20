@@ -69,7 +69,7 @@ export default function RequirementWorkflow({
   const [needsAcademic, setNeedsAcademic] = useState(false);
   const [freshness, setFreshness] = useState<"checking" | "current" | "stale" | "unavailable">("checking");
   useEffect(() => {
-    if (instance.status !== "verified" || closed || !canVerify) return;
+    if (instance.status !== "verified" || closed || !canVerify || instance.priorApproval?.valid) return;
     const controller = new AbortController();
     request<VerificationContext>(`requirement-instances/${instance.id}/verification-context`, { signal: controller.signal })
       .then(value => { if (!controller.signal.aborted) setFreshness(verificationMatches(value, instance.history.at(-1)?.details.verification) ? "current" : "stale"); })
@@ -84,7 +84,7 @@ export default function RequirementWorkflow({
     ["submitted", "resubmitted", "for_verification"].includes(instance.status)
         ? ["verify", "return-for-correction", "reject"]
         : instance.status === "verified"
-          ? [...(freshness === "stale" ? ["verify" as const] : []), "return-for-correction"]
+          ? [...(freshness === "stale" && !instance.priorApproval?.valid ? ["verify" as const] : []), "return-for-correction"]
           : instance.status === "for_correction"
             ? ["resubmit"]
             : [];
@@ -135,6 +135,7 @@ export default function RequirementWorkflow({
     setError("");
     const document = context
       ? {
+          ...(context.coursePending ? {coursePendingId:context.coursePending.id,coursePendingRevision:context.coursePending.revision}:{}),
           scholarId: context.scholarId,
           scholarVersion: context.scholarVersion,
           academicYearId: context.academicYearId,
@@ -155,7 +156,7 @@ export default function RequirementWorkflow({
       reason,
       reference,
       remarks: remarks.trim() || null,
-      ...(action === "verify" ? { document, attestation: "all-five-checked", checks } : {}),
+      ...(action === "verify" ? { document, attestation: context?.coursePending ? "course-comparison-deferred" : "all-five-checked", checks: {...checks,placement:context?.coursePending?false:checks.placement} } : {}),
       ...(action === "return-for-correction"
         ? {
             correctionOf:
@@ -201,7 +202,8 @@ export default function RequirementWorkflow({
   return (
     <div className="mt-2" aria-label={`Workflow ${instance.code}`}>
       {!closed && actions.length > 0 && <p className="text-muted small">Staff or Coordinator · Review the received document, then verify or return it for correction.</p>}
-      {instance.status === "verified" && (
+      {instance.priorApproval&&<p className={`alert ${instance.priorApproval.valid?"alert-success":"alert-warning"}`}><strong>{instance.priorApproval.valid?(instance.priorApproval.retainedIndividual?"Individual verification retained; prior batch assessment recorded":"Verified - prior batch approval"):"Prior batch approval needs review"}</strong>. Reference: {instance.priorApproval.reference}. Source: {instance.priorApproval.sourceLocation}. Historical approval date: {instance.priorApproval.approvalOn??"Not recorded"}. Recorded {instance.priorApproval.recordedAt} by {instance.priorApproval.actorName}. {instance.priorApproval.issue}{instance.waiverCorrected&&" The mistaken waiver was corrected; its original record remains in history."}</p>}
+      {instance.status === "verified" && !instance.priorApproval?.valid && (
         <p className={`alert ${freshness === "current" || closed ? "alert-success" : "alert-warning"} py-2`}>
           {closed ? "Historical verification recorded." : !canVerify ? "Verification recorded. Review semester academic details before checking current compliance." : freshness === "stale" ? "Records changed since verification. Recheck this document; no new receipt is needed." : freshness === "checking" ? "Checking verification against current records…" : freshness === "unavailable" ? "Verification recorded. Current context is unavailable; review semester academic details." : "Verified against current records. Payout eligibility is assessed separately."}
         </p>
@@ -261,7 +263,7 @@ export default function RequirementWorkflow({
                       records, then confirm every check.
                     </p>
                     <ul>{Object.values(context.entrantCard ? {...checkLabels,period:'The card covers the approved latest completed school year and grading period.',placement:'The issuing school matches the reviewed senior-high-school evidence.'} : checkLabels).map(label=><li key={label}>{label}</li>)}</ul>
-                    <label className="d-block mb-2"><input type="checkbox" required checked={Object.values(checks).every(Boolean)} onChange={e=>setChecks({identity:e.target.checked,period:e.target.checked,placement:e.target.checked,applicability:e.target.checked,validity:e.target.checked})}/> I checked all five items against this document.</label>
+                    <label className="d-block mb-2"><input type="checkbox" required checked={Object.values(checks).every(Boolean)} onChange={e=>setChecks({identity:e.target.checked,period:e.target.checked,placement:e.target.checked,applicability:e.target.checked,validity:e.target.checked})}/> {context.coursePending ? "I checked identity, coverage, school, policy and validity; course comparison is deferred under the approved exception." : "I checked all five items against this document."}</label>
                   </>
                 ) : (
                   <p>
@@ -395,6 +397,7 @@ export default function RequirementWorkflow({
                 </div>
                 <div>{event.reason}</div>
                 <div>Reference: {event.reference}</div>
+                {event.details.priorBatchApproval&&<p>Prior batch approval: {event.details.priorBatchApproval.sourceLocation}. Individual findings were not fabricated.</p>}
                 {event.remarks && (
                   <div style={{ whiteSpace: "pre-wrap" }}>{event.remarks}</div>
                 )}
@@ -410,7 +413,7 @@ export default function RequirementWorkflow({
                     {event.details.verification.yearCode} /{" "}
                     {event.details.verification.semesterCode};{" "}
                     {event.details.verification.schoolName} /{" "}
-                    {event.details.verification.courseName}. All document checks
+                    {event.details.verification.courseName}. Document checks (any deferred course comparison remains recorded)
                     confirmed.
                   </div>
                 )}

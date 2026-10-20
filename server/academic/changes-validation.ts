@@ -16,6 +16,7 @@ export const CHANGE_KINDS = [
   "school_transfer",
   "both",
   "year_level_correction",
+  "course_completion",
 ] as const;
 export function parseAcademicChange(raw: unknown) {
   const parsed = z
@@ -53,8 +54,11 @@ export function validatePlacementChange(
   const school = before.schoolId !== input.schoolId,
     course = before.courseId !== input.courseId,
     level = before.yearLevel !== input.yearLevel;
+  if(before.coursePending && input.kind !== "course_completion") throw new AuthError(409,"COURSE_COMPLETION_REQUIRED","Complete the unknown course from supporting evidence before recording other placement changes.");
   const valid =
-    input.kind === "course_shift"
+    input.kind === "course_completion"
+      ? Boolean(before.coursePending && !before.courseId && input.courseId && !school && !level)
+      : input.kind === "course_shift"
       ? course && !school && !level
       : input.kind === "school_transfer"
         ? school && !course && !level

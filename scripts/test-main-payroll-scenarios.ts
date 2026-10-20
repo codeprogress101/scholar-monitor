@@ -1,3 +1,5 @@
+import ExcelJS from "exceljs";
+import { SIMPLE_COLUMNS } from "../server/imports/model.js";
 import { testUnusedPlaceholderEvidence, testFrozenPlaceholderEvidence } from "./test-unused-placeholder-scenarios.js";
 import { testSharedDocuments } from "./test-shared-documents-scenarios.js";
 import { testSnapshot } from "./test-snapshot-scenarios.js";
@@ -40,8 +42,17 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
   await ok(request("coordinator", setupPath, { semesterId: semester.id, expectedSemesterVersion: 1, predecessorSemesterId: terms[0].id, expectedCoverageHash: options.coverage.sourceHash, corDefinitionVersionId: definitions[0], cogDefinitionVersionId: definitions[1], issuer: "Synthetic Scholarship Coordinator", reference: "SYNTHETIC-AUTH", sourceReference: "Synthetic degree semester policy", reviewed: true }));
   const setup = (await ok(request("coordinator", setupPath))).json().setups[0];
   await ok(request("coordinator", setupPath + "/availability", { scopeId: setup.id, expectedRevision: 1, mode: "enabled", expectedSemesterVersion: 1, expectedPredecessorVersion: 1, expectedCoverageHash: options.coverage.sourceHash, reviewed: true }));
+  const coursePendingMode=process.argv.includes("--course-pending");
+  if(coursePendingMode) await config("settings",{code:"LDSS_WORKING_ACADEMIC_YEAR",name:"Working academic year",valueType:"text",value:year.id});
   const people: { id: string; annual: string }[] = [];
   for (const firstName of ["Alexandra", "Beatrice", "Carlos"]) {
+    if(coursePendingMode && firstName==="Alexandra") {
+      const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet("Approved import");sheet.addRow([...SIMPLE_COLUMNS]);sheet.addRow(["Payroll Alexandra","Alexandra","","",school.code,"Second year","New",""]);
+      const staged=(await ok(request("coordinator","/api/v1/imports/stage",{fileName:"pending-payroll.xlsx",base64:Buffer.from(await workbook.xlsx.writeBuffer()).toString("base64"),approvedSelection:{reference:"Synthetic approved Batch 1 course pending",effectiveOn:day}}))).json();
+      assert.equal(staged.ready,true,JSON.stringify(staged.rows));
+      const saved=(await ok(request("coordinator",`/api/v1/imports/${staged.id}/confirm`,{hash:staged.hash,confirm:true,coursePendingConfirmed:true}))).json();
+      const [[annual]]=await admin.execute<RowDataPacket[]>("SELECT id FROM scholarship_records WHERE scholar_id=?",[saved.items[0].id]);people.push({id:saved.items[0].id,annual:annual.id});continue;
+    }
     const p = (await ok(request("staff", "/api/v1/scholars", { expectedVersion: 0, fields: { firstName, lastName: "Payroll " + firstName, academicYearId: year.id, contact: {} } }))).json();
     await ok(request("staff", `/api/v1/scholars/${p.id}/academic-records`, { academicYearId: year.id, schoolId: school.id, courseId: course.id, yearLevel: "Second year" }));
     if (firstName === "Carlos") {
@@ -117,7 +128,7 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
       await ok(request("staff", path + "/send-for-verification", { action:"send-for-verification", expectedVersion:item.version, effectiveOn:day, remarks:null }));
       const context = (await ok(request("staff", path + "/verification-context"))).json<VerificationContext>();
       const { scholarId,scholarVersion,academicYearId,semesterId,schoolId,courseId,academicVersion,definitionVersionId,coverageId,semesterRevision,predecessorSourceHash } = context;
-      await ok(request("staff", path + "/verify", { action:"verify", expectedVersion:item.version+1,effectiveOn:day,remarks:null,document:{scholarId,scholarVersion,academicYearId,semesterId,schoolId,courseId,academicVersion,definitionVersionId,coverageId,semesterRevision,...(predecessorSourceHash ? {predecessorSourceHash}: {})},checks:{identity:true,period:true,placement:true,applicability:true,validity:true} }));
+      await ok(request("staff", path + "/verify", { action:"verify", expectedVersion:item.version+1,effectiveOn:day,remarks:null,document:{scholarId,scholarVersion,academicYearId,semesterId,schoolId,courseId,academicVersion,definitionVersionId,coverageId,semesterRevision,...(context.coursePending?{coursePendingId:context.coursePending.id,coursePendingRevision:context.coursePending.revision}:{}),...(predecessorSourceHash ? {predecessorSourceHash}: {})},...(context.coursePending?{attestation:"course-comparison-deferred"}:{}),checks:{identity:true,period:true,placement:!context.coursePending,applicability:true,validity:true} }));
     }
   };
   const compliance = async(p: typeof people[number]) => {
@@ -133,7 +144,7 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
   await verify(people[0],true); await verify(people[1],false); await verify(people[2],true);
   await compliance(people[0]); await compliance(people[2]);
   const read = async(id=batch1) => (await ok(request("staff",`/api/v1/ovr-batches/${id}`))).json<OvrDetail>();
-  await config("settings", { code: "LDSS_WORKING_ACADEMIC_YEAR", name: "Working academic year", valueType: "text", value: year.id });
+  if(!coursePendingMode) await config("settings", { code: "LDSS_WORKING_ACADEMIC_YEAR", name: "Working academic year", valueType: "text", value: year.id });
   const registryEligibility = async () => (await ok(request("staff", `/api/v1/scholars/eligibility?ids=${people.map(p => p.id).join(",")}&periodId=${cycle.id}`))).json<import("../server/scholars/registry-eligibility.js").RegistryEligibility>();
   const unpublished = await read();
   const unpublishedRegistry = await registryEligibility();
@@ -270,6 +281,23 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
     await ok(request("coordinator",`/api/v1/payout-cycles/${cycle.id}/lock`,{action:"lock",expectedVersion:cycle.version,reason:"Synthetic historical Registry verification",reference:"TEST-HISTORY"}));
     const historical=await registryEligibility();assert.equal(historical.periodId,cycle.id);assert.equal(historical.items.find(i=>i.scholarId===people[0].id)!.payment,"Paid");assert.ok(historical.items.find(i=>i.scholarId===people[0].id)!.links!.some(l=>l.label==="View payment"));
     console.log("PASS locked-period Registry preserves effective Paid history and payment navigation");
+  }
+  if(coursePendingMode) {
+    const [[paid]]=await admin.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM payment_records WHERE scholarship_id=? AND outcome='paid'",[people[0].annual]);assert.equal(paid.n,1);
+    const final=await read();assert.ok(JSON.stringify(final.finalization).includes("Course pending"));
+    console.log("PASS approved course-pending lifecycle: Selected import, covered COR/COG with deferred course checks, independent academic compliance, official publication, finalized payroll, one actual claim and preserved frozen evidence");
+    const [[frozenBefore]]=await admin.execute<RowDataPacket[]>("SELECT snapshot,snapshot_hash FROM ovr_finalizations WHERE batch_id=?",[batch1]);
+    const [paymentsBefore]=await admin.execute<RowDataPacket[]>("SELECT * FROM payment_records WHERE batch_id=? ORDER BY id",[batch1]);
+    const beforeCompletionHash=(await read(batch2)).managed!.sourceHash;
+    const masterDetail=(await ok(request("staff",`/api/v1/masterlists/${master.id}`))).json();
+    const locked=(await ok(request("coordinator",`/api/v1/masterlists/${master.id}/lock`,{expectedVersion:masterDetail.version}))).json();
+    const completion=(await ok(request("staff",`/api/v1/masterlists/${master.id}/amendments`,{expectedVersion:locked.version,scholarId:people[0].id,kind:"course_completion",courseId:course.id,effectiveOn:day,reason:"Course established from supplied original COR",reference:"TEST-COMPLETE-COURSE"}))).json();
+    await ok(request("coordinator",`/api/v1/masterlist-amendments/${completion.amendmentId}/approve`,{reason:"Reviewed previously unknown course",reference:"TEST-COMPLETE-APPROVAL"}));
+    await ok(request("coordinator",`/api/v1/masterlist-amendments/${completion.amendmentId}/publish`,{reason:"Publish reviewed course completion",reference:"TEST-COMPLETE-PUBLICATION"}));
+    const [[frozenAfter]]=await admin.execute<RowDataPacket[]>("SELECT snapshot,snapshot_hash FROM ovr_finalizations WHERE batch_id=?",[batch1]);assert.deepEqual(frozenAfter,frozenBefore);
+    const [paymentsAfter]=await admin.execute<RowDataPacket[]>("SELECT * FROM payment_records WHERE batch_id=? ORDER BY id",[batch1]);assert.deepEqual(paymentsAfter,paymentsBefore);
+    assert.notEqual((await read(batch2)).managed!.sourceHash,beforeCompletionHash);
+    console.log("PASS post-payment course completion preserves frozen payroll and payment rows while invalidating unfrozen source evidence");
   }
   // Restore the isolated legacy fixture calendar mode for subsequent scenario groups.
   await admin.query("UPDATE system_settings SET archived_at=UTC_TIMESTAMP(6) WHERE code='LDSS_WORKING_ACADEMIC_YEAR'");

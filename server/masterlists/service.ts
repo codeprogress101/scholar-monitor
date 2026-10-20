@@ -98,7 +98,7 @@ async function candidate(
   if (
     !current ||
     !current.placement.schoolId ||
-    !current.placement.courseId ||
+    (!current.placement.courseId && !current.placement.coursePending) ||
     !current.placement.yearLevel.trim()
   )
     issue(

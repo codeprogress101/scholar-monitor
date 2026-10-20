@@ -16,6 +16,8 @@ Finalization freezes the roster and form fields, and creates the full PHP 5,000 
 
 ## Payroll Form
 
+Updated 21 October 2026: new draft and newly frozen forms use `daet-sample-v2`, with exactly 20 scholars per page and the final remainder. Full names, schools and reprocessing notes wrap within their cells. Both formats share the fixed groups, page totals and continuous printed numbering. The template version participates in draft review fingerprints. Existing frozen `daet-sample-v1` forms retain the original renderer and line-budget pagination described below. No eligibility, receipt or payment data is changed by this presentation update.
+
 Updated 8 October 2026: preview and editable Word downloads use the sample's 13 x 8.5-inch landscape paper, original embedded Daet and LDSS logos, repeated headings and a maximum of 20 students per page. Long entries use fewer rows. Printed AWARD NO runs continuously from 1 for each batch without changing stored awards or Scholar IDs. Each page ends with its student count beneath the name columns and its monetary total beneath AMOUNT. All four borderless certification/signatory blocks appear only on the final page; the footer shows academic year, semester, batch and Page X of Y. Signature/date received cells remain blank.
 
 The user confirmed these sample names/titles, which are frozen with each payroll:

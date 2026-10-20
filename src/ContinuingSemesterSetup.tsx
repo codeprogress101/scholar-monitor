@@ -57,9 +57,9 @@ export default function ContinuingSemesterSetup({ batchId, session, canConfigure
         {availability && (s.mode === "enabled" ? <details><summary>Pause receiving</summary>{availability}</details> : availability)}
       </div>;
   }
-  const current=data?.setups.filter(s=>s.current)??[];
+  const current=data?.setups.filter(s=>s.current && (!semesterId || s.semesterId===semesterId))??[];
   const missing=!!period && !exists && (!data?.definitions.some(d=>d.documentKind==="enrollment") || !data?.definitions.some(d=>d.documentKind==="grades"));
-  const problem=missing?"Applicable enrollment and grades policies are required. Ask the Administrator to review document kinds and dates.":data?.coverage?.issue;
+  const problem=period && !period.available?"This semester is read only. Choose the current receiving semester.":missing?"Applicable enrollment and grades policies are required. Ask the Administrator to review document kinds and dates.":data?.coverage?.issue;
   return <section className="continuing-setup" aria-label={shared ? "Shared semester setup" : "Continuing semester setup"}>
     {compact && <div className="continuing-setup-bar"><div><strong>{shared ? "Shared semester documents" : "Semester documents"}</strong><span>{!data?"Checking setup...":current.length?`${current.length} semester setup${current.length===1 ? "" : "s"}`:(shared ? "One setup for selected new scholars" : "Not configured")}</span></div><button className="btn configuration-primary" onClick={()=>{setForm(f=>({...f,reviewed:false}));setOpen(true);}}>{current.length?"Manage semester documents":canConfigure?(shared ? "Set up once for new scholars" : "Set up semester documents"):"View semester setup"}</button></div>}
     {problem && <p role="alert" className="alert alert-warning">{problem} {canManagePolicies && <a href="#requirements">Open document policies</a>}</p>}

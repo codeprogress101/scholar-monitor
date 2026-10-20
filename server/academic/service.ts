@@ -45,23 +45,22 @@ export async function requireAcademicRecord(
   db: PoolConnection,
   scholarId: string,
   academicYearId: string,
+  approvedImportId?: string,
 ) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT id,school_id,course_id,year_level FROM academic_records WHERE scholar_id=? AND academic_year_id=? LOCK IN SHARE MODE",
+    "SELECT id,school_id,course_id,year_level,course_pending_exception_id FROM academic_records WHERE scholar_id=? AND academic_year_id=? LOCK IN SHARE MODE",
     [scholarId, academicYearId],
   );
-  if (
-    !rows.length ||
-    !rows[0].school_id ||
-    !rows[0].course_id ||
-    !rows[0].year_level.trim()
-  )
-    throw new AuthError(
-      409,
-      "ACADEMIC_RECORD_REQUIRED",
-      "Record school, course and year level for this academic year before qualification.",
-    );
-  return rows[0].id as string;
+  const row=rows[0];
+  if(row?.school_id && row.year_level?.trim()) {
+    if(row.course_id) return row.id as string;
+    if(row.course_pending_exception_id) {
+      const current=await academicCurrent(db,row.id);
+      if(current.placement.courseId) return row.id as string;
+      if(approvedImportId && current.placement.coursePending?.importId===approvedImportId) return row.id as string;
+    }
+  }
+  throw new AuthError(409,"ACADEMIC_RECORD_REQUIRED","Record school, course and year level for this academic year before qualification.");
 }
 export class AcademicService {
   constructor(
@@ -103,6 +102,7 @@ export class AcademicService {
                 academicYear: { code: r.year_code, name: r.year_name },
                 school: current.placement.school,
                 course: current.placement.course,
+                ...(current.placement.coursePending ? {coursePending:current.placement.coursePending}:{}),
                 reason: r.reason,
                 reference: r.reference_text,
                 actorName: r.actor_name,

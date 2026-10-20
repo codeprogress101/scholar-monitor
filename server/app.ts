@@ -1,3 +1,7 @@
+import { DocumentBatchService } from "./requirements/batch-service.js";
+import { registerDocumentBatches } from "./requirements/batch-routes.js";
+import { PriorBatchApprovalService } from "./requirements/prior-approval-service.js";
+import { HistoricalPayoutSetupService } from "./payouts/historical-setup.js";
 import { SharedSemesterDocumentsService } from "./requirements/shared-semester-documents.js";
 import { EntrantGradingCardService } from "./requirements/entrant-grading-card.js";
 import { LegacyConversionService } from "./ovr/legacy-conversion.js";
@@ -127,6 +131,12 @@ export function buildApp(
       request.body = routineEvidence(request.routeOptions.url ?? request.url, request.body);
   });
   app.register(cookie);
+  registerDocumentBatches(app, new DocumentBatchService(new AuthorizationService(database.pool)));
+  const priorBatches = new PriorBatchApprovalService(new AuthorizationService(database.pool));
+  app.get("/api/v1/document-batches/prior-approval-preview", {config:{permission:"academic.changes.approve"}}, r=>priorBatches.preview(r.authSession!.user.id,r.query));
+  app.post("/api/v1/document-batches/prior-approval", {bodyLimit:512*1024,config:{permission:"academic.changes.approve"}}, r=>priorBatches.record(r.authSession!.user.id,r.headers["idempotency-key"],r.body,r.id));
+  const historicalPayouts = new HistoricalPayoutSetupService(new AuthorizationService(database.pool));
+  app.post<{Params:{id:string}}>("/api/v1/payout-cycles/:id/historical-setup",{config:{permission:"payroll.windows.manage"}},r=>historicalPayouts.record(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
   registerSubmissionWindows(app, new SubmissionWindowService(new AuthorizationService(database.pool)));
   registerContinuing(app, new ContinuingService(database.pool));
   registerSemesterSetup(app, new SemesterSetupService(database.pool));

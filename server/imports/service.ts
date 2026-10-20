@@ -1,4 +1,12 @@
 import {resolvePlacementReferences} from "../academic/references.js";
+import { receiptPreview } from "./receipt-preview.js";
+import { createCoursePending } from "../academic/course-pending.js";
+import { scopeRows, receivingScopes, participation, available, provisionSemesterRecords } from "../continuing/semester-receiving.js";
+import { OFFICIAL_COHORT } from "../continuing/official-cohort.js";
+import { pinnedSemesterDefinitions } from "../requirements/semester-policy.js";
+import { semesterRequirementContext } from "../requirements/semester-context.js";
+import { RequirementReceiptService } from "../requirements/receipt-service.js";
+import { parseReceipt } from "../requirements/receipt-validation.js";
 import { workingYear } from "../configuration/calendar.js";
 import { QualificationService } from "../qualification/service.js";
 import { ContinuingService } from "../continuing/service.js";
@@ -149,8 +157,8 @@ async function validate(
       if (raw.format === "simple") {
         const status = normalizeIntakeStatus(raw.status ?? "");
         if (!["new", "old", "continuing"].includes(status)) r.errors.push("Status: choose New, Continuing or Old.");
-        if (!c.yearLevel || c.yearLevel.length > 60) r.errors.push("Year Level: required, up to 60 characters.");
-        if (!c.courseCode) r.notices = [...(r.notices ?? []), "Course needed: complete academic details before approval or payroll."];
+        if (!c.yearLevel || c.yearLevel.length > 60 || !/^\P{Cc}*$/u.test(c.yearLevel)) r.errors.push("Year Level: required, up to 60 characters, without control characters.");
+        if (!c.courseCode) r.notices = [...(r.notices ?? []), "Course not recorded — complete later."];
         if (schoolId !== null && yearId && ["new", "old", "continuing"].includes(status)) r.intake = { ...(schoolId === "" ? {schoolName:c.schoolCode}:{}), ...(courseId === "" ? {courseName:c.courseCode}:{}), academicYearId: yearId, schoolId, courseId, yearLevel: normalizeYearLevel(c.yearLevel), classification: status === "new" ? "new" : "continuing" };
       }
       if (raw.format !== "simple" || c.courseCode) try {
@@ -187,8 +195,29 @@ async function validate(
           );
       }
     }
-    if (raw.approvedSelection && (!r.academic || !r.intake || raw.format !== "simple"))
+    if (raw.approvedSelection && raw.format === "simple" && !c.courseCode && r.intake) r.coursePending = true;
+    if (raw.approvedSelection && ((!r.academic && !r.coursePending) || !r.intake || raw.format !== "simple"))
       r.errors.push("Already-approved import requires the eight-column template and complete academic details, including course.");
+    if (raw.receipts) {
+      try {
+        let scopes=await scopeRows(db,OFFICIAL_COHORT);
+        if(r.existingId) {
+          try { const member=await participation(db,r.existingId); scopes=await receivingScopes(db,r.existingId,member.batch_id); }
+          catch(e) { if(!(e instanceof AuthError && e.code === "ACCEPTED_BASELINE_REQUIRED")) throw e; }
+        }
+        const scope=scopes.find(s=>s.semester_id===raw.receipts!.periodId);
+        if(!scope || !available(scope) || scope.academic_year_id!==yearId) throw new AuthError(409,"SEMESTER_WORKFLOW_UNAVAILABLE","Enable approved semester documents for this scholar's working year before importing receipts.");
+        const definitions=await pinnedSemesterDefinitions(db,scope.semester_id,scope.rules,scope.starts,scope.ends);
+        const rules=typeof scope.rules === "string" ? JSON.parse(scope.rules) : scope.rules;
+        const [[previous]]=await db.execute<RowDataPacket[]>("SELECT name FROM semesters WHERE id=?",[rules.predecessorSemesterId]);
+        let cogExempt = false;
+        if (r.existingId) {
+          const [papers] = await db.execute<RowDataPacket[]>("SELECT i.id,c.scholar_semester_id FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id JOIN requirement_coverage cov ON cov.requirement_instance_id=i.id WHERE ss.scholar_id=? AND ss.semester_id=? AND cov.document_kind='cog' ORDER BY cov.revision DESC LIMIT 1 LOCK IN SHARE MODE", [r.existingId,scope.semester_id]);
+          if (papers[0]) cogExempt = (await semesterRequirementContext(db,papers[0].id,papers[0].scholar_semester_id))?.entrantCard?.mode === "initial_requirements";
+        }
+        r.receiptContext={sourceHash:digest(JSON.stringify({scope,definitions,cogExempt})),cor:scope.name,cog:previous?.name ?? "Coverage needs review",cogExempt};
+      } catch(e) { if(!(e instanceof AuthError)) throw e; r.receiptIssue={code:e.code,message:e.message};r.errors.push(`Document receipts: ${e.message}`); }
+    }
     preview.push(r);
   }
   for (let i = 0; i < preview.length; i++)
@@ -225,6 +254,7 @@ export class ImportService {
     const key = parseKey(rawKey);
     const parsed = z
       .object({
+        receipts: z.object({periodId:z.uuid(),cor:z.boolean(),cog:z.boolean(),receivedOn:z.iso.date().refine(d=>d>="1900-01-01"&&d<=today()).optional()}).strict().refine(v=>v.cor||v.cog).optional(),
         approvedSelection: z.object({ reference: z.string().trim().min(3).max(200).regex(/^\P{Cc}+$/u), effectiveOn: z.iso.date().refine(d => d >= "1900-01-01" && d <= today(), "Use a valid non-future approval date.") }).strict().optional(),
         mappings: z.array(z.object({ kind: z.enum(["schools", "courses"]), supplied: z.string().trim().min(1).max(1000), id: z.uuid() }).strict()).max(MAX_IMPORT_ROWS * 2).default([]),
         fileName: z
@@ -256,12 +286,13 @@ export class ImportService {
       async () => {},
     );
     const buffer = Buffer.from(parsed.data.base64, "base64"),
-      fileHash = digest(JSON.stringify({ base64: buffer.toString("base64"), mappings: parsed.data.mappings, ...(parsed.data.approvedSelection ? { approvedSelection: parsed.data.approvedSelection } : {}) }));
+      fileHash = digest(JSON.stringify({ base64: buffer.toString("base64"), mappings: parsed.data.mappings, ...(parsed.data.receipts ? {receipts:parsed.data.receipts}:{}), ...(parsed.data.approvedSelection ? { approvedSelection: parsed.data.approvedSelection } : {}) }));
     const rows = await parseWorkbook(buffer);
     return this.authorization.withPermission(
       actor,
       "scholars.create",
       async (db, access) => {
+        if(parsed.data.receipts && (!parsed.data.approvedSelection || !["requirements.receive","requirements.generate"].every(c=>access.permissions.some(p=>p.code===c)))) throw new AuthError(403,"PERMISSION_DENIED","Import receipts require an already-approved list and receiving/preparation permissions.");
         if (parsed.data.approvedSelection && !["scholarship.status.approve", "continuing.approve"].every(code => access.permissions.some(p => p.code === code)))
           throw new AuthError(403, "PERMISSION_DENIED", "A Coordinator must import an already-approved scholar list.");
         await db.query(
@@ -290,6 +321,7 @@ export class ImportService {
           for (const row of rows) { row.working = { ...working, code: years[0].code }; row.cells.academicYearCode = years[0].code; row.mappings = parsed.data.mappings; }
         }
         if (parsed.data.approvedSelection) for (const row of rows) row.approvedSelection = parsed.data.approvedSelection;
+        if (parsed.data.receipts) for (const row of rows) row.receipts=parsed.data.receipts;
         const preview = await validate(db, rows),
           hash = digest(JSON.stringify(preview)),
           id = randomUUID();
@@ -316,6 +348,7 @@ export class ImportService {
           fileName: parsed.data.fileName,
           hash,
           rows: preview,
+          ...receiptPreview(preview),
           ready: ready(preview),
           result: null,
           workingYear: rows[0].working?.code,
@@ -350,6 +383,7 @@ export class ImportService {
       fileName: j.file_name,
       hash: j.preview_hash,
       rows,
+      ...receiptPreview(rows),
       ready: ready(rows),
       workingYear: rows[0].working?.code,
       unresolved: await unresolved(db, rows),
@@ -377,6 +411,8 @@ export class ImportService {
       .object({
         hash: z.string().regex(/^[a-f0-9]{64}$/),
         confirm: z.literal(true),
+        coursePendingConfirmed:z.literal(true).optional(),
+        receiptsConfirmed:z.literal(true).optional(),
       })
       .strict()
       .safeParse(body);
@@ -415,6 +451,8 @@ export class ImportService {
             "This confirmation key belongs to another import.",
           );
         if (staged.result) return staged.result;
+        if(staged.rows.some(r=>r.coursePending) && !input.data.coursePendingConfirmed) throw new AuthError(422,"COURSE_PENDING_CONFIRMATION_REQUIRED","Confirm the listed missing-course exceptions before importing.");
+        if(staged.rows[0]?.receipts && (!input.data.receiptsConfirmed || !["requirements.receive","requirements.generate"].every(c=>access.permissions.some(p=>p.code===c)))) throw new AuthError(422,"RECEIPT_CONFIRMATION_REQUIRED","Confirm physical receipt for every applicable scholar and retain receiving/preparation permissions.");
         if (!staged.ready)
           throw new AuthError(
             409,
@@ -456,7 +494,7 @@ export class ImportService {
         };
         const scholars = new ScholarService({...scoped, readSnapshot: (user,permission,run) => scoped.withPermission(user,permission ?? "scholars.read",run)}),
           academic = new AcademicService(scoped),
-          qualification = new QualificationService(scoped),
+          qualification = new QualificationService(scoped, approved ? id : undefined),
           result: ImportResult = { items: [] };
         const continuing: { scholarId: string; version: number; sourceRow: number; originalName: string }[] = [];
         for (const row of fresh) {
@@ -473,7 +511,7 @@ export class ImportService {
                 },
                 requestId,
               );
-          const record = row.academic
+          let record = row.academic
             ? await academic.create(
                 actor,
                 person.id,
@@ -491,6 +529,10 @@ export class ImportService {
             const resolved = await resolvePlacementReferences(db,{...intake,courseId:intake.courseId ?? ""},actor,requestId);
             intake.schoolId=resolved.schoolId; intake.courseId=resolved.courseId || null;
             await db.execute("INSERT INTO scholar_intakes(id,scholar_id,academic_year_id,school_id,course_id,year_level,classification,supplied_details,import_job_id,source_row,actor_id,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))", [randomUUID(), person.id, intake.academicYearId, intake.schoolId, intake.courseId, intake.yearLevel, intake.classification, JSON.stringify(row.cells), id, row.row, actor]);
+            if(row.coursePending && approved) {
+              record=await createCoursePending(db,actor,requestId,{scholarId:person.id,academicYearId:intake.academicYearId,schoolId:intake.schoolId,yearLevel:intake.yearLevel,importId:id,sourceRow:row.row,reference:approved.reference,effectiveOn:approved.effectiveOn});
+              result.coursePendingCount=(result.coursePendingCount??0)+1;
+            }
             if (approved) {
               const selectionEvidence = { effectiveOn: approved.effectiveOn, reference: approved.reference, reason: `Already approved for working year; import ${id}, row ${row.row}` };
               const annual = await qualification.command(actor, person.id, "create", randomUUID(), { expectedVersion: 0, academicYearId: intake.academicYearId, ...selectionEvidence }, requestId);
@@ -513,6 +555,23 @@ export class ImportService {
           if (approved) {
             const [actors] = await db.execute<RowDataPacket[]>("SELECT full_name FROM users WHERE id=?", [actor]);
             await new ContinuingService(undefined, scoped).command(actor, roster.id, randomUUID(), { expectedRevision: 0, decision: "accepted", effectiveOn: approved.effectiveOn, issuer: actors[0].full_name, reference: approved.reference, reviewed: true, reason: `Already-approved scholar import ${id}` }, requestId);
+          }
+        }
+        const receipts=fresh[0]?.receipts;
+        if(receipts) {
+          // Roster acceptance, provisioning and receipt events share this transaction.
+          const receiver=new RequirementReceiptService(scoped as AuthorizationService);
+          const routineDay=receipts.receivedOn ?? today();
+          for(const person of result.items) {
+            const prepared=await provisionSemesterRecords(db,access,actor,person.id,randomUUID(),{periodId:receipts.periodId},requestId);
+            const [instances]=await db.execute<RowDataPacket[]>("SELECT i.id,i.status,c.scholar_semester_id FROM requirement_instances i JOIN requirement_checklists c ON c.id=i.checklist_id WHERE i.checklist_id=? FOR UPDATE",[prepared.id]);
+            for(const instance of instances) {
+              const context=await semesterRequirementContext(db,instance.id,instance.scholar_semester_id);
+              if(!context || !(context.documentKind==='cor'?receipts.cor:receipts.cog) || context.entrantCard?.mode==='initial_requirements') continue;
+              if(instance.status!=='not_submitted') throw new AuthError(409,"IMPORT_RECEIPT_EXISTS",`Row ${person.row}: document already has evidence; use its existing receiving workflow.`);
+              await receiver.record(db,actor,instance.id,parseReceipt({expectedVersion:0,receivedOn:routineDay,physicalReference:`Import ${id}, row ${person.row}`,storageLocation:null,remarks:null,...(context.entrantCard?{entrantCardId:context.entrantCard.id,documentType:'shs_grading_card'}:{})}),requestId,key);
+              result.receivedCount=(result.receivedCount??0)+1;
+            }
           }
         }
         await db.execute(

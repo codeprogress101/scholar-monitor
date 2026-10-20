@@ -38,7 +38,9 @@ export class SubmissionWindowService {
     return this.authorization.withPermission(actor, "configuration.read", async (db) => {
       await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
       const c = await context(db, id), time = await clock(db);
+      const [[historical]]=await db.execute<RowDataPacket[]>("SELECT revision,import_job_id,batch_id,DATE_FORMAT(deadline_on,'%Y-%m-%d') AS deadlineOn,DATE_FORMAT(reported_release_on,'%Y-%m-%d') AS reportedReleaseOn FROM historical_payout_setups WHERE cycle_id=? ORDER BY revision DESC LIMIT 1",[id]);
       return {
+        historical:historical ? {revision:Number(historical.revision),importId:String(historical.import_job_id),batchId:String(historical.batch_id),deadlineOn:String(historical.deadlineOn),reportedReleaseOn:String(historical.reportedReleaseOn)} : null,
         cycle: c.cycle, period: { semesterVersion: Number(c.period.semesterVersion), yearVersion: Number(c.period.yearVersion), startsOn: String(c.period.startsOn), endsOn: String(c.period.endsOn) },
         termNumber: c.mapping ? Number(c.mapping.term_number) : null, mappedTerms: c.mappings.map((m) => ({ termNumber: Number(m.term_number), cycleId: String(m.cycle_id) })),
         mappingStale: c.stale, ambiguous: c.ambiguous, legacyBatchesWithUnknownDeadline: c.legacyCount,

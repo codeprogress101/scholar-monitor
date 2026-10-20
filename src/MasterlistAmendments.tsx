@@ -14,6 +14,7 @@ import { configurationRequest as request } from "./configuration-api";
 const labels: Record<AmendmentKind, string> = {
   school_transfer: "School transfer",
   course_shift: "Course shift",
+  course_completion: "Complete course",
   both: "School and course change",
   year_level_correction: "Year-level correction",
   award_number: "Award number correction",
@@ -65,7 +66,7 @@ export default function MasterlistAmendments({
   }>(null);
   const [fields, setFields] = useState({
     scholarId: initialScholarId,
-    kind: (initialScholarId ? "course_shift" : "year_level_correction") as AmendmentKind,
+    kind: (initialScholarId ? (detail.entries.find(e=>e.scholarId===initialScholarId)?.snapshot.placement.coursePending ? "course_completion" : "course_shift") : "year_level_correction") as AmendmentKind,
     schoolId: "",
     courseId: "",
     yearLevel: "",
@@ -122,7 +123,7 @@ export default function MasterlistAmendments({
     setForm({ action, id });
     setFields({
       scholarId: initialScholarId,
-      kind: initialScholarId ? "course_shift" : "year_level_correction",
+      kind: initialScholarId ? (detail.entries.find(e=>e.scholarId===initialScholarId)?.snapshot.placement.coursePending ? "course_completion" : "course_shift") : "year_level_correction",
       schoolId: "",
       courseId: "",
       yearLevel: "",
@@ -142,7 +143,7 @@ export default function MasterlistAmendments({
     const specific =
       fields.kind === "school_transfer"
         ? destination("school",fields.schoolId,schools)
-        : fields.kind === "course_shift"
+        : (fields.kind === "course_shift" || fields.kind === "course_completion")
           ? destination("course",fields.courseId,courses)
           : fields.kind === "both"
             ? {...destination("school",fields.schoolId,schools),...destination("course",fields.courseId,courses)}
@@ -352,7 +353,7 @@ export default function MasterlistAmendments({
                           key: "courseId",
                           label: "Amended course",
                           items: courses,
-                          show: ["course_shift", "both"].includes(fields.kind),
+                          show: ["course_shift", "course_completion", "both"].includes(fields.kind),
                         },
                       ] as const
                     )

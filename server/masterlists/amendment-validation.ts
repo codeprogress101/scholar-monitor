@@ -42,7 +42,7 @@ export function parseAmendment(body: unknown) {
           ? ["schoolId", "courseId"]
           : v.kind === "school_transfer"
             ? ["schoolId"]
-            : v.kind === "course_shift"
+            : v.kind === "course_shift" || v.kind === "course_completion"
               ? ["courseId"]
               : v.kind === "year_level_correction"
                 ? ["yearLevel"]

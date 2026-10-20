@@ -13,6 +13,7 @@ import type {
 import { configurationRequest as request } from "./configuration-api";
 const kinds = {
   course_shift: "Course shift",
+  course_completion: "Complete course",
   school_transfer: "School transfer",
   both: "School and course change",
   year_level_correction: "Year-level correction",
@@ -46,7 +47,7 @@ export default function AcademicChanges({
     target: string;
   }>(null);
   const [fields, setFields] = useState({
-    kind: "course_shift",
+    kind: view?.current.coursePending ? "course_completion" : "course_shift",
     schoolId: "",
     courseId: "",
     yearLevel: "",
@@ -93,9 +94,9 @@ export default function AcademicChanges({
   ) {
     if (!view) return;
     setFields({
-      kind: "course_shift",
+      kind: view?.current.coursePending ? "course_completion" : "course_shift",
       schoolId: view.current.school.name,
-      courseId: view.current.course.name,
+      courseId: view.current.coursePending ? "" : view.current.course.name,
       yearLevel: view.current.yearLevel,
       effectiveOn: "",
       reason: "",
@@ -151,7 +152,7 @@ export default function AcademicChanges({
   return (
     <div className="border-top mt-3 pt-3">
       <h5>Placement changes</h5>
-      {view && canApprove && <PlacementPolicyReview id={id} view={view} schools={schools} courses={courses} session={session}/>}
+      {view && !view.current.coursePending && canApprove && <PlacementPolicyReview id={id} view={view} schools={schools} courses={courses} session={session}/>}
       <p className="alert alert-info py-2">
         The Coordinator approves each request. Year-level corrections
         are recorded separately from transfers and shifts.
@@ -247,12 +248,12 @@ export default function AcademicChanges({
                           ...fields,
                           kind: e.target.value,
                           schoolId: view.current.school.name,
-                          courseId: view.current.course.name,
+                          courseId: view.current.coursePending ? "" : view.current.course.name,
                           yearLevel: view.current.yearLevel,
                         })
                       }
                     >
-                      {Object.entries(kinds).map(([key, label]) => (
+                      {Object.entries(kinds).filter(([key])=>view.current.coursePending ? key==="course_completion" : key!=="course_completion").map(([key, label]) => (
                         <option key={key} value={key}>
                           {label}
                         </option>
@@ -273,7 +274,7 @@ export default function AcademicChanges({
                         key: "courseId",
                         label: "New course",
                         items: courses,
-                        enabled: ["course_shift", "both"].includes(fields.kind),
+                        enabled: ["course_shift", "course_completion", "both"].includes(fields.kind),
                       },
                     ] as const
                   )

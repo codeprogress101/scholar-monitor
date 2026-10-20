@@ -1,0 +1,15 @@
+{
+  "coordinator": "PENDING",
+  "technicalOwner": "PENDING",
+  "pilotStaff": "PENDING",
+  "clientPCs": ["PENDING-PC-1", "PENDING-PC-2"],
+  "windowStart": "PENDING: ISO 8601 with +08:00",
+  "windowEnd": "PENDING: maximum two hours after start",
+  "maintenanceApproved": false,
+  "keepLANData": true,
+  "manifestSha256": "PENDING",
+  "rehearsalFile": "PENDING: private rehearsal result path",
+  "acceptanceFile": "PENDING: private bound acceptance result path",
+  "recoveryKeyCustodyConfirmed": false,
+  "recoveryKeyCustodyReference": "PENDING: custody record only, never key bytes"
+}

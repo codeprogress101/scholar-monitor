@@ -6,6 +6,7 @@ export const AMENDMENT_KINDS = [
   "year_level_correction",
   "award_number",
   "identity_refresh",
+  "course_completion",
 ] as const;
 export type AmendmentKind = (typeof AMENDMENT_KINDS)[number];
 export type AmendmentView = {

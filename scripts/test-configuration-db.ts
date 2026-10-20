@@ -1,4 +1,5 @@
 import { testRolloverReceiving } from "./test-rollover-receiving.js";
+import { testHistoricalPolicyScenarios } from "./test-historical-policy-scenarios.js";
 import { rolloverFixture, correctedGraduateFixture } from "./rollover-fixture.js";
 import "dotenv/config";
 import assert from "node:assert/strict";
@@ -52,7 +53,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 53);
+  assert.equal((await applyMigrations(admin)).length, 55);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -709,6 +710,7 @@ try {
   await admin.execute("UPDATE system_settings SET setting_value=? WHERE id=?",[winner.id,calendarSetting.id]);
   pass("Existing destination records preserved; incompatible selection flagged, retry summary stable, provenance constraints enforced");
   await testRolloverReceiving(request, winner.id, terms[1].id, newAnnuals[0].scholar_id, newAnnuals[0].id);
+  await testHistoricalPolicyScenarios(request, root, accounts.get("system_admin")!.id);
   console.log(
     `All ${passed} configuration scenarios passed in an isolated disposable database.`,
   );

@@ -1,5 +1,11 @@
 import type { PoolConnection } from "mysql2/promise";
 const primed = new WeakMap<PoolConnection, Map<string, unknown>>();
+const computed = new WeakMap<PoolConnection,Map<string,Promise<unknown>>>();
+export async function computedRead<T>(db:PoolConnection,key:string,read:()=>Promise<T>):Promise<T>{
+ const cache=computed.get(db);if(!cache)return read();
+ let value=cache.get(key);if(!value){if(cache.size>=4096)cache.delete(cache.keys().next().value!);value=read();cache.set(key,value);}
+ return structuredClone(await value) as T;
+}
 export function primeRead(db: PoolConnection, sql: string, values: unknown[], rows: unknown) {
   primed.get(db)?.set(JSON.stringify(["execute", sql, values]), rows);
 }
@@ -11,6 +17,7 @@ export function primeRead(db: PoolConnection, sql: string, values: unknown[], ro
 export function cachedReads(connection: PoolConnection): PoolConnection {
   const cache = new Map<string, Promise<unknown>>();
   const prepared = new Map<string, unknown>();
+  const derived = new Map<string,Promise<unknown>>();
   const proxy = new Proxy(connection, {
     get(target, property) {
       if (property !== "execute" && property !== "query") {
@@ -22,6 +29,7 @@ export function cachedReads(connection: PoolConnection): PoolConnection {
         if (typeof sql !== "string" || !/^\s*SELECT\b/i.test(sql)) {
           cache.clear();
           prepared.clear();
+          derived.clear();
           return invoke();
         }
         if (/UTC_TIMESTAMP|NOW\(/i.test(sql)) return invoke();
@@ -39,5 +47,6 @@ export function cachedReads(connection: PoolConnection): PoolConnection {
     },
   });
   primed.set(proxy, prepared);
+  computed.set(proxy,derived);
   return proxy;
 }

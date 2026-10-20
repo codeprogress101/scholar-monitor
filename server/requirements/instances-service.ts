@@ -81,8 +81,8 @@ export async function readChecklists(db: PoolConnection, rows: RowDataPacket[]):
         instances.map(async (i) => {
           const state = await requirementState(db, i.id);
           const originalReused = Boolean(effective?.some(v => v.id === i.id && v.targetId !== i.id));
-          let verificationNeedsReview = false;
-          if (originalReused && state.status === "verified") {
+          let verificationNeedsReview = Boolean(state.priorApproval&&!state.priorApproval.valid);
+          if (originalReused && state.status === "verified" && !state.priorApproval?.valid) {
             try { verificationNeedsReview = !verificationMatches(await savedVerificationContext(db, i.id), state.history.at(-1)?.details.verification); }
             catch (e) { if (!(e instanceof AuthError)) throw e; verificationNeedsReview = true; }
           }

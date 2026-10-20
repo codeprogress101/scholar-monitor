@@ -1,0 +1,11 @@
+import {describe,it,expect} from "vitest";
+import {priorApprovalSchema} from "../server/requirements/prior-approval-service";
+import {historicalSetupSchema} from "../server/payouts/historical-setup";
+const id="00000000-0000-4000-8000-000000000001",hash="a".repeat(64);
+const approval={importId:id,semesterId:id,scopeHash:hash,items:[{id,sourceHash:hash}],approvalOn:null,deadlineOn:"2026-09-28",reference:"BATCH 1",sourceLocation:"Reviewed batch papers",reason:"Previously completed assessment",documentsPreviouslyVerified:true,academicEligibilityPreviouslyApproved:true,deadlineCompliancePreviouslyApproved:true,correctMistakenWaivers:false};
+describe("Prior batch approval contracts",()=>{
+ it("allows an explicitly unknown historical approval date without inventing findings",()=>{expect(priorApprovalSchema.parse(approval).approvalOn).toBeNull();expect(priorApprovalSchema.safeParse({...approval,findings:{enrolled:true}}).success).toBe(false);});
+ it("requires each distinct scholar and every prior-review confirmation",()=>{expect(priorApprovalSchema.safeParse({...approval,items:[...approval.items,...approval.items]}).success).toBe(false);for(const key of ["documentsPreviouslyVerified","academicEligibilityPreviouslyApproved","deadlineCompliancePreviouslyApproved"])expect(priorApprovalSchema.safeParse({...approval,[key]:false}).success).toBe(false);});
+ it("does not accept invalid dates, empty provenance or missing source revisions",()=>{for(const patch of [{deadlineOn:"2026-02-30"},{sourceLocation:""},{scopeHash:""},{items:[{id}]}])expect(priorApprovalSchema.safeParse({...approval,...patch}).success).toBe(false);});
+ it("keeps historical payroll setup separate from opening, receipt and payment commands",()=>{const setup={expectedCycleVersion:4,expectedSemesterVersion:1,expectedYearVersion:1,importId:id,deadlineOn:"2026-09-28",reportedReleaseOn:"2026-10-06",reference:"BATCH 1",sourceLocation:"Prior approval",reason:"Historical batch setup",reviewed:true};expect(historicalSetupSchema.safeParse(setup).success).toBe(true);for(const patch of [{reviewed:false},{paid:true},{action:"open"},{receivedOn:"2026-09-28"}])expect(historicalSetupSchema.safeParse({...setup,...patch}).success).toBe(false);});
+});

@@ -1,4 +1,5 @@
 import type { RequirementWaiver } from "./waiver-model.js";
+import { priorApprovalForDocument } from "./prior-approval-source.js";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type {
   RequirementStatus,
@@ -48,19 +49,24 @@ export async function requirementState(db: PoolConnection, id: string) {
         recordedAt: w.recorded,
       }
     : null;
+  const priorApproval = await priorApprovalForDocument(db, id);
+  const [[correction]] = waiver ? await db.execute<RowDataPacket[]>("SELECT approval_id FROM prior_batch_waiver_corrections WHERE waiver_id=?",[waiver.id]) : [[]];
+  const activeWaiver = waiver && !correction;
   const latest = history.at(-1);
-  const status: RequirementStatus = waiver
+  const status: RequirementStatus = priorApproval?.valid && (receipts.length || latest) ? "verified" : activeWaiver
     ? "waived"
     : (latest?.toStatus ?? (receipts.length ? "submitted" : "not_submitted"));
   return {
+    priorApproval,
+    waiverCorrected: Boolean(correction),
     status,
-    version: waiver?.version ?? latest?.version ?? (receipts.length ? 1 : 0),
+    version: Math.max(priorApproval?.decisionVersion??0, activeWaiver ? waiver!.version : latest?.version ?? (receipts.length ? 1 : 0)),
     lastEffectiveOn:
-      waiver?.effectiveOn ??
+      (activeWaiver ? waiver!.effectiveOn : null) ??
       latest?.effectiveOn ??
       receipts[0]?.effective_on ??
       null,
-    latestEventId: waiver?.id ?? latest?.id ?? null,
+    latestEventId: activeWaiver && !priorApproval?.valid ? waiver!.id : latest?.id ?? null,
     history,
     waiver,
     satisfiesNormalRequirement: satisfiesNormalRequirement(status),

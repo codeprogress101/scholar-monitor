@@ -1,0 +1,25 @@
+import {useRef,useState} from "react";
+import {ApiError,type Session} from "./auth-api";
+import {configurationRequest as request} from "./configuration-api";
+export type PriorCommand={path:string;key:string;body:Record<string,unknown>;route:"scholars"|"payouts"};
+const commands=new Map<string,PriorCommand>();
+export function retainPriorCommand(actor:string,command:PriorCommand|null){if(command)commands.set(actor,structuredClone(command));else commands.delete(actor);}
+export const pendingPrior=(actor:string)=>{const c=commands.get(actor);return c?structuredClone(c):null;};
+if(typeof window!=="undefined")window.addEventListener("beforeunload",event=>{if(commands.size){event.preventDefault();event.returnValue="";}});
+export function usePriorCommand(session:Session,path:string){
+ const [initial]=useState(()=>{const c=pendingPrior(session.user.id);return c?.path===path?c:null;});
+ const pending=useRef<PriorCommand|null>(initial),running=useRef(false);
+ const [uncertain,setUncertain]=useState(Boolean(initial)),[saving,setSaving]=useState(false),[error,setError]=useState("");
+ async function run(body:Record<string,unknown>,route:PriorCommand["route"],retry=false){
+  if(running.current||(!retry&&pending.current))return null;
+  if(!retry&&commands.has(session.user.id)){setError("Resolve your retained approval command before starting another action.");return null;}
+  if(!retry)pending.current={path,key:crypto.randomUUID(),body:structuredClone(body),route};
+  const command=pending.current;if(!command)return null;
+  commands.set(session.user.id,structuredClone(command));running.current=true;setSaving(true);setError("");
+  try{const result=await request<Record<string,unknown>>(command.path,{body:command.body,key:command.key,csrf:session.csrfToken,signal:AbortSignal.timeout(300000)});pending.current=null;commands.delete(session.user.id);setUncertain(false);return result;}
+  catch(e){const unresolved=!(e instanceof ApiError)||e.status>=500||(retry&&!(e.status===409&&["BATCH_SOURCE_CHANGED","VERSION_CONFLICT","SOURCE_CHANGED","PAYROLL_REVIEW_STALE","HISTORICAL_SETUP_REVIEW_REQUIRED","PRIOR_BATCH_APPROVAL_REQUIRED"].includes(e.code)));
+   setUncertain(unresolved);if(!unresolved){pending.current=null;commands.delete(session.user.id);}setError(e instanceof Error?e.message:"Could not confirm this command. Retry the same action.");return null;
+  }finally{running.current=false;setSaving(false);}
+ }
+ return {initial,run,error,saving,uncertain,locked:saving||uncertain};
+}

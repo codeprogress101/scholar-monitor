@@ -2,6 +2,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type { OvrFinalization } from "./model.js";
 import { AuthError } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
+import {decodeStoredJson} from "../stored-json.js";
 export type OvrAmendment = {
   id: string;
   version: number;
@@ -28,7 +29,7 @@ export type OvrAmendment = {
   decisionReference?: string;
 };
 const decode = <T>(v: string | T): T =>
-  typeof v === "string" ? JSON.parse(v) : v;
+  decodeStoredJson<T>(v);
 export async function amendments(
   db: PoolConnection,
   id: string,

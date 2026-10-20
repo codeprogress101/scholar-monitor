@@ -1,3 +1,4 @@
+import {encodeStoredJson,decodeStoredJson} from "../stored-json.js";
 import { amendFrozenForm } from "./amended-form.js";
 import { validationDetails } from "../validation-details.js";
 import { randomUUID } from "node:crypto";
@@ -100,9 +101,7 @@ export class OvrAmendmentService {
               "IDEMPOTENCY_CONFLICT",
               "This command key was used for different evidence.",
             );
-          return typeof retry[0].result === "string"
-            ? JSON.parse(retry[0].result)
-            : retry[0].result;
+          return decodeStoredJson<OvrBatch>(retry[0].result);
         }
         const [[managedPayroll]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE", [id]);
         if (managedPayroll) throw new AuthError(409, "MANAGED_RELEASE_REVIEW_REQUIRED", "This numbered payroll has a frozen ordinary semester allocation. Release or amendment needs the corresponding controlled allocation workflow; generating the Payroll Form does not record payment.");
@@ -270,7 +269,7 @@ export class OvrAmendmentService {
             revision,
             batch.state,
             batch.action,
-            JSON.stringify(batch),
+            encodeStoredJson(batch),
             actor,
           ],
         );
@@ -297,7 +296,7 @@ export class OvrAmendmentService {
             id,
             revision,
             amendment.state,
-            JSON.stringify(amendment),
+            encodeStoredJson(amendment),
             actor,
           ],
         );
@@ -310,7 +309,7 @@ export class OvrAmendmentService {
             actor,
             requestId,
             input.reason,
-            JSON.stringify({
+            encodeStoredJson({
               amendmentId: amendment.id,
               revision,
               reference: input.reference,
@@ -324,7 +323,7 @@ export class OvrAmendmentService {
         );
         await db.execute(
           "INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",
-          [actor, key, hash, JSON.stringify(batch)],
+          [actor, key, hash, encodeStoredJson(batch)],
         );
         return batch;
       },

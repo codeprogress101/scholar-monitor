@@ -1,6 +1,16 @@
 # F36 — User acceptance and release checklist
 
-Candidate: **v0.37.0**, XAMPP MariaDB, 45 migrations (validate exact names and checksums against the current acceptance report). F35 is accepted by the request to proceed. F36 remains **pending human acceptance and production readiness**. Automated evidence is not Coordinator or technical-owner sign-off.
+## Current office launch - 19 October 2026
+
+**Updated installation result, 09:38 Asia/Manila:** supervised LAN release `release-20261019-daytime` is installed with all 53 expected migrations/checksums and preserved original business values. The daytime candidate passed 52 configured invocations and 394 unit tests; a fresh post-update backup restored successfully. [Final installation evidence](../output/go-live-20261019-daytime/REPORT.md). Reboot/client checks, independent off-host backup confirmation, official setup, full-day pilot and Coordinator/technical-owner office-wide acceptance are still pending. Preparation requirements below describe the earlier checkpoint and do not override the installed result.
+
+Use [the supervised release procedure](../deployment/office-release/README.md) and its [pilot acceptance record](../deployment/office-release/PILOT-CHECKLIST.md). Current candidate: 53 migration files; inspected live baseline: 48 matching applied migrations. The application baseline is commit `f15de55` with additional deployment tooling awaiting its own final validation. Recheck exact hashes and use the new dated acceptance evidence; old counts and results below describe historical checkpoints.
+
+Go-live remains pending named owners/window/client PCs, target upgrade/recovery rehearsal, frozen-artifact acceptance, restart/second-PC validation, one-working-day pilot, official configuration, off-host recovery/key custody and explicit Coordinator/technical-owner sign-off. Automated evidence never supplies those operational approvals.
+
+## Historical acceptance checkpoints
+
+Historical candidate: **v0.37.0**, XAMPP MariaDB, 45 migrations at that checkpoint. F35 was accepted by the request to proceed. F36 remained **pending human acceptance and production readiness**. Automated evidence is not Coordinator or technical-owner sign-off.
 
 ## Repeatable technical gate
 

@@ -1,4 +1,5 @@
 import { requirePlacementPolicy } from "./placement-policy.js";
+import { coursePendingForRecord, completeCoursePending } from "./course-pending.js";
 import { randomUUID } from "node:crypto";
 import {resolvePlacementReferences} from "./references.js";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -44,11 +45,14 @@ export async function academicCurrent(db: PoolConnection, id: string) {
     ? json(latest.after_value)
     : {
         schoolId: row.school_id,
-        courseId: row.course_id,
+        courseId: row.course_id ?? "",
         yearLevel: row.year_level,
         school: { code: row.school_code, name: row.school_name },
-        course: { code: row.course_code, name: row.course_name },
+        course: { code: row.course_code ?? "", name: row.course_name ?? "Course pending" },
       };
+  if (!latest && !row.course_id) {
+    placement.coursePending = await coursePendingForRecord(db, row.id);
+  }
   return {
     row,
     placement,
@@ -88,6 +92,7 @@ async function validate(
   validatePlacementChange(state.placement, input);
   await requirePlacementPolicy(db,state.row.id,state.row.scholar_id,state.placement,input,input.effectiveOn);
   const after = { ...state.placement };
+  if (input.kind === "course_completion") delete after.coursePending;
   for (const [table, key, snapshot] of [
     ["schools", "schoolId", "school"],
     ["courses", "courseId", "course"],
@@ -303,6 +308,7 @@ export class AcademicChangesService {
               input.reference,
             ],
           );
+          if (action === "approve" && q.kind === "course_completion") await completeCoursePending(db, recordId, actor, requestId, { requestId: id, reference: q.reference_text, reason: q.reason });
           details = { requestId: id, resultingVersion, decision: input };
         }
         await db.execute(

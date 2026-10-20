@@ -3,6 +3,9 @@ import { StatusBadge } from "./WorkspaceUI";
 import { payrollPeriods, type PayrollPeriodScope } from "./payroll-periods";
 import { receivingToday } from "./receiving-selection";
 import PayrollSubmissionWindows from "./PayrollSubmissionWindows";
+import HistoricalPayrollSetup from "./HistoricalPayrollSetup";
+import PayoutCommandRecovery from "./PayoutCommandRecovery";
+import {pendingPrior,retainPriorCommand} from "./prior-command";
 import RoutineEvidence from "./RoutineEvidence";
 import OvrDrafts from "./OvrDrafts";
 import { payrollSelection, rememberPayroll } from "./payroll-navigation";
@@ -75,6 +78,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null),
     panel = useRef<HTMLFormElement>(null);
+  const [recovery,setRecovery]=useState(()=>{const c=pendingPrior(session.user.id);return c?.route==="payouts"&&!c.path.endsWith("historical-setup")?c.path:null;});
   useEffect(() => {
     const followLink = () => {updateOvrCycle(payrollSelection("cycle"));setReportCycle(new URLSearchParams(window.location.hash.split("?")[1]).get("view") === "eligibility" ? payrollSelection("cycle") : null);};
     window.addEventListener("hashchange",followLink);
@@ -194,6 +198,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!editor || busy.current) return;
+    if(pendingPrior(session.user.id)){setError("Resolve the retained payout command first.");return;}
     busy.current = true;
     setSaving(true);
     setError("");
@@ -232,6 +237,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
       signature = JSON.stringify({ path, body });
     if (pending.current?.signature !== signature)
       pending.current = { signature, key: crypto.randomUUID() };
+    retainPriorCommand(session.user.id,{path,key:pending.current.key,body,route:"payouts"});
     try {
       const result = await request<PayoutCycle>(path, {
         body,
@@ -239,10 +245,12 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
         key: pending.current.key,
       });
       pending.current = null;
+      retainPriorCommand(session.user.id,null);
       refresh();
       setNotice(`${result.code}: ${result.state}, revision ${result.version}.`);
     } catch (e) {
       setError(message(e));
+      if(!(e instanceof ApiError)||e.status>=500)setRecovery(path);else retainPriorCommand(session.user.id,null);
     } finally {
       busy.current = false;
       setSaving(false);
@@ -259,7 +267,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
       style={{ overflowWrap: "anywhere" }}
     >
       <div className="d-flex justify-content-between gap-2 flex-wrap">
-        <h1>Payroll</h1>
+        <h1 id="payroll-title" tabIndex={-1}>Payroll</h1>
         <button
           className="btn btn-outline-secondary"
           disabled={saving}
@@ -269,6 +277,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
         </button>
       </div>
       <p>{scope === "past" ? "Open a past period to view its payroll batches." : scope === "current" ? "Review candidates and prepare payroll for the current semester." : "Choose a period to view its payroll batches."}</p>
+      {recovery&&<PayoutCommandRecovery session={session} path={recovery} onResolved={()=>{setRecovery(null);pending.current=null;refresh();requestAnimationFrame(()=>document.getElementById("payroll-title")?.focus());}}/>}
       {!ovrCycle && <nav className="filter-pills" aria-label="Payroll periods">{(["current", "past", "upcoming", "all"] as const).map(value => {
         const count = payrollPeriods(data.items, parents, value, day).length;
         if (value === "upcoming" && !count) return null;
@@ -513,7 +522,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
                   ? () => { setOvrCycle(c.id); setReportCycle(c.id); setHistory(null); window.scrollTo(0, 0); }
                   : undefined
               }
-            />{ovrCycle === c.id && <PayrollSubmissionWindows cycleId={c.id} session={session} canManage={permissions.includes("payroll.windows.manage")} />}</div>
+            />{operate&&permissions.includes("payroll.windows.manage")&&["draft","open"].includes(c.state)&&<HistoricalPayrollSetup cycleId={c.id} session={session} onChanged={()=>setReload(n=>n+1)}/>}{ovrCycle === c.id && <PayrollSubmissionWindows cycleId={c.id} session={session} canManage={permissions.includes("payroll.windows.manage")} />}</div>
           ))}
           <div className="d-flex gap-3 align-items-center" hidden={!!ovrCycle || periods.length <= 25}>
             <button
@@ -547,6 +556,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
           cycleId={ovrCycle}
           session={session}
           permissions={permissions}
+          onUncertain={setRecovery}
         /></>
       )}
       {reportCycle && (
@@ -617,7 +627,8 @@ function PayoutCycleCard({
       aria-label={`Payout ${c.code}`}
     >
       <div className="card-heading"><div><h2>{c.name}</h2><p className="muted-line">{c.yearCode} / {c.semesterCode} · Target {c.targetDate}</p></div><StatusBadge tone={c.state === "open" ? "success" : "neutral"}>{c.state}</StatusBadge>
-        {onOvr && <button className="btn configuration-primary" disabled={saving} onClick={onOvr}>Open payroll</button>}
+        {onOvr && <button className="btn btn-outline-secondary" disabled={saving} onClick={onOvr}>View payroll batches</button>}
+        {c.state === "draft" && !c.periodUnavailable && (operate ? <button className="btn configuration-primary" disabled={saving} onClick={()=>onEdit("open",c)}>Open payout cycle</button> : <p>A Coordinator must open this payout cycle.</p>)}
       </div>
       {c.periodUnavailable && <p className="text-muted">This period is unavailable for changes.</p>}
       <details className="secondary-details"><summary>Documents & semester options</summary>
@@ -660,7 +671,7 @@ function PayoutCycleCard({
         )}
         {operate &&
           (c.state === "draft" && !c.periodUnavailable
-            ? ["open"]
+            ? []
             : c.state === "open"
               ? ["lock", "close"]
               : c.state === "locked"

@@ -1,5 +1,21 @@
 # Office LAN installation and remaining acceptance
 
+## Installed update - 19 October 2026, 09:38 Asia/Manila
+
+The user explicitly moved maintenance to daytime and confirmed all LAN users signed out. The supervised update installed `release-20261019-daytime`; the live database now has 53 matching migrations. Existing business values/accounts were preserved, HTTPS configuration retained, and trusted frontend/readiness checks passed. The frozen candidate passed 52 configured checks and 394 unit tests. A fresh post-update encrypted backup restored successfully into a disposable database.
+
+LAN is available for the restricted Staff/Coordinator pilot, not yet accepted office-wide. Coordinator: Rannel Faraon; technical owner: Michael Opiana; pilot Staff: Marc Tamayo. Client records: DESKTOP-C8FMM1U and the label PC 2. Reboot/client acceptance, independent off-host archive evidence, official setup acceptance and the full working-day pilot/sign-offs remain pending. No reboot was forced. [Installation evidence and remaining checks](../output/go-live-20261019-daytime/REPORT.md) supersede preparation-only status below.
+
+## Current release preparation - 19 October 2026
+
+Use [the supervised office release procedure](../deployment/office-release/README.md) and [current release runbook](F36-release-runbook.md). All older installation commands, counts and addresses below are retained as historical evidence, not current execution instructions.
+
+Read-only target inspection found 48 migrations with matching checksums; the candidate contains 53. App startup points to `release-20261012` through installed supervisors. The current origin is `https://monitor.iskolarngdaet.app:3443`, bound to office address `192.168.0.16`; preserve the existing HTTPS configuration. Startup-repair status records installation, but pre-sign-in second-PC/reboot acceptance remains unverified. Do not substitute the historical IP URL or rerun the old direct-action installer.
+
+Keep LAN records/accounts authoritative. Stage and rehearse the upgrade before the agreed after-hours window, run a one-working-day pilot, and obtain explicit office-wide acceptance. Named owners, client PCs, the maintenance date, independent backup/key custody and pilot evidence remain prerequisites; preparation does not establish them.
+
+## Historical installation notes
+
 Prepared on 8 October 2026. This is not yet an approved production go-live.
 
 ## LAN release refreshed - 9 October 2026, 19:52 Asia/Manila

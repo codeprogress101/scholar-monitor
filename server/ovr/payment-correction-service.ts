@@ -1,3 +1,4 @@
+import {encodeStoredJson,decodeStoredJson} from "../stored-json.js";
 import { effectiveRoster } from "./amendment-state.js";
 import { assertNoPaidClaim, claimDeadline, queueUnclaimed } from "./reprocessing.js";
 import { validationDetails } from "../validation-details.js";
@@ -103,9 +104,7 @@ export class PaymentCorrectionService {
               "IDEMPOTENCY_CONFLICT",
               "This command key was used for different correction evidence.",
             );
-          return typeof retry[0].result === "string"
-            ? JSON.parse(retry[0].result)
-            : retry[0].result;
+          return decodeStoredJson<OvrBatch>(retry[0].result);
         }
         const [[managedPayroll]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE", [id]);
         const previous = (await ovrHistory(db, id))[0],
@@ -307,7 +306,7 @@ export class PaymentCorrectionService {
             revision,
             batch.state,
             batch.action,
-            JSON.stringify(batch),
+            encodeStoredJson(batch),
             actor,
           ],
         );
@@ -350,7 +349,7 @@ export class PaymentCorrectionService {
         );
         await db.execute(
           "INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",
-          [actor, key, hash, JSON.stringify(batch)],
+          [actor, key, hash, encodeStoredJson(batch)],
         );
         return batch;
       },

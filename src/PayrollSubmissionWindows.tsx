@@ -45,6 +45,7 @@ export default function PayrollSubmissionWindows({ cycleId, session, canManage }
     <button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={() => void refresh()}>Refresh submission windows</button>
     <ErrorNotice error={error} />{notice && <p role="status">{notice}</p>}
     {data && <>
+      {data.historical&&<p className="alert alert-info">Previously approved batch. Submission deadline: {data.historical.deadlineOn}. Reported batch release: {data.historical.reportedReleaseOn}. Planned target: {data.cycle.targetDate}. Individual payment records are separate.</p>}
       {canManage && <ContinuingSemesterSetup compact batchId={OFFICIAL_COHORT} session={session} canConfigure />}
       <p>All dates use Philippine time (Asia/Manila). The cutoff includes the whole selected day. Submission cutoff and financial processing are separate.</p>
       <p>{data.termNumber ? `Regular semester ${data.termNumber}` : "Regular payout period not mapped"}. {data.mappedTerms.length} of 2 regular semester periods mapped for this academic year.</p>

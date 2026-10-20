@@ -1,4 +1,5 @@
 export type Placement = {
+  coursePending?: { id: string; revision: number; importId: string; sourceRow: number; approvalReference: string };
   schoolId: string;
   courseId: string;
   yearLevel: string;

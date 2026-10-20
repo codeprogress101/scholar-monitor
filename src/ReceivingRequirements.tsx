@@ -223,7 +223,7 @@ export default function ReceivingRequirements({
   if (readOnly) return <section aria-label="Saved requirement history">
     <ErrorNotice error={error} />
     {loading ? <p>Loading saved documents...</p> : !savedChecklists.length ? <p>No saved documents in this record for the selected year.</p> : savedChecklists.map(c => <details key={c.id} className="border rounded p-3 my-2"><summary>{c.yearCode} | {c.semesterName}{c.payoutCode ? ` | ${c.payoutCode}` : ""}</summary>
-      {c.items.map(i => <article key={i.id} className="border-top py-2"><h5>{i.name} - {REQUIREMENT_STATUS_LABELS[i.status]}</h5><ReceiptTimingEvidence evidence={i.receiptEvidence} />
+      {c.items.map(i => <article key={i.id} className="border-top py-2"><h5>{i.name} - {(i.priorApproval?.valid && !i.priorApproval.retainedIndividual ? "Verified - prior batch approval" : REQUIREMENT_STATUS_LABELS[i.status])}</h5><ReceiptTimingEvidence evidence={i.receiptEvidence} />
         {i.receipt && <p>Received {i.receipt.receivedOn} by {i.receipt.receiverName}.</p>}
         <RequirementWorkflow instance={i} session={session} canVerify={false} canReceive={false} closed disabled onBusy={setSaving} onChanged={refresh} />
       </article>)}
@@ -300,7 +300,7 @@ export default function ReceivingRequirements({
                 <label><input type="checkbox" checked={selected.includes(i.id)} disabled={!canReceive || i.status !== "not_submitted" || i.notRequired || Boolean(i.receivingBlocked)}
                   onChange={e => setSelected(old => e.target.checked ? [...old, i.id] : old.filter(x => x !== i.id))}/>
                   <span>{i.notRequired ? "COG - not required this semester" : i.entrantCard ? "Senior-high-school grading card" : i.name}<small>{i.entrantCard ? `${i.entrantCard.issuingSchool} / ${i.entrantCard.schoolYear} / ${i.entrantCard.gradingPeriod}` : i.coverage?.semesterName ?? "Coverage needs review"}</small></span></label>
-                <span className="status-badge">{i.receivingBlocked ? "Review existing source" : i.notRequired ? "Initial requirements reviewed" : i.verificationNeedsReview ? "Verification needs review" : REQUIREMENT_STATUS_LABELS[i.status]}</span>
+                <span className="status-badge">{i.receivingBlocked ? "Review existing source" : i.notRequired ? "Initial requirements reviewed" : i.verificationNeedsReview ? "Verification needs review" : (i.priorApproval?.valid && !i.priorApproval.retainedIndividual ? "Verified - prior batch approval" : REQUIREMENT_STATUS_LABELS[i.status])}</span>
                 {(i.firstSemesterExceptionAvailable || i.entrantCard) && !checklist.periodUnavailable && can('semesters.configure') && <EntrantGradingCardReview existing={Boolean(i.entrantCard)} id={i.id} session={session} onSaved={refresh}/>}
                 {!i.notRequired && !i.receivingBlocked && <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setReviewId(i.id)}>{i.status === "not_submitted" ? (canReceive && can("requirements.verify") ? "Receive and verify" : "Details") : (i.verificationNeedsReview || ["submitted","resubmitted","for_verification"].includes(i.status)) ? "Verify" : "Details"}</button>}
               </div>)}
@@ -375,12 +375,12 @@ export default function ReceivingRequirements({
             </fieldset>
           </form>
           {continuing && <SemesterAcademicDetails key={checklist.id} scholarId={id} semesterId={checklist.semesterId} session={session} canEdit={can("academic.edit") && !checklist.periodUnavailable} canCorrect={can("academic.changes.approve")} onAcademicSetup={onAcademicSetup} onReady={setAcademicReady} onChanged={() => setRevision((n) => n + 1)} />}
-          {continuing && !academicReady && <p className="alert alert-info">Before verifying, complete the semester academic details above.</p>}
+          {continuing && !academicReady && !checklist.items.some(i=>i.priorApproval?.valid) && <p className="alert alert-info">Semester academic details are still needed for academic assessment. Document verification checks its own identity, coverage and placement context.</p>}
           {reviewId && <FocusedDialog title={checklist.items.find(i=>i.id===reviewId)?.name ?? "Document"} busy={saving} onClose={()=>setReviewId(null)}>
             {checklist.items.filter(i=>i.id===reviewId).map((i) => (
 
               <article className="border-top py-3" key={i.id}>
-                <p className="status-badge">{i.verificationNeedsReview ? "Verification needs review" : REQUIREMENT_STATUS_LABELS[i.status]}</p>
+                <p className="status-badge">{i.verificationNeedsReview ? "Verification needs review" : (i.priorApproval?.valid && !i.priorApproval.retainedIndividual ? "Verified - prior batch approval" : REQUIREMENT_STATUS_LABELS[i.status])}</p>
                 {i.originalReused && <p className="small">Existing document reused. Original receipt and decisions retained.</p>}
                 <p className="small">{i.entrantCard ? `${i.entrantCard.issuingSchool} / ${i.entrantCard.schoolYear} / ${i.entrantCard.gradingPeriod}` : i.coverage ? `Coverage: ${i.coverage.semesterName}` : "Coverage needs review"}</p>
                 <details><summary>Instructions & receiving history</summary><p>{i.instructions}</p>
@@ -395,12 +395,12 @@ export default function ReceivingRequirements({
                   </p>
                 )}
                 </details>
-                <QuickDocumentReview allowReceiveOnly={false} key={`quick-${i.id}-${i.version}-${academicReady}`} instance={i} session={session} canReceive={canReceive} canVerify={can("requirements.verify") && (!continuing || academicReady || Boolean(i.entrantCard))} closed={checklist.periodUnavailable} disabled={saving} onBusy={setSaving} onChanged={()=>{focusAfterRefresh.current=i.id;setReviewId(null);refresh();}} onAcademicSetup={onAcademicSetup}/>
+                <QuickDocumentReview allowReceiveOnly={false} key={`quick-${i.id}-${i.version}-${academicReady}`} instance={i} session={session} canReceive={canReceive} canVerify={can("requirements.verify")} closed={checklist.periodUnavailable} disabled={saving} onBusy={setSaving} onChanged={()=>{focusAfterRefresh.current=i.id;setReviewId(null);refresh();}} onAcademicSetup={onAcademicSetup}/>
                 <details><summary>Corrections and decision history</summary>
                 <RequirementWorkflow
                   instance={i}
                   session={session}
-                  canVerify={can("requirements.verify") && (!continuing || academicReady || Boolean(i.entrantCard))}
+                  canVerify={can("requirements.verify")}
                   canReceive={canReceive}
                   disabled={saving}
                   closed={checklist.periodUnavailable}
@@ -408,6 +408,8 @@ export default function ReceivingRequirements({
                   onChanged={refresh}
                   onAcademicSetup={onAcademicSetup}
                 />
+                </details>
+                <details><summary>Exceptional actions</summary><p>A waiver is for an authorized exception, not for documents already submitted.</p>
                 <RequirementWaiverForm
                   instance={i}
                   session={session}
@@ -426,7 +428,7 @@ export default function ReceivingRequirements({
       {!loading && otherSaved.length > 0 && <details className="border rounded p-3 mt-3"><summary>Document history ({otherSaved.length})</summary>
         {otherSaved.map(c => { const p = periods.find(p => p.semesterId === c.semesterId && p.payoutCycleId === c.payoutCycleId); return <details className="border-top py-2" key={c.id}>
           <summary>{c.yearCode} / {p?.label ?? `${c.semesterName} / ${c.payoutCode ?? "Semester documents"}`}</summary>
-          <p>{c.items.map(i => `${i.code}: ${REQUIREMENT_STATUS_LABELS[i.status]}`).join("; ")}</p>
+          <p>{c.items.map(i => `${i.code}: ${(i.priorApproval?.valid && !i.priorApproval.retainedIndividual ? "Verified - prior batch approval" : REQUIREMENT_STATUS_LABELS[i.status])}`).join("; ")}</p>
           {p?.preferred && <button type="button" className="btn btn-outline-secondary" disabled={saving} onClick={() => choosePeriod(p.id)}>Receive for this open period</button>}
           {c.items.map(i => <article className="border-top py-2" key={i.id}>
             <h5>{i.name} ({i.code})</h5>

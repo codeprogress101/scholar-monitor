@@ -22,6 +22,7 @@ export type ReferenceMapping = { kind: "schools" | "courses"; supplied: string; 
 export type Intake = { schoolName?: string; courseName?: string; academicYearId: string; schoolId: string; courseId: string | null; yearLevel: string; classification: IntakeClassification };
 export type ImportColumn = (typeof IMPORT_COLUMNS)[number];
 export type ImportRow = {
+  receipts?: { periodId: string; cor: boolean; cog: boolean; receivedOn?: string };
   row: number;
   cells: Record<ImportColumn, string>;
   errors: string[];
@@ -32,6 +33,9 @@ export type ImportRow = {
   approvedSelection?: { reference: string; effectiveOn: string };
 };
 export type ImportPreviewRow = ImportRow & {
+  receiptIssue?: { code: string; message: string };
+  coursePending?: boolean;
+  receiptContext?: { sourceHash:string; cor:string; cog:string; cogExempt?: boolean };
   warnings: string[];
   notices?: string[];
   intake?: Intake;
@@ -50,6 +54,8 @@ export type ImportPreviewRow = ImportRow & {
   references: { id: string; version: number }[];
 };
 export type ImportResult = {
+  coursePendingCount?: number;
+  receivedCount?: number;
   selectedCount?: number;
   continuingRosterId?: string;
   items: {
@@ -60,6 +66,8 @@ export type ImportResult = {
   }[];
 };
 export type ImportPreview = {
+  receiptBlockers?: { code: string; message: string; rows: number[] }[];
+  receiptGroups?: { cor: string; cog: string; corCount: number; cogCount: number; exemptCount: number }[];
   id: string;
   fileName: string;
   hash: string;

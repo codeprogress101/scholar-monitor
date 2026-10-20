@@ -1,4 +1,5 @@
 import { validationDetails } from "../validation-details.js";
+import {decodeStoredJson} from "../stored-json.js";
 import type { Access } from "../authorization/policy.js";
 import { z } from "zod";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -37,8 +38,7 @@ export function parseAuditQuery(raw: unknown) {
   parseAuditExport({ from: parsed.data.from, to: parsed.data.to });
   return parsed.data;
 }
-const decode = (v: unknown): unknown =>
-  typeof v === "string" ? JSON.parse(v) : v;
+const decode = (v: unknown): unknown => decodeStoredJson(v);
 export function redactAuditDetails(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactAuditDetails);
   if (value && typeof value === "object")

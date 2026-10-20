@@ -27,7 +27,7 @@ const schemas = {
       ...common,
       action: z.literal("verify"),
       effectiveOn: common.effectiveOn.optional(),
-      attestation: z.literal("all-five-checked").optional(),
+      attestation: z.enum(["all-five-checked","course-comparison-deferred"]).optional(),
       document: z
         .object({
           scholarId: z.uuid(),
@@ -40,6 +40,8 @@ const schemas = {
           definitionVersionId: z.uuid(),
           coverageId: z.uuid().optional(),
           entrantCardId: z.uuid().optional(),
+          coursePendingId: z.uuid().optional(),
+          coursePendingRevision: z.number().int().positive().optional(),
           semesterRevision: z.number().int().positive().optional(),
           predecessorSourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         })
@@ -48,7 +50,7 @@ const schemas = {
         .object({
           identity: z.literal(true),
           period: z.literal(true),
-          placement: z.literal(true),
+          placement: z.boolean(),
           applicability: z.literal(true),
           validity: z.literal(true),
         })
@@ -81,6 +83,7 @@ export function parseRequirementWorkflow(
   if (action === "verify" && raw && typeof raw === "object" && "attestation" in raw && raw.attestation === "all-five-checked" && !("checks" in raw)) {
     raw = { ...raw, checks: {identity:true,period:true,placement:true,applicability:true,validity:true} };
   }
+  if (action === "verify" && raw && typeof raw === "object" && "attestation" in raw && raw.attestation === "course-comparison-deferred" && !("checks" in raw)) raw={...raw,checks:{identity:true,period:true,placement:false,applicability:true,validity:true}};
   const result = z
     .discriminatedUnion("action", [
       schemas["send-for-verification"],
@@ -107,6 +110,10 @@ export function parseRequirementWorkflow(
           }
         : validationDetails(result.error),
     );
+  if(result.data.action==='verify') {
+    const deferred=result.data.attestation==='course-comparison-deferred';
+    if(deferred === result.data.checks.placement || (deferred && (!result.data.document.coursePendingId || !result.data.document.coursePendingRevision))) throw new AuthError(422,'VERIFICATION_ATTESTATION_CONFLICT','Confirm the ordinary checks or explicitly defer course comparison against a current approved exception.');
+  }
   return result.data;
 }
 export function requirementTransition(

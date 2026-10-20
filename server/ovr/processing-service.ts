@@ -1,8 +1,9 @@
+import {encodeStoredJson,decodeStoredJson} from "../stored-json.js";
 import { treasuryEvidence } from "./treasury-state.js";
 import { requireNumberedPayroll } from "./legacy-boundary.js";
 import { requireClaimOpen, assertNoPaidClaim, queueUnclaimed, reprocessingQueue } from "./reprocessing.js";
 import { validationDetails } from "../validation-details.js";
-import { managedRelease, checkManagedPayment, entitlementEvent, linkManagedOutcome } from "./managed-release.js";
+import { managedRelease, managedAllocationIds, checkManagedPayment, entitlementEvent, linkManagedOutcome } from "./managed-release.js";
 import { paymentCorrections } from "./payment-correction-state.js";
 import { amendments, effectiveRoster } from "./amendment-state.js";
 import { randomUUID } from "node:crypto";
@@ -93,7 +94,7 @@ export function processingTransition(action: ProcessingAction, state: string) {
   );
 }
 const decode = <T>(value: string | T): T =>
-  typeof value === "string" ? JSON.parse(value) : value;
+  decodeStoredJson<T>(value);
 export class OvrProcessingService {
   constructor(private authorization: AuthorizationService) {}
   async command(
@@ -168,8 +169,9 @@ export class OvrProcessingService {
             "A frozen roster is required.",
           );
         const frozen = effective.snapshot;
-        const releaseEntries = managedPayroll ? await managedRelease(db, id) : null;
-        if (releaseEntries && (releaseEntries.length > frozen.entries.length || frozen.entries.some(e => !releaseEntries.some(a => a.scholarshipId === e.scholarshipId) && !e.evidence.reprocessing))) throw new AuthError(409, "PAYROLL_ALLOCATION_MISMATCH", "Reconcile frozen membership with its reserved semester allocations before processing.");
+        const releaseEntries = managedPayroll ? await managedRelease(db, id, "scholarshipId" in input ? input.scholarshipId : undefined) : null;
+        const allocationIds=releaseEntries?await managedAllocationIds(db,id):null;
+        if (allocationIds && (allocationIds.length > frozen.entries.length || frozen.entries.some(e => !allocationIds.includes(e.scholarshipId) && !e.evidence.reprocessing))) throw new AuthError(409, "PAYROLL_ALLOCATION_MISMATCH", "Reconcile frozen membership with its reserved semester allocations before processing.");
         if (holding && !releaseEntries) throw new AuthError(409, "MANAGED_BATCH_REQUIRED", "Payment holds require a numbered payroll allocation.");
         const priorDate =
           holding && previous.closure ? previous.closure.effectiveOn : action === "submit" || holding
@@ -305,7 +307,7 @@ export class OvrProcessingService {
         else delete batch.payment;
         await db.execute(
           "INSERT INTO ovr_batch_events(batch_id,revision,state,action,snapshot,actor_id,occurred_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6))",
-          [id, batch.revision, state, action, JSON.stringify(batch), actor],
+          [id, batch.revision, state, action, encodeStoredJson(batch), actor],
         );
         const paymentId = randomUUID();
         if (action === "record-payment") {
@@ -357,7 +359,7 @@ export class OvrProcessingService {
         );
         if (!historicalRequestId) await db.execute(
           "INSERT INTO ovr_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)",
-          [actor, key, hash, JSON.stringify(batch)],
+          [actor, key, hash, encodeStoredJson(batch)],
         );
         return batch;
   }

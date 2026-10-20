@@ -222,7 +222,7 @@ export async function readOperationalReport(
           values: [
             item.human_id,
             item.name,
-            view.effective.label,
+            view.current.sources.semesterPayroll?.priorApproval?.valid ? `${view.effective.label} - prior batch assessment (${view.current.sources.semesterPayroll.priorApproval.reference})` : view.effective.label,
             issues.length ? "Blocked" : "Passed",
             issues.map((i) => i.message).join(" "),
             view.current.sourceHash,

@@ -8,13 +8,22 @@ import { paymentRecords } from "./processing-state.js";
 
 export type ReleaseEntry = { scholarshipId: string; entitlementId: string; state: "approved_for_release" | "withheld" | "unclaimed" | "released"; held: boolean; reasons: string[]; sourceHash: string; history: { action: string; reason: string; reference: string | null; actor: string; recordedAt: string }[] };
 const decode = <T>(v: string | T): T => typeof v === "string" ? JSON.parse(v) : v;
-export async function managedRelease(db: PoolConnection, batchId: string): Promise<ReleaseEntry[] | null> {
+async function managedAllocations(db:PoolConnection,batchId:string){
+  return (await db.execute<RowDataPacket[]>("SELECT a.*,e.scholar_id,e.semester_id,e.scholar_semester_id FROM payroll_allocations a JOIN semester_entitlements e ON e.id=a.entitlement_id WHERE a.batch_id=? UNION ALL SELECT a.*,e.scholar_id,e.semester_id,e.scholar_semester_id FROM payroll_reprocessing_attempts t JOIN payroll_reprocessing q ON q.id=t.reprocessing_id JOIN payroll_allocations a ON a.entitlement_id=q.entitlement_id JOIN semester_entitlements e ON e.id=a.entitlement_id WHERE t.batch_id=? ORDER BY scholarship_id", [batchId,batchId]))[0];
+}
+/** Full reservation membership remains a separate invariant even when checking
+ * current release findings for just one scholar. Preserve duplicates for the
+ * caller's cardinality check. */
+export async function managedAllocationIds(db:PoolConnection,batchId:string){
+  return (await managedAllocations(db,batchId)).map(a=>String(a.scholarship_id));
+}
+export async function managedRelease(db: PoolConnection, batchId: string, scholarshipId?:string): Promise<ReleaseEntry[] | null> {
   const [[managed]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=?", [batchId]);
 
-  const [allocations] = await db.execute<RowDataPacket[]>("SELECT a.*,e.scholar_id,e.semester_id,e.scholar_semester_id FROM payroll_allocations a JOIN semester_entitlements e ON e.id=a.entitlement_id WHERE a.batch_id=? UNION ALL SELECT a.*,e.scholar_id,e.semester_id,e.scholar_semester_id FROM payroll_reprocessing_attempts t JOIN payroll_reprocessing q ON q.id=t.reprocessing_id JOIN payroll_allocations a ON a.entitlement_id=q.entitlement_id JOIN semester_entitlements e ON e.id=a.entitlement_id WHERE t.batch_id=? ORDER BY scholarship_id", [batchId,batchId]);
+  const allocations = await managedAllocations(db,batchId);
   if (!managed && !allocations.length) return null;
   const payments = await paymentRecords(db, batchId), result: ReleaseEntry[] = [];
-  for (const a of allocations) {
+  for (const a of allocations.filter(a=>!scholarshipId||a.scholarship_id===scholarshipId)) {
     const reasons: string[] = [];
     const [events] = await db.execute<RowDataPacket[]>("SELECT e.*,u.full_name FROM semester_entitlement_events e JOIN users u ON u.id=e.actor_id WHERE entitlement_id=? ORDER BY revision DESC LOCK IN SHARE MODE", [a.entitlement_id]);
     const hold = events.map(e => decode<{ releaseHold?: boolean }>(e.snapshot)).find(e => typeof e.releaseHold === "boolean");
@@ -52,7 +61,7 @@ export async function managedRelease(db: PoolConnection, batchId: string): Promi
   return result;
 }
 export async function checkManagedPayment(db: PoolConnection, batchId: string, scholarshipId: string, outcome: string, amount: string) {
-  const entries = await managedRelease(db, batchId);
+  const entries = await managedRelease(db, batchId, scholarshipId);
   if (!entries) return null;
   const entry = entries.find(e => e.scholarshipId === scholarshipId);
   if (!entry) {

@@ -211,5 +211,13 @@ export const schemaManifest = [
   {
     "version": "20261014030000_f43_policy_consistency.sql",
     "checksum": "eee4e6f09e09c6eb50dff843c334b8acaddbf965d655ab9416ecebdf49e42349"
+  },
+  {
+    "version": "20261020010000_f44_course_pending_import.sql",
+    "checksum": "74b5d68cee3eb6e83ce0ffbc9412853ac7859220c71186b9599a17ee41aa6d64"
+  },
+  {
+    "version": "20261020020000_f45_prior_batch_approval.sql",
+    "checksum": "4983d3cfdcab10c10550b49ce6613445230df2cbbe4225d5e032b6808c583e7e"
   }
 ] as const;

@@ -29,6 +29,7 @@ export class SemesterEligibilityPreviewService {
       const [payments] = await db.execute<RowDataPacket[]>("SELECT p.id FROM payment_records p JOIN scholarship_records r ON r.id=p.scholarship_id JOIN payout_cycles c ON c.id=p.cycle_id WHERE r.scholar_id=? AND c.semester_id=? ORDER BY p.id LOCK IN SHARE MODE", [scholar, semester]);
       const [batches] = await db.execute<RowDataPacket[]>("SELECT DISTINCT b.id FROM ovr_entries e JOIN ovr_batches b ON b.id=e.batch_id JOIN payout_cycles c ON c.id=b.cycle_id JOIN scholarship_records r ON r.id=e.scholarship_id WHERE r.scholar_id=? AND c.semester_id=? ORDER BY b.id LOCK IN SHARE MODE", [scholar, semester]);
       const sources: SemesterEligibilitySources = {
+        ...(view.priorApproval?.valid?{priorApproval:view.priorApproval}:{}),
         scholarId: scholar, semesterId: semester, semesterOwnerId: ctx.owner.id, academicYearId: ctx.scope.academic_year_id,
         participation: { rollover: await rolloverAdmission(db, scholar, ctx.scope.academic_year_id), id: participation.id, basis: participation.entry_basis, eventId: participation.event_id, revision: participation.revision, action: participation.action },
         period: { starts: ctx.scope.starts, ends: ctx.scope.ends, available: ctx.source.available, asOf: today() }, category: view.category,

@@ -15,6 +15,8 @@ export type RequirementReceipt = {
   recordedAt: string;
 };
 export type RequirementInstance = {
+  priorApproval?: (import("./prior-approval-source.js").PriorApproval & {retainedIndividual?: boolean}) | null;
+  waiverCorrected?: boolean;
   receivingBlocked?: string | null;
   originalReused?: boolean;
   verificationNeedsReview?: boolean;

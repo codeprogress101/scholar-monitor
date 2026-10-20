@@ -189,7 +189,10 @@ export class RequirementService {
               "IDEMPOTENCY_CONFLICT",
               "Command key already used with different data.",
             );
-          return JSON.parse(receipts[0].result as string) as RequirementVersion;
+          const completed = JSON.parse(receipts[0].result as string) as RequirementVersion;
+          const [[retained]] = await db.execute<RowDataPacket[]>("SELECT id FROM requirement_definition_versions WHERE id=? LOCK IN SHARE MODE", [completed.id]);
+          if (!retained) throw new AuthError(409, "POLICY_REMOVED", "This policy was removed by an authorized maintenance reset. Refresh the current policies.");
+          return completed;
         }
         let before: RequirementVersion | undefined;
         if (id) {

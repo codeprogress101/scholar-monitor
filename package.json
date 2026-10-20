@@ -50,6 +50,7 @@
     "test:payout-cycles-db": "tsx scripts/test-payout-cycles-db.ts",
     "test:requirement-waivers-db": "tsx scripts/test-requirement-waivers-db.ts",
     "test:requirement-workflow-db": "tsx scripts/test-requirement-workflow-db.ts",
+    "test:course-pending-db": "tsx scripts/test-eligibility-db.ts --main-payroll --course-pending",
     "test:imports-db": "tsx scripts/test-import-db.ts",
     "test:concurrency-db": "node scripts/test-concurrency.mjs",
     "test:audit-db": "tsx scripts/test-eligibility-db.ts --audit",

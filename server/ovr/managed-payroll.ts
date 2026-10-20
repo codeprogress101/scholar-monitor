@@ -10,6 +10,7 @@ import type { OvrBatch, OvrEntry, OvrFinalization } from "./model.js";
 import { ovrEvidence, ovrEligibilityIssues } from "./rules.js";
 import { type PayrollForm } from "./payroll-form.js";
 import { cohortReads } from "../eligibility/cohort-reads.js";
+import { currentPayrollTemplate } from "./payroll-form.js";
 
 export async function managedCandidates(db: PoolConnection, batch: OvrBatch, cycle: PayoutCycle) {
   const [[window]] = await db.execute<RowDataPacket[]>("SELECT w.batch_number,v.revision,DATE_FORMAT(v.opens_on,'%Y-%m-%d') AS opens,DATE_FORMAT(v.cutoff_on,'%Y-%m-%d') AS cutoff,p.term_number,y.code AS year FROM payroll_submission_windows w JOIN payroll_submission_window_versions v ON v.batch_id=w.batch_id JOIN regular_payout_periods p ON p.cycle_id=w.cycle_id JOIN academic_years y ON y.id=p.academic_year_id WHERE w.batch_id=? ORDER BY v.revision DESC LIMIT 1 LOCK IN SHARE MODE", [batch.id]);
@@ -35,8 +36,8 @@ export async function managedCandidates(db: PoolConnection, batch: OvrBatch, cyc
     if (index < 0) items.push(item); else items[index] = item;
   }
   const signatoryConfig = await currentSignatories(db);
-  const sourceHash = digest(JSON.stringify({ signatoryConfig, window: { revision: window.revision, opens: window.opens, cutoff: window.cutoff }, items: items.map(i => ({ id: i.scholarshipId, fingerprint: i.evidence.fingerprint, deferral: i.deferred })) }));
-  const form: PayrollForm = { template: "daet-sample-v1", year: String(window.year).replace(/^AY\s*/i, ""), term: Number(window.term_number), batchNumber: Number(window.batch_number), rows: items.filter(i => i.eligible && !i.deferred?.current).map(i => i.row!).sort((a,b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.scholarId.localeCompare(b.scholarId)), ...signatoryConfig };
+  const sourceHash = digest(JSON.stringify({ template: currentPayrollTemplate, signatoryConfig, window: { revision: window.revision, opens: window.opens, cutoff: window.cutoff }, items: items.map(i => ({ id: i.scholarshipId, fingerprint: i.evidence.fingerprint, deferral: i.deferred })) }));
+  const form: PayrollForm = { template: currentPayrollTemplate, year: String(window.year).replace(/^AY\s*/i, ""), term: Number(window.term_number), batchNumber: Number(window.batch_number), rows: items.filter(i => i.eligible && !i.deferred?.current).map(i => i.row!).sort((a,b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.scholarId.localeCompare(b.scholarId)), ...signatoryConfig };
   return { sourceHash, items, form, cutoffOn: String(window.cutoff), opensOn: String(window.opens), cutoffReached: clock.day > window.cutoff, opened: clock.day >= window.opens, pendingCount: items.filter(i => i.pending).length };
 }
 export type ManagedCandidates = NonNullable<Awaited<ReturnType<typeof managedCandidates>>>;

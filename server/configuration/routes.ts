@@ -4,6 +4,8 @@ export function registerConfiguration(
   app: FastifyInstance,
   service: ConfigurationService,
 ) {
+  app.post("/api/v1/configuration/historical-calendar", { bodyLimit: 8192, config: { permission: "configuration.manage" } }, request =>
+    service.historical(request.authSession!.user.id, request.headers["idempotency-key"], request.body, request.id));
   app.get("/api/v1/academic-calendar", { config: { permission: "configuration.read" } }, request => service.calendar(request.authSession!.user.id));
   app.get<{ Params: { kind: string } }>(
     "/api/v1/configuration/:kind",

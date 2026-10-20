@@ -10,6 +10,7 @@ import type { PayoutCycle } from "../payouts/model.js";
 import type { OvrBatch, OvrEntry } from "./model.js";
 import { payrollYear, type PayrollForm } from "./payroll-form.js";
 import { ovrEligibilityIssues, ovrEvidence } from "./rules.js";
+import { currentPayrollTemplate } from "./payroll-form.js";
 
 /** Live draft projection for pre-numbered payrolls. Reads never alter saved membership. */
 export async function automaticDraft(db: PoolConnection, batch: OvrBatch, cycle: PayoutCycle) {
@@ -32,7 +33,7 @@ export async function automaticDraft(db: PoolConnection, batch: OvrBatch, cycle:
   const [records] = await db.execute<RowDataPacket[]>("SELECT r.id,r.scholar_id,a.id AS academic_id,s.first_name,s.middle_name,s.last_name,s.suffix FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id LEFT JOIN academic_records a ON a.scholar_id=r.scholar_id AND a.academic_year_id=r.academic_year_id WHERE r.academic_year_id=? ORDER BY s.last_name,s.first_name,r.id", [cycle.academicYearId]);
   db = await cohortReads(db, cycle.academicYearId, cycle.semesterId, cycle.id);
   const entries: OvrEntry[] = [];
-  const form: PayrollForm = { template: "daet-sample-v1", year: cycle.yearCode.replace(/^AY\s*/i, ""), term, batchNumber: batches.findIndex(b => b.id === batch.id) + 1, rows: [], ...await currentSignatories(db) };
+  const form: PayrollForm = { template: currentPayrollTemplate, year: cycle.yearCode.replace(/^AY\s*/i, ""), term, batchNumber: batches.findIndex(b => b.id === batch.id) + 1, rows: [], ...await currentSignatories(db) };
   const expired = (await claimDeadline(db, cycle.semesterId)).expired;
   for (const r of records) {
     if (expired || (await draftDeferral(db, batch.id, r.id))?.current) continue;

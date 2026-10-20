@@ -47,7 +47,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 53);
+  assert.equal((await applyMigrations(admin)).length, 55);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -306,7 +306,7 @@ try {
   );
   await assert.rejects(
     admin.execute(
-      "INSERT INTO academic_records SELECT ?,scholar_id,academic_year_id,school_id,course_id,year_level,year_code,year_name,school_code,school_name,course_code,course_name,reason,reference_text,actor_id,actor_name,created_at FROM academic_records WHERE id=?",
+      "INSERT INTO academic_records (id,scholar_id,academic_year_id,school_id,course_id,year_level,year_code,year_name,school_code,school_name,course_code,course_name,reason,reference_text,actor_id,actor_name,created_at) SELECT ?,scholar_id,academic_year_id,school_id,course_id,year_level,year_code,year_name,school_code,school_name,course_code,course_name,reason,reference_text,actor_id,actor_name,created_at FROM academic_records WHERE id=?",
       [randomUUID(), first.id],
     ),
     (e: unknown) =>

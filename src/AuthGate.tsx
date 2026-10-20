@@ -16,6 +16,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import App from "./App";
+import { hasPendingBatch } from "./batch-result";
+import {pendingPrior} from "./prior-command";
 import { ApiError, authRequest, type Session } from "./auth-api";
 
 function resetFromLocation() {
@@ -42,8 +44,8 @@ export default function AuthGate() {
       setUnavailable(false);
     } catch (error) {
       if (current !== generation.current) return;
-      setSession(null);
       if (error instanceof ApiError && [401, 403].includes(error.status)) {
+        setSession(null);
         setUnavailable(false);
         if (error.code !== "AUTH_REQUIRED") setMessage(error.message);
       } else {
@@ -122,7 +124,10 @@ export default function AuthGate() {
     );
   if (session && reset === null)
     return (
-      <App session={session} onLogout={() => void logout()} signingOut={busy} />
+      <>
+        {unavailable && <div className="alert alert-warning m-2" role="status">Account connection could not be confirmed. Your current workspace and pending command are retained. <button type="button" className="btn btn-outline-secondary" onClick={()=>void check()}>Retry account connection</button></div>}
+        <App session={session} onLogout={() => void logout()} signingOut={busy} />
+      </>
     );
   return (
     <LoginScreen
@@ -137,8 +142,9 @@ export default function AuthGate() {
       onLogin={(value) => {
         generation.current++;
         setSession(value);
+        setUnavailable(false);
         setMessage("");
-        window.location.hash = "dashboard";
+        window.location.hash = pendingPrior(value.user.id)?.route ?? (hasPendingBatch(value.user.id) ? "scholars" : "dashboard");
       }}
       onReset={() => {
         generation.current++;

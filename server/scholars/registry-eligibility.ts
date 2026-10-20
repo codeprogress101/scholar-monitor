@@ -53,7 +53,7 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
    let satisfied=0;
    for(const item of items) {
     let accepted=Boolean(item.notRequired || (item.satisfiesPayoutRequirement ?? item.satisfiesNormalRequirement));
-    if(accepted && item.status==="verified") {
+    if(accepted && item.status==="verified" && !item.priorApproval?.valid) {
      try { accepted=verificationMatches(await savedVerificationContext(db,item.id),item.history.at(-1)?.details.verification); }
      catch(error) { if(!(error instanceof AuthError)) throw error; accepted=false; }
     }
@@ -69,6 +69,7 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
  }
  result.periodId = period.id;
  const cycle = await currentPayout(db, period.id);
+ const [[regularPeriod]] = await db.execute<RowDataPacket[]>("SELECT cycle_id FROM regular_payout_periods WHERE cycle_id=?", [period.id]);
  const [batchRows] = await db.execute<RowDataPacket[]>("SELECT id FROM ovr_batches WHERE cycle_id=? ORDER BY created_at DESC,id", [period.id]);
  const batches = [];
  for (const row of batchRows) batches.push((await ovrHistory(db, row.id))[0]);
@@ -85,13 +86,15 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
   const satisfied=obligations.filter(r=>r.satisfied && (r.status!=="waived" || r.allowWaiver)).length;
   const sourceReview=view.current.reasons.some(r=>["COVERED_DOCUMENT_UNVERIFIED","VERIFICATION_STALE"].includes(r.code));
   const requirementStatus=!obligations.length?"unavailable":satisfied===obligations.length&&!sourceReview?"complete":obligations.some(r=>!r.instanceId||r.status==="not_submitted")?"missing":"review";
-  summaries.set(scholarId,{status:requirementStatus,label:requirementStatus==="unavailable"?"Unconfigured":requirementStatus==="complete"?"Complete":requirementStatus==="missing"?"Missing documents":"Needs verification / review",total:obligations.length,satisfied});
+  const hasSharedDocuments = !regularPeriod && (summaries.get(scholarId)?.total ?? 0) > 0;
+  if (!hasSharedDocuments) summaries.set(scholarId,{status:requirementStatus,label:requirementStatus==="unavailable"?"Unconfigured":requirementStatus==="complete"?"Complete":requirementStatus==="missing"?"Missing documents":"Needs verification / review",total:obligations.length,satisfied});
   const issues = ovrEligibilityIssues(view);
   if (!view.current.sources.semesterPayroll) {
     const [[academic]] = await db.execute<RowDataPacket[]>("SELECT id FROM academic_records WHERE scholar_id=? AND academic_year_id=?", [scholarId, period.academicYearId]);
     if (!academic || !payrollYear((await academicCurrent(db, academic.id)).placement.yearLevel)) issues.push({ code: "PAYROLL_PLACEMENT_REQUIRED", message: "Complete school, course and a supported year level for the payroll form." });
   }
-  const reasons = [...view.current.reasons, ...issues];
+  const reasons = [...view.current.reasons.filter(r => !hasSharedDocuments || !["CHECKLIST_MISSING", "PAYOUT_POLICY_EMPTY"].includes(r.code)), ...issues,
+    ...(hasSharedDocuments ? [{code:"PAYROLL_PERIOD_SETUP_REQUIRED",message:"Semester documents already exist. A Coordinator must configure this payroll's regular semester and approved submission deadline in Payroll. Do not generate a duplicate document checklist."}] : [])];
   const links: {label:string;href:string}[]=[];
   const link=(label:string,batchId:string,cycleId:string) => links.push({label,href:`#payouts?${new URLSearchParams({cycle:cycleId,batch:batchId})}`});
   const claim=await semesterClaim(db,annual.id,cycle.semesterId);

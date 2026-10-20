@@ -1,4 +1,5 @@
 import { lineage } from "./revisions.js";
+import { completeCoursePending } from "../academic/course-pending.js";
 import { requirePlacementPolicy } from "../academic/placement-policy.js";
 import { randomUUID } from "node:crypto";
 import {resolvePlacementReferences} from "../academic/references.js";
@@ -157,6 +158,7 @@ async function prepare(
     await requirePlacementPolicy(db,policyAcademic.id,before.snapshot.scholarId,current.placement,placement,input.effectiveOn);
     // Only the supported fields are changed; preserved reference labels remain historical.
     after.snapshot.placement = placement;
+    if (input.kind === "course_completion") delete after.snapshot.placement.coursePending;
     await destinations(db, before, after);
     for (const [table, key, snapshotKey] of [
       ["schools", "schoolId", "school"],
@@ -475,6 +477,7 @@ export class MasterlistAmendmentService {
                   decision.reference_text,
                 ],
               );
+              if(q.kind === "course_completion") await completeCoursePending(db,before.snapshot.academicRecordId,actor,requestId,{amendmentId:q.id,reference:q.reference_text});
             }
             const revision = state.chain.revision + 1,
               label = `1.${revision}`;

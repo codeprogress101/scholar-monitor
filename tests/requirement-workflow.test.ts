@@ -17,6 +17,14 @@ const base = {
   remarks: null,
 };
 describe("requirement verification workflow", () => {
+  it("records deferred course comparison explicitly and rejects contradictory checks",()=>{
+    const document={scholarId:randomUUID(),scholarVersion:1,academicYearId:randomUUID(),semesterId:randomUUID(),schoolId:randomUUID(),courseId:null,academicVersion:0,definitionVersionId:randomUUID(),coursePendingId:randomUUID(),coursePendingRevision:1};
+    const input={...base,action:"verify",document,attestation:"course-comparison-deferred"};
+    const result=parseRequirementWorkflow("verify",input);
+    expect(result.action==='verify'&&result.checks.placement).toBe(false);
+    expect(()=>parseRequirementWorkflow("verify",{...input,checks:{identity:true,period:true,placement:true,applicability:true,validity:true}})).toThrow();
+    expect(()=>parseRequirementWorkflow("verify",{...input,document:{...document,coursePendingId:undefined}})).toThrow();
+  });
   it("permits only the intended transition edges", () => {
     const edges: [RequirementStatus, RequirementAction, RequirementStatus][] = [
       ["submitted", "send-for-verification", "for_verification"],

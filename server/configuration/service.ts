@@ -1,4 +1,5 @@
 import { SIGNATORY_CODE, parseSignatories } from "./payroll-signatories.js";
+import { historicalCalendar } from "./historical-calendar.js";
 import { rolloverYear } from "./rollover.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -82,6 +83,9 @@ function available(item: ConfigRecord) {
 }
 export class ConfigurationService {
   constructor(private authorization: AuthorizationService) {}
+  historical(actor: string, key: unknown, input: unknown, requestId: string) {
+    return historicalCalendar(this.authorization, actor, key, input, requestId);
+  }
   async calendar(actorId: string) {
     return this.authorization.withPermission(actorId, "configuration.read", async db => {
       await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");

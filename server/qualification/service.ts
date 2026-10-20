@@ -52,7 +52,7 @@ async function scholarExists(db: PoolConnection, id: string) {
     );
 }
 export class QualificationService {
-  constructor(private authorization: Pick<AuthorizationService, "withPermission">) {}
+  constructor(private authorization: Pick<AuthorizationService, "withPermission">, private approvedImportId?: string) {}
   async review(actor: string, raw: unknown) {
     const parsed = admissionReviewQuery.safeParse(raw);
     if (!parsed.success) throw new AuthError(422, "VALIDATION_FAILED", "Choose an academic year and admission stage; search is limited to 100 characters.");
@@ -219,7 +219,7 @@ export class QualificationService {
             ? "applicant"
             : transition(before!.status, action);
         if (action === "qualify" || action === "validate")
-          await requireAcademicRecord(db, before!.scholarId, academicYearId);
+          await requireAcademicRecord(db, before!.scholarId, academicYearId, this.approvedImportId);
         const version = (before?.version ?? 0) + 1;
         if (action === "create") {
           const [existing] = await db.execute<RowDataPacket[]>(

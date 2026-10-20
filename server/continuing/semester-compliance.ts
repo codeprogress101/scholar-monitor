@@ -1,4 +1,5 @@
 import { effectiveSemesterInstances } from "../requirements/reused-source.js";
+import { priorApprovalForOwner, type PriorApproval } from "../requirements/prior-approval-source.js";
 import { sharedDocumentReview } from "../requirements/shared-semester-documents.js";
 import { policyDate } from "../requirements/semester-policy.js";
 import { randomUUID } from "node:crypto";
@@ -28,6 +29,7 @@ type DocumentSource = { id: string; version: number; eventId: string | null; cov
 type Policy = { id: string; rule: GradingRule; reference: string; authorityReference: string; schoolId: string };
 type Review = { id: string; revision: number; result: ComplianceResult; findings: AcademicFindings; sourceHash: string; supersedesId: string | null; actorName: string; recordedAt: string; reason: string | null; blockers: string[]; documents: DocumentSource[]; gradingRule: Policy | null; academicOnly: boolean; correction: RecordingCorrection | null };
 export type SemesterComplianceView = {
+  priorApproval?: PriorApproval | null;
   sourceHash: string; revision: number; category: "unknown" | "degree" | "non_degree";
   documents: DocumentSource[]; gradingRule: Policy | null; gradingSchool: { id: string; name: string } | null;
   result: ComplianceResult; blockers: string[]; writeBlocker: string | null; stale: boolean; history: Review[];
@@ -61,8 +63,9 @@ export async function loadSemesterCompliance(db: PoolConnection, scholar: string
     // An added calendar check must not invent a new physical receipt. Preserve an
     // older exact document verification when current coverage is still valid;
     // the calendar evidence remains in sourceHash and makes the academic review stale.
-    const verified = state.status === "verified" && Boolean(context && verification && Object.entries(context).every(([k, value]) =>
-      (k === "predecessorSourceHash" && verification.predecessorSourceHash === undefined) || JSON.stringify(value) === JSON.stringify(verification[k as keyof VerificationContext])));
+    const verified = state.status === "verified" && (Boolean(state.priorApproval?.valid) || Boolean(context && verification && Object.entries(context).every(([k, value]) =>
+      (k === "predecessorSourceHash" && verification.predecessorSourceHash === undefined) || JSON.stringify(value) === JSON.stringify(verification[k as keyof VerificationContext]))));
+    if(state.priorApproval?.valid)issue=null;
     if (state.status === "verified" && !verified && !issue) issue = "Document verification is stale. Recheck its identity, placement and coverage.";
     documents.push({ id: instance.id, version: state.version, eventId: state.latestEventId, coverageId: coverages[0]?.id ?? null, kind: coverages[0]?.document_kind ?? null, status: state.status, verified, notRequired:context?.entrantCard?.mode==='initial_requirements', context, issue });
   }
@@ -88,7 +91,7 @@ export async function loadSemesterCompliance(db: PoolConnection, scholar: string
     issues.push("The receiving semester changed after preparation. Coordinator review of its recorded setup is required.");
   if (documents.length !== 2 || !cor || !cog) issues.push("Separate current enrollment (COR or Certificate of Enrollment) and preceding-semester COG coverage is required.");
   for (const d of documents) if (d.issue) issues.push(d.issue);
-  if (!cor?.context || !placement.placement || latest.academic_record_id === null || placement.version !== cor.context.academicVersion || placement.placement.schoolId !== cor.context.schoolId || placement.placement.courseId !== cor.context.courseId)
+  if (!cor?.context || !placement.placement || latest.academic_record_id === null || placement.version !== cor.context.academicVersion || placement.placement.schoolId !== cor.context.schoolId || (placement.placement.courseId || null) !== cor.context.courseId)
     issues.push("Record current semester academic details from the authoritative academic record.");
   const [entitlements] = await db.execute<RowDataPacket[]>("SELECT id FROM semester_entitlements WHERE scholar_semester_id=? LIMIT 1 LOCK IN SHARE MODE", [owner.id]);
   const ended = scope.ends < today();
@@ -119,6 +122,13 @@ export async function loadSemesterCompliance(db: PoolConnection, scholar: string
   const unresolved = unresolvedFindings(history);
   const correctionBlocker = baseBlocker ?? (!policy ? "An approved grading rule is required." : !cor?.verified || !cog?.verified ? "Verify both COR and COG before correcting recorded findings." : !history[0] || stale ? "Review the current evidence before correcting recorded findings." : !unresolved.length ? "No unresolved failed or dropped findings are recorded." : null);
   const view: SemesterComplianceView = { allocated: entitlements.length > 0, allocationReviewBlocker, sourceHash, revision: history[0]?.revision ?? 0, category: source.category, documents, gradingRule: policy, gradingSchool: school, ...assessment, writeBlocker, stale, history, gradingHistory: gradingHistory(policies), ended, endedReviewBlocker, correctionBlocker, unresolvedFindings: unresolved };
+  const priorApproval = await priorApprovalForOwner(db, owner.id);
+  view.priorApproval = priorApproval;
+  if(priorApproval?.valid && history[0]?.id===priorApproval.reviewId && !unavailable && !unresolved.length){
+    view.result="compliant"; view.blockers=[]; view.stale=false; view.category="degree";
+    view.sourceHash=digest(JSON.stringify({basis:"prior_batch_approval",approval:priorApproval,sourceHash}));
+    view.writeBlocker="Prior batch assessment recorded. Use a fresh controlled review when its sources change.";
+  }else if(priorApproval&&!priorApproval.valid){view.blockers.unshift(priorApproval.issue!);}
   return { owner, scope, source, sharedDocuments, view, assessmentInput, policyCount: policies.length, policyRow: row, policies, baseBlocker };
 }
 

@@ -26,6 +26,7 @@ export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
   waived: "Waived",
 };
 export type VerificationContext = {
+  coursePending?: import("../academic/changes-model.js").Placement["coursePending"];
   entrantCard?: import("./entrant-grading-card.js").EntrantCard;
   scholarId: string;
   scholarVersion: number;
@@ -70,11 +71,12 @@ export type RequirementWorkflowEvent = {
   actorName: string;
   recordedAt: string;
   details: {
+    priorBatchApproval?: Pick<import("./prior-approval-source.js").PriorApproval,"id"|"reference"|"sourceLocation">;
     automaticRouting?: boolean;
     decisionAction?: string;
     verification?: VerificationContext;
     checks?: Record<string, boolean>;
-    attestation?: "all-five-checked";
+    attestation?: "all-five-checked" | "course-comparison-deferred";
     receipt?: {
       documentType?: import("./document-evidence.js").ReceivedDocumentType;
       receivedOn: string;

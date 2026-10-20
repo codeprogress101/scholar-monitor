@@ -190,7 +190,7 @@ export default function App({
     const onHash = () => {
       // Window hash listeners can run before a modal's listener. Preserve an
       // unresolved command before changing the route or remounting its owner.
-      const pendingLocation = document.querySelector<HTMLDialogElement>("dialog[open][data-pending-location]")?.dataset.pendingLocation;
+      const pendingLocation = document.querySelector<HTMLElement>("[data-pending-location]")?.dataset.pendingLocation;
       if (pendingLocation !== undefined) {
         window.history.replaceState(null, "", pendingLocation);
         return;

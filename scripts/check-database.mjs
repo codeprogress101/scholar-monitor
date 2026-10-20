@@ -24,7 +24,7 @@ try {
   const [rows] = await connection.query(
     "SELECT version, checksum FROM schema_migrations",
   );
-  assert.equal(rows.length, 53);
+  assert.equal(rows.length, 55);
   for (const row of rows) {
     assert.match(row.version, /^\d{14}_f\d{2}_[a-z_]+\.sql$/);
     const sql = await readFile(

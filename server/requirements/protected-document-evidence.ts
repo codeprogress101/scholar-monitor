@@ -1,8 +1,9 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import {decodeStoredJson} from "../stored-json.js";
 
 type ObjectValue = Record<string, unknown>;
 const object = (v: unknown): v is ObjectValue => !!v && typeof v === "object" && !Array.isArray(v);
-const decode = (v: unknown): unknown => typeof v === "string" ? JSON.parse(v) : v;
+const decode = (v: unknown): unknown => decodeStoredJson(v);
 
 /** Read explicit instance references, never names or definition codes. */
 export function evidenceDocumentIds(raw: unknown): string[] | null {

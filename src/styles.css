@@ -2647,6 +2647,9 @@ h1 {
 .focused-dialog::backdrop { background: rgb(15 35 29 / 35%); }
 .focused-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .focused-dialog h2 { font: 600 20px/1.3 Arial, sans-serif; margin: 0; }
+.focused-dialog.batch-document-dialog { width: min(1080px, calc(100vw - 32px)); }
+.batch-document-table { max-height: 42vh; overflow: auto; }
+.batch-document-table thead { position: sticky; top: 0; background: #fff; z-index: 1; }
 .registry-period-toolbar { display:flex; flex-wrap:wrap; gap:16px; align-items:end; margin-bottom:12px; }
 .registry-period-toolbar label { max-width:380px; }
 .registry-table-scroll { overflow:visible; }

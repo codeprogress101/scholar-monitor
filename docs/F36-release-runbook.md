@@ -1,6 +1,20 @@
 # F36 — Release and rollback procedure
 
-Status: candidate preparation only. The local application remains on loopback/XAMPP. Human acceptance and production configuration are outstanding.
+## Current procedure - 19 October 2026
+
+**Installed at 09:38 Asia/Manila:** `release-20261019-daytime`, 53 matching migrations, supervised startup and preserved LAN business values. The user explicitly authorized daytime maintenance and confirmed sign-out; the default after-hours restriction was retained with a separately tested explicit exception. [Actual installation/verification evidence](../output/go-live-20261019-daytime/REPORT.md). Restricted pilot is available; office-wide, reboot/client and off-host backup acceptance remain pending. The 48-migration baseline described below is the pre-cutover state, not the current database.
+
+The authoritative execution procedure is [Supervised office release](../deployment/office-release/README.md). Older sections below are historical and must not be used to deploy the current candidate. In particular, their migration counts and claim of no schema change are obsolete.
+
+The live baseline is `release-20261012`, with 48 applied migrations and matching historical checksums. The candidate contains 53 migrations: F39 additions, F40 consolidation, F41 shared semester documents, F42 entrant grading cards and F43 policy consistency are pending. Keep LAN records/accounts authoritative. Preserve the installed supervisors and `https://monitor.iskolarngdaet.app:3443`; do not rerun the old direct-action release installer.
+
+Build/stage an immutable artifact outside the web root, rehearse target backup/upgrade/recovery on restored copies, then bind it to a fresh successful unchanged-source gate. Capture operators, two PCs and an approved after-hours window of at most two hours before cutover. Use the reviewed elevated supervised installer, fresh verified backup, preservation checks and restricted runtime grants.
+
+Reboot acceptance from two PCs before host Windows sign-in, a full working-day pilot, approved official configuration, independent backup retrieval/restoration and separate recovery-key custody precede office-wide sign-off. The old runtime rejects the new schema; application-only rollback is not assumed safe. Restore into a separate database and reconcile post-backup writes before any reviewed recovery cutover. Target four operating hours maximum lost work and recovery within one working day. See the linked procedure and pilot checklist for monitoring and exact commands.
+
+## Historical F36 procedure
+
+Historical status: candidate preparation only. Human acceptance and production configuration were outstanding at that checkpoint.
 
 ## Freeze the candidate
 

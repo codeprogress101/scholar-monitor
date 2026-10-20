@@ -44,6 +44,7 @@ export function evaluateEligibility(
       message: "The cycle has no required document policy.",
     });
   for (const requirement of sources.requirements) {
+    if(requirement.documentException?.mode==="initial_requirements" && requirement.satisfied)continue;
     if (!requirement.instanceId || !requirement.status)
       reasons.push({
         code: "REQUIREMENT_MISSING",

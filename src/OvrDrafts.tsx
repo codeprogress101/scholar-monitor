@@ -6,6 +6,7 @@ import { useActionForm } from "./use-action-form";
 import PayrollCandidates from "./PayrollCandidates";
 import { payrollSelection, rememberPayroll } from "./payroll-navigation";
 import RoutineEvidence from "./RoutineEvidence";
+import {pendingPrior,retainPriorCommand} from "./prior-command";
 import ErrorNotice from "./ErrorNotice";
 import PaymentCorrections from "./PaymentCorrections";
 import OvrAmendments from "./OvrAmendments";
@@ -24,10 +25,12 @@ export default function OvrDrafts({
   cycleId,
   session,
   permissions,
+  onUncertain,
 }: {
   cycleId: string;
   session: Session;
   permissions: string[];
+  onUncertain?: (path:string)=>void;
 }) {
   const focusTreasury=useRef(false);
   const [list, setList] = useState<{
@@ -80,7 +83,7 @@ export default function OvrDrafts({
   useEffect(() => {
     const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 15000);
+    const timeout = window.setTimeout(() => c.abort(), 300000);
     request<{ managed?: boolean; cycle: PayoutCycle; items: OvrBatch[]; total: number }>(
       `payout-cycles/${cycleId}/ovr-batches?offset=${offset}&limit=25`,
       { signal: c.signal },
@@ -102,7 +105,7 @@ export default function OvrDrafts({
     if (!selected) return;
     const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 15000);
+    const timeout = window.setTimeout(() => c.abort(), 300000);
     request<OvrDetail>(`ovr-batches/${selected}`, { signal: c.signal })
       .then((r) => {
         if (active) setDetail(r);
@@ -127,7 +130,7 @@ export default function OvrDrafts({
     if (action !== "add") return;
     const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 15000);
+    const timeout = window.setTimeout(() => c.abort(), 300000);
     request<Candidates>(
       `payout-cycles/${cycleId}/eligibility?q=${encodeURIComponent(search)}&offset=${candidateOffset}&limit=25`,
       { signal: c.signal },
@@ -163,6 +166,7 @@ export default function OvrDrafts({
   }
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if(pendingPrior(session.user.id)){setError("Resolve the retained payroll command first.");return;}
     if (!action || !list || busy.current || (action !== "create" && !detail))
       return;
     const f = new FormData(e.currentTarget),
@@ -190,6 +194,7 @@ export default function OvrDrafts({
       signature = JSON.stringify({ path, body });
     if (pending.current?.signature !== signature)
       pending.current = { signature, key: crypto.randomUUID() };
+    retainPriorCommand(session.user.id,{path,key:pending.current.key,body,route:"payouts"});
     busy.current = true;
     setSaving(true);
     setError("");
@@ -199,8 +204,10 @@ export default function OvrDrafts({
         body,
         key: pending.current.key,
         csrf: session.csrfToken,
+        signal:AbortSignal.timeout(300000),
       });
       pending.current = null;
+      retainPriorCommand(session.user.id,null);
       setSelected(r.id);
       setAction(null);
       setNotice(
@@ -219,6 +226,7 @@ export default function OvrDrafts({
       refresh();
     } catch (e) {
       setError(message(e));
+      if(!(e instanceof ApiError)||e.status>=500)onUncertain?.(path);else retainPriorCommand(session.user.id,null);
       if (e instanceof ApiError && e.code === "OVR_VALIDATION_FAILED")
         setIssues(
           (e.details as { validation?: { issues?: typeof issues } })?.validation

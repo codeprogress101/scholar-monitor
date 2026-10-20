@@ -108,9 +108,11 @@ async function context(
       { academicYearId },
     );
   const academic = await academicCurrent(db, records[0].id);
+  if(academic.placement.coursePending && !coverage) throw new AuthError(409,'HISTORICAL_PLACEMENT_REVIEW_REQUIRED','Record explicit covered-semester placement before using a course-pending exception for verification.',{academicYearId});
   if (coverage) requireCoveredPlacement(coverage.documentKind, academic.effectiveOn, coverage.coveredEnd);
   const [evidence] = coverage ? await db.execute<RowDataPacket[]>("SELECT d.document_type FROM requirement_document_evidence d LEFT JOIN requirement_workflow_events e ON e.id=d.workflow_event_id WHERE d.instance_id=? ORDER BY COALESCE(e.version,1) DESC LIMIT 1 LOCK IN SHARE MODE", [r.instance_id]) : [[]];
   return {
+    ...(academic.placement.coursePending ? {coursePending:academic.placement.coursePending}:{}),
     ...(evidence[0] ? { receivedDocumentType: evidence[0].document_type } : {}),
     ...(coverage?.predecessorSourceHash ? { predecessorSourceHash: coverage.predecessorSourceHash } : {}),
     ...(coverage ? { coverageId: coverage.coverageId, semesterRevision: coverage.semesterRevision,
@@ -125,7 +127,7 @@ async function context(
     semesterCode: coverage?.semesterCode ?? r.semester_code,
     schoolId: academic.placement.schoolId,
     schoolName: academic.placement.school.name,
-    courseId: academic.placement.courseId,
+    courseId: academic.placement.courseId || null,
     courseName: academic.placement.course.name,
     academicVersion: academic.version,
     definitionVersionId: r.definition_version_id,
@@ -294,6 +296,9 @@ export class RequirementWorkflowService {
               "INVALID_EFFECTIVE_DATE",
               "Verification cannot predate the placement being verified.",
             );
+          if(verified.coursePending) {
+            if(input.attestation!=='course-comparison-deferred' || input.checks.placement || input.document.coursePendingId!==verified.coursePending.id || input.document.coursePendingRevision!==verified.coursePending.revision) throw new AuthError(409,'COURSE_PENDING_REVIEW_REQUIRED','Confirm the deferred course comparison against the current approved-import exception.');
+          } else if(input.attestation==='course-comparison-deferred' || !input.checks.placement || input.document.coursePendingId) throw new AuthError(409,'SOURCE_CHANGED','Course-pending exception changed; reload verification context.');
           details.verification = verified;
           details.checks = input.checks;
           if(input.attestation) details.attestation = input.attestation;
@@ -396,7 +401,7 @@ export class RequirementWorkflowService {
     const parsed = z.object({receipt:z.unknown(),verification:z.unknown()}).strict().safeParse(raw);
     if (!parsed.success) throw new AuthError(422,"VALIDATION_FAILED","Provide receipt and verification details.");
     const receipt = parseReceipt(parsed.data.receipt), verification = parseRequirementWorkflow("verify",parsed.data.verification);
-    if (receipt.expectedVersion !== 0 || verification.expectedVersion !== 1 || verification.action !== "verify" || verification.attestation !== "all-five-checked")
+    if (receipt.expectedVersion !== 0 || verification.expectedVersion !== 1 || verification.action !== "verify" || !verification.attestation)
       throw new AuthError(422,"VALIDATION_FAILED","Confirm all five checks for a new receipt and its verification.");
     const hash = digest(JSON.stringify({operation:"receive-and-verify",id,receipt,verification}));
     return this.authorization.withAccess(actor,async(db,access)=>{

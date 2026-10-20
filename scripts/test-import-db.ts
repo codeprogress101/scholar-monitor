@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { testDocumentBatches } from "./test-document-batch-scenarios.js";
+import {testPriorBatchApproval,testPriorBatchCorrections} from "./test-prior-batch-scenarios.js";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
@@ -12,6 +14,7 @@ import { newToken } from "../server/auth/crypto.js";
 import { AuthorizationService } from "../server/authorization/service.js";
 import { today } from "../server/scholars/validation.js";
 import { ImportService } from "../server/imports/service.js";
+import { requirementState } from "../server/requirements/workflow-state.js";
 import type { ImportPreview, ImportResult } from "../server/imports/model.js";
 import { IMPORT_COLUMNS, SIMPLE_COLUMNS } from "../server/imports/model.js";
 import ExcelJS from "exceljs";
@@ -25,7 +28,9 @@ const suffix = `${process.pid}_${randomBytes(4).toString("hex")}`;
 const database = `ldss_import_test_${suffix}`,
   runtimeUser = `ldss_test_${suffix}`,
   runtimePassword = newToken();
-const origin = "http://127.0.0.1:3003",
+const browserPort=Number(process.env.LDSS_TEST_BROWSER_PORT??3003);
+assert.ok(Number.isInteger(browserPort)&&browserPort>=3003&&browserPort<=3010,"Use an explicit isolated test port from 3003 through 3010");
+const origin = `http://127.0.0.1:${browserPort}`,
   password = "A long synthetic testing passphrase!";
 const adminConfig = {
   host: "127.0.0.1",
@@ -51,7 +56,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 53);
+  assert.equal((await applyMigrations(admin)).length, 55);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -74,9 +79,10 @@ try {
     close: async () => {},
   };
   app = buildApp(
-    loadConfig({ APP_ENV: "test", PORT: "3003", APP_ORIGIN: origin }),
+    loadConfig({ APP_ENV: "test", PORT: String(browserPort), APP_ORIGIN: origin }),
     { database: db },
   );
+  if(process.argv.includes("--prior-debug"))app.addHook("onError",(r,_reply,error,done)=>{if(r.url.includes("historical-setup")||r.url.includes("ovr-batches"))console.error("Disposable prior-batch diagnostic:",error.code,error.message);done();});
   const accounts = new Map<
     string,
     { id: string; cookie: string; csrf: string }
@@ -507,7 +513,7 @@ try {
   assert.equal(simplePreview.workingYear, "IMPORT-YEAR");
   assert.equal(simplePreview.rows[0].intake?.classification, "continuing");
   assert.equal(simplePreview.rows[1].intake?.yearLevel, "1");
-  assert.ok(simplePreview.rows[0].notices?.some(n => n.includes("Course needed")));
+  assert.ok(simplePreview.rows[0].notices?.some(n => n.includes("Course not recorded")));
   const beforeSimple = await count();
   await root.query("CREATE TRIGGER fail_simple_confirmation BEFORE INSERT ON import_confirmations FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Test rollback'");
   assert.equal((await confirm(simplePreview)).statusCode, 500);
@@ -579,8 +585,41 @@ try {
     assert.deepEqual(approvedPreview.rows[0].approvedSelection, approvedSelection);
     expectError(await request("coordinator", "/api/v1/imports/stage", { ...approvedPayload, approvedSelection: { ...approvedSelection, reference: "Different approval" } }, stageKey), 409, "IDEMPOTENCY_CONFLICT");
     const missingCourse = await ok<ImportPreview>(request("coordinator", "/api/v1/imports/stage", { ...await simplePayload([["IncompleteApproved", "Person", "", "", "SIMPLE-SCHOOL", 2, "Old", ""]]), approvedSelection }));
-    assert.equal(missingCourse.ready, false);
-    assert.ok(missingCourse.rows[0].errors.some(e => e.includes("complete academic details")));
+    assert.equal(missingCourse.ready, true);
+    assert.equal(missingCourse.rows[0].coursePending, true);
+    const invalidLevel=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",{...await simplePayload([["InvalidLevel","Fictional","","","SIMPLE-SCHOOL","Third\nYear","New",""]]),approvedSelection}));
+    assert.equal(invalidLevel.ready,false);assert.ok(invalidLevel.rows[0].errors.some(e=>e.startsWith("Year Level:")));
+    expectError(await request("coordinator", `/api/v1/imports/${missingCourse.id}/confirm`, {hash:missingCourse.hash,confirm:true}),422,"COURSE_PENDING_CONFIRMATION_REQUIRED");
+    const pendingKey=randomUUID();
+    const pendingBody={hash:missingCourse.hash,confirm:true,coursePendingConfirmed:true};
+    await root.query("CREATE TRIGGER fail_pending_audit BEFORE INSERT ON audit_logs FOR EACH ROW BEGIN IF NEW.event_type='academic.course_pending' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected course pending audit failure'; END IF; END");
+    const beforePending=await count();
+    assert.equal((await request("coordinator", `/api/v1/imports/${missingCourse.id}/confirm`,pendingBody,pendingKey)).statusCode,500);
+    assert.equal(await count(),beforePending);
+    await root.query("DROP TRIGGER fail_pending_audit");
+    const pendingSaved=await ok<ImportResult>(request("coordinator", `/api/v1/imports/${missingCourse.id}/confirm`,pendingBody,pendingKey));
+    assert.equal(pendingSaved.coursePendingCount,1);assert.equal(pendingSaved.selectedCount,1);
+    assert.deepEqual(await ok(request("coordinator", `/api/v1/imports/${missingCourse.id}/confirm`,pendingBody,pendingKey)),pendingSaved);
+    const [[partial]]=await root.execute<RowDataPacket[]>("SELECT course_id,course_code,course_name,course_pending_exception_id FROM academic_records WHERE id=?",[pendingSaved.items[0].academicRecordId!]);
+    assert.equal(partial.course_id,null);assert.equal(partial.course_name,null);assert.ok(partial.course_pending_exception_id);
+    pass("Approved missing-course import requires explicit confirmation, records partial placement and selection, rolls back audit failure and retries exactly");
+    const pendingPerson=pendingSaved.items[0];
+    const evidence={reason:"Synthetic pending-course lifecycle",reference:"Synthetic approved import"};
+    const draft=await ok<{id:string;version:number}>(request("staff","/api/v1/masterlists",{academicYearId:year.id,title:"Course pending lifecycle",...evidence}));
+    await ok(request("staff",`/api/v1/masterlists/${draft.id}/entries`,{action:"add",expectedVersion:1,scholarId:pendingPerson.id,awardNumber:null,...evidence}));
+    for(const [action,expectedVersion,role] of [["submit-verification",2,"staff"],["submit-approval",3,"staff"],["approve",4,"coordinator"],["publish",5,"coordinator"],["lock",6,"coordinator"]] as const) await ok(request(role,`/api/v1/masterlists/${draft.id}/${action}`,{expectedVersion,...evidence,...(action==="publish"?{effectiveOn:day}:{})}));
+    const [[original]]=await root.execute<RowDataPacket[]>("SELECT snapshot,snapshot_hash FROM masterlist_publications WHERE masterlist_id=?",[draft.id]);
+    assert.ok(JSON.parse(original.snapshot).entries[0].snapshot.placement.coursePending);
+    const [[realCourse]]=await root.query<RowDataPacket[]>("SELECT id FROM courses WHERE code='IMPORT-COURSE'");
+    const proposal=await ok<{amendmentId:string}>(request("staff",`/api/v1/masterlists/${draft.id}/amendments`,{expectedVersion:7,scholarId:pendingPerson.id,kind:"course_completion",courseId:realCourse.id,effectiveOn:day,...evidence}));
+    await ok(request("coordinator",`/api/v1/masterlist-amendments/${proposal.amendmentId}/approve`,{...evidence}));
+    const amended=await ok<{masterlistId:string}>(request("coordinator",`/api/v1/masterlist-amendments/${proposal.amendmentId}/publish`,{...evidence}));
+    const [[preserved]]=await root.execute<RowDataPacket[]>("SELECT snapshot,snapshot_hash FROM masterlist_publications WHERE masterlist_id=?",[draft.id]);
+    assert.deepEqual(preserved,original);
+    const [[completed]]=await root.execute<RowDataPacket[]>("SELECT action FROM course_pending_events WHERE exception_id=? ORDER BY revision DESC LIMIT 1",[partial.course_pending_exception_id]);assert.equal(completed.action,"completed");
+    assert.ok(amended.masterlistId);
+    pass("Course-pending member publishes with explicit provenance; reviewed course-completion amendment preserves original official bytes");
+
     const confirmationKey = randomUUID();
     const confirmApproved = () => request("coordinator", `/api/v1/imports/${approvedPreview.id}/confirm`, { hash: approvedPreview.hash, confirm: true }, confirmationKey);
     const countBefore = await count();
@@ -606,6 +645,67 @@ try {
     const [[decision]] = await root.execute<RowDataPacket[]>("SELECT decision FROM continuing_roster_decisions WHERE batch_id=?", [selected.continuingRosterId!]);
     assert.equal(decision.decision, "accepted");
     pass("Coordinator approved-list import selects New and Old scholars with audited provenance; Staff/Admin denied, incomplete records blocked, rollback and retry preserved");
+  }
+  {
+    const semester=await config("semesters",{code:"IMPORT-CURRENT",name:"Current import semester",academicYearId:year.id,startsOn:later(-20),endsOn:later(120)});
+    const [[workingCalendar]]=await root.query<RowDataPacket[]>("SELECT version FROM system_settings WHERE code='LDSS_WORKING_ACADEMIC_YEAR'");
+    const historical=await ok<{yearId:string;semesterId:string}>(request("system_admin","/api/v1/configuration/historical-calendar",{workingYearId:year.id,expectedWorkingYearVersion:year.version,expectedSettingVersion:workingCalendar.version,year:{code:"IMPORT-PRIOR-YEAR",name:"Prior import year",startsOn:later(-420),endsOn:later(-61)},semester:{code:"IMPORT-PREVIOUS",name:"Previous completed import semester",startsOn:later(-240),endsOn:later(-61),termKind:"second"},reason:"Reviewed synthetic cross-year COG coverage",reference:"TEST-HISTORICAL-CALENDAR",reviewed:true}));
+    const previous={id:historical.semesterId,name:"Previous completed import semester",version:1};
+    for(const [code,documentKind] of [["IMPORT-COR","enrollment"],["IMPORT-COG","grades"]]) await ok(request("system_admin","/api/v1/requirement-definitions",{action:"create",code,expectedVersion:0,reason:"Synthetic import receipt policy",reference:"TEST-POLICY",fields:{documentKind,name:code,instructions:"Synthetic physical paper",appliesTo:"semester",semesterId:semester.id,effectiveFrom:later(-20),effectiveUntil:null}}));
+    const setupPath="/api/v1/continuing-rosters/00000000-0000-4000-8000-000000000001/semester-setup";
+    const options=await ok<{definitions:{id:string;code:string}[]}>(request("coordinator",`${setupPath}?semesterId=${semester.id}`));
+    const setup=await ok<{id:string}>(request("coordinator",setupPath,{semesterId:semester.id,expectedSemesterVersion:semester.version,policyDate:day,predecessorSemesterId:previous.id,coverageReason:"Synthetic reviewed preceding semester",corDefinitionVersionId:options.definitions.find(d=>d.code==="IMPORT-COR")!.id,cogDefinitionVersionId:options.definitions.find(d=>d.code==="IMPORT-COG")!.id,issuer:"Synthetic scholarship committee",reference:"TEST-SETUP",sourceReference:"Synthetic semester documents",reviewed:true}));
+    const payload={...await simplePayload([["ReceiptImport", "NewPerson", "", "", "SIMPLE-SCHOOL", 2, "New", ""],["ReceiptImport", "ContinuingPerson", "", "", "SIMPLE-SCHOOL", 3, "Continuing", "Import course"]]),approvedSelection:{reference:"Batch 1 verified approval",effectiveOn:day},receipts:{periodId:semester.id,cor:true,cog:true}};
+    const disabled=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",payload));assert.equal(disabled.ready,false);assert.ok(disabled.rows.every(r=>r.errors.some(e=>e.startsWith("Document receipts:"))));
+    assert.equal(disabled.receiptBlockers?.length,1);assert.deepEqual(disabled.receiptBlockers?.[0].rows,[2,3]);
+    await ok(request("coordinator",setupPath+"/availability",{scopeId:setup.id,expectedRevision:1,mode:"enabled",expectedSemesterVersion:semester.version,expectedPredecessorVersion:previous.version,reviewed:true}));
+    const preview=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",payload));assert.equal(preview.ready,true,JSON.stringify(preview.rows));
+    assert.equal(preview.rows[0].receiptContext?.cog,previous.name);
+    assert.deepEqual(preview.receiptGroups,[{cor:semester.name,cog:previous.name,corCount:2,cogCount:2,exemptCount:0}]);
+    const key=randomUUID(),body={hash:preview.hash,confirm:true,coursePendingConfirmed:true,receiptsConfirmed:true};
+    expectError(await request("coordinator",`/api/v1/imports/${preview.id}/confirm`,{...body,receiptsConfirmed:undefined}),422,"RECEIPT_CONFIRMATION_REQUIRED");
+    const before=await count();
+    await root.query("CREATE TRIGGER fail_import_receipt_audit BEFORE INSERT ON audit_logs FOR EACH ROW BEGIN IF NEW.event_type='requirements.received' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected receipt audit failure'; END IF; END");
+    const attempt=await request("coordinator",`/api/v1/imports/${preview.id}/confirm`,body,key);
+    assert.equal(attempt.statusCode,500,attempt.body);assert.equal(await count(),before);
+    await root.query("DROP TRIGGER fail_import_receipt_audit");
+    const result=await ok<ImportResult>(request("coordinator",`/api/v1/imports/${preview.id}/confirm`,body,key));assert.equal(result.receivedCount,4);assert.equal(result.selectedCount,2);
+    assert.deepEqual(await ok(request("coordinator",`/api/v1/imports/${preview.id}/confirm`,body,key)),result);
+    const [papers]=await root.execute<RowDataPacket[]>("SELECT i.id,r.id AS receipt_id,cov.document_kind,cov.coverage_semester_id,cov.scholar_semester_id FROM requirement_instances i JOIN requirement_receipts r ON r.instance_id=i.id JOIN requirement_coverage cov ON cov.requirement_instance_id=i.id JOIN scholar_semesters ss ON ss.id=cov.scholar_semester_id WHERE ss.scholar_id IN (?,?)",result.items.map(i=>i.id));
+    assert.equal(papers.length,4);assert.ok(papers.every(p=>p.receipt_id));
+    assert.ok(papers.every(p=>p.coverage_semester_id===(p.document_kind==="cor"?semester.id:previous.id)));
+    const pendingId=result.items[0].id;
+    const [[corPaper]]=await root.execute<RowDataPacket[]>("SELECT i.id FROM requirement_instances i JOIN requirement_coverage c ON c.requirement_instance_id=i.id JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id WHERE ss.scholar_id=? AND c.document_kind='cor'",[pendingId]);
+    const context=await ok<import("../server/requirements/workflow-model.js").VerificationContext>(request("staff",`/api/v1/requirement-instances/${corPaper.id}/verification-context`));assert.ok(context.coursePending);assert.equal(context.courseId,null);
+    const document={scholarId:context.scholarId,scholarVersion:context.scholarVersion,academicYearId:context.academicYearId,semesterId:context.semesterId,schoolId:context.schoolId,courseId:null,academicVersion:context.academicVersion,definitionVersionId:context.definitionVersionId,coverageId:context.coverageId,semesterRevision:context.semesterRevision,coursePendingId:context.coursePending!.id,coursePendingRevision:context.coursePending!.revision};
+    const verify={action:"verify",expectedVersion:1,reason:"Physical paper reviewed with course deferred",reference:"TEST-COR-PAPER",remarks:null,document,attestation:"course-comparison-deferred"};
+    expectError(await request("staff",`/api/v1/requirement-instances/${corPaper.id}/verify`,{...verify,attestation:"all-five-checked"}),409,"COURSE_PENDING_REVIEW_REQUIRED");
+    await ok(request("staff",`/api/v1/requirement-instances/${corPaper.id}/verify`,verify));
+    const [[event]]=await root.execute<RowDataPacket[]>("SELECT details FROM requirement_workflow_events WHERE instance_id=? AND action='verify'",[corPaper.id]);const detail=JSON.parse(event.details);assert.equal(detail.checks.placement,false);assert.equal(detail.attestation,"course-comparison-deferred");
+    pass("Mixed import receives COR/COG atomically with actual coverage, explicit attestations, no auto verification, audit rollback and exact retry; deferred COR check remains truthful");
+    for(const kind of ["cor","cog"] as const){
+      const onePayload={...await simplePayload([[`Only${kind}`,randomBytes(12).toString("hex"),"","","SIMPLE-SCHOOL",2,"Old",""]]),approvedSelection:payload.approvedSelection,receipts:{periodId:semester.id,cor:kind==="cor",cog:kind==="cog"}};
+      const one=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",onePayload));assert.equal(one.ready,true,JSON.stringify(one.rows));
+      const saved=await ok<ImportResult>(request("coordinator",`/api/v1/imports/${one.id}/confirm`,{hash:one.hash,confirm:true,coursePendingConfirmed:true,receiptsConfirmed:true}));assert.equal(saved.receivedCount,1);
+    }
+    const volumeCount=process.argv.includes("--prior-quick")?3:835,pendingCount=Math.min(380,volumeCount);
+    const volumePayload={...await simplePayload(Array.from({length:volumeCount},(_,i)=>[`ReceiptVolume${i}`,randomBytes(12).toString("hex"),"","","SIMPLE-SCHOOL",i===0?1:2,i%2?"Old":"New",i<380?"":"Import course"])),approvedSelection:payload.approvedSelection,receipts:{periodId:semester.id,cor:true,cog:true}};
+    const start=performance.now(),volume=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",volumePayload));
+    assert.equal(volume.ready,true,JSON.stringify(volume.rows.filter(r=>r.errors.length||r.warnings.length).slice(0,2)));assert.equal(volume.receiptGroups?.[0].cogCount,volumeCount);assert.equal(volume.receiptGroups?.[0].exemptCount,0);
+    const stagedMs=Math.round(performance.now()-start),volumeKey=randomUUID(),volumeBody={hash:volume.hash,confirm:true,coursePendingConfirmed:true,receiptsConfirmed:true},confirmStart=performance.now();
+    const savedVolume=await ok<ImportResult>(request("coordinator",`/api/v1/imports/${volume.id}/confirm`,volumeBody,volumeKey));
+    const confirmMs=Math.round(performance.now()-confirmStart);assert.equal(savedVolume.selectedCount,volumeCount);assert.equal(savedVolume.coursePendingCount,pendingCount);assert.equal(savedVolume.receivedCount,volumeCount*2);assert.deepEqual(await ok(request("coordinator",`/api/v1/imports/${volume.id}/confirm`,volumeBody,volumeKey)),savedVolume);
+    const [volumePapers]=await root.execute<RowDataPacket[]>("SELECT i.id FROM requirement_instances i JOIN requirement_receipts r ON r.instance_id=i.id JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id JOIN scholars s ON s.id=ss.scholar_id WHERE s.last_name LIKE 'ReceiptVolume%'");assert.equal(volumePapers.length,volumeCount*2);
+    const stateDb=await root.getConnection();try{for(const paper of [volumePapers[0],volumePapers.at(-1)!])assert.equal((await requirementState(stateDb,paper.id)).status,"submitted");}finally{stateDb.release();}
+    pass(`${volumeCount}-row mixed approved import: ${pendingCount} Course pending, ${volumeCount*2} Submitted receipts, no inferred freshman exception, exact retry; stage=${stagedMs}ms confirm=${confirmMs}ms; COR-only and COG-only passed`);
+    if(!process.argv.includes("--prior-quick"))await testDocumentBatches(request,root,volume.id,semester.id,day);
+    if(!process.argv.includes("--prior-browser-ready")){
+      await testPriorBatchApproval(request,root,volume.id,semester.id,day);
+      await testPriorBatchCorrections(request,root,preview.id,semester.id,day);
+    }else{
+      assert.ok(process.argv.includes("--browser"),"Unreviewed browser preparation is only available with the disposable fixture server");
+      console.log(`Browser fixture: ${volumeCount} imported scholars intentionally await prior batch approval; lifecycle assertions are reserved for the normal acceptance run.`);
+    }
   }
   if (process.argv.includes("--large") || process.argv.includes("--large-approved")) {
     const approvedMode = process.argv.includes("--large-approved");
@@ -658,7 +758,7 @@ try {
       ]),
     );
     const fixture = buildApp(
-      loadConfig({ APP_ENV: "test", PORT: "3003", APP_ORIGIN: origin }),
+        loadConfig({ APP_ENV: "test", PORT: String(browserPort), APP_ORIGIN: origin }),
       { database: db, clientRoot: resolve("dist/client") },
     );
     let stop: () => void = () => {};
@@ -669,8 +769,8 @@ try {
       setTimeout(stop, 50);
       return { stopping: true };
     });
-    await fixture.listen({ host: "127.0.0.1", port: 3003 });
-    console.log("Disposable F27 fixture ready on port 3003.");
+      await fixture.listen({ host: "127.0.0.1", port: browserPort });
+      console.log(`Disposable F27 fixture ready on port ${browserPort}.`);
     await finished;
     await fixture.close();
   }

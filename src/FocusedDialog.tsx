@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 /** Native modal: focus is contained by the browser and returned to its trigger. */
-export default function FocusedDialog({ title, busy = false, onClose, children }: {
-  title: string; busy?: boolean; onClose: () => void; children: ReactNode;
+export default function FocusedDialog({ title, busy = false, onClose, children, className = "" }: {
+  title: string; busy?: boolean; onClose: () => void; children: ReactNode; className?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null), label = useId();
   useEffect(() => {
@@ -21,7 +21,7 @@ export default function FocusedDialog({ title, busy = false, onClose, children }
     window.addEventListener("beforeunload", prevent);
     return () => {window.removeEventListener("beforeunload", prevent);window.removeEventListener("popstate",retain,true);window.removeEventListener("hashchange",retain,true);};
   }, [busy]);
-  return <dialog ref={dialog} className="focused-dialog" aria-labelledby={label} data-pending-location={busy ? window.location.hash : undefined}
+  return <dialog ref={dialog} className={`focused-dialog ${className}`} aria-labelledby={label} data-pending-location={busy ? window.location.hash : undefined}
     onKeyDownCapture={event => {
       if (event.key !== "Tab") return;
       event.preventDefault();
