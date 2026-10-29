@@ -1,0 +1,295 @@
+%% Payments, corrections, omissions and reconciliation; core tables: payment_records, payment_corrections, entitlement_release_links, payroll_unpaid_classifications, payroll_historical_receipts, payroll_legacy_conversions, payroll_omissions, payroll_omission_events, payroll_reprocessing, payroll_reprocessing_attempts, payroll_reprocessing_events, payroll_reconciliation_events, payroll_closure_members, payroll_treasury_evidence, payroll_treasury_confirmations
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% entitlement_release_links: Both; BASE TABLE
+  entitlement_release_links {
+    char entitlement_id PK, FK "not null; SQL char(36)"
+    char payment_id FK, UK "not null; SQL char(36)"
+    char approved_event_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_payment_events: Both; BASE TABLE
+  individual_payment_events {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_payment_transactions: Both; BASE TABLE
+  individual_payment_transactions {
+    char id PK "not null; SQL char(36)"
+    char entitlement_id FK "not null; SQL char(36)"
+    char source_payment_id FK "nullable; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char request_transaction_id FK "nullable; SQL char(36)"
+    char replacement_of FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char omission_id FK "nullable; SQL char(36)"
+    int approval_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% ovr_batch_events: Both; BASE TABLE
+  ovr_batch_events {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% ovr_batches: Both; BASE TABLE
+  ovr_batches {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% ovr_finalizations: Both; BASE TABLE
+  ovr_finalizations {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char finalized_by FK "not null; SQL char(36)"
+  }
+  %% payment_corrections: Both; BASE TABLE
+  payment_corrections {
+    char id PK "not null; SQL char(36)"
+    int version PK "not null; SQL int(10) unsigned"
+    char payment_id FK "not null; SQL char(36)"
+    char batch_id FK "nullable; SQL char(36)"
+    int batch_revision FK "nullable; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+    char individual_transaction_id FK "nullable; SQL char(36)"
+    int individual_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% payment_records: Both; BASE TABLE
+  payment_records {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "nullable; SQL char(36)"
+    int batch_revision FK "nullable; SQL int(10) unsigned"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char individual_transaction_id FK, UK "nullable; SQL char(36)"
+    int individual_revision FK "nullable; SQL int(10) unsigned"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char scholar_id FK "nullable; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+  }
+  %% payout_cycles: Both; BASE TABLE
+  payout_cycles {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+  }
+  %% payroll_closure_members: Both; BASE TABLE
+  payroll_closure_members {
+    char closure_id PK, FK "not null; SQL char(36)"
+    int position PK "not null; SQL int(10) unsigned"
+    char scholarship_id FK "not null; SQL char(36)"
+    char payment_id FK "not null; SQL char(36)"
+  }
+  %% payroll_historical_receipts: Both; BASE TABLE
+  payroll_historical_receipts {
+    char id PK "not null; SQL char(36)"
+    int version PK "not null; SQL int(10) unsigned"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_legacy_conversions: Both; BASE TABLE
+  payroll_legacy_conversions {
+    char id PK "not null; SQL char(36)"
+    char source_batch_id FK, UK "not null; SQL char(36)"
+    char destination_batch_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_omission_events: Both; BASE TABLE
+  payroll_omission_events {
+    char omission_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char destination_batch_id FK "nullable; SQL char(36)"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char authorized_entitlement_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_omissions: Both; BASE TABLE
+  payroll_omissions {
+    char id PK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reconciliation_events: Both; BASE TABLE
+  payroll_reconciliation_events {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char case_id FK "nullable; SQL char(36)"
+    char scholarship_id FK "nullable; SQL char(36)"
+    char payment_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reprocessing: Both; BASE TABLE
+  payroll_reprocessing {
+    char id PK "not null; SQL char(36)"
+    char payment_id FK, UK "not null; SQL char(36)"
+    char root_batch_id FK "not null; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reprocessing_attempts: Both; BASE TABLE
+  payroll_reprocessing_attempts {
+    char reprocessing_id PK, FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reprocessing_events: Both; BASE TABLE
+  payroll_reprocessing_events {
+    char id PK "not null; SQL char(36)"
+    char reprocessing_id FK "not null; SQL char(36)"
+    char destination_batch_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_submission_windows: Both; BASE TABLE
+  payroll_submission_windows {
+    char batch_id PK, FK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_treasury_confirmations: Both; BASE TABLE
+  payroll_treasury_confirmations {
+    char payment_id PK, FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    int evidence_revision FK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_treasury_evidence: Both; BASE TABLE
+  payroll_treasury_evidence {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_unpaid_classifications: Both; BASE TABLE
+  payroll_unpaid_classifications {
+    char id PK "not null; SQL char(36)"
+    char payment_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_semesters: Both; BASE TABLE
+  scholar_semesters {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char participation_id FK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char scope_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholars: Both; BASE TABLE
+  scholars {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char barangay_id FK "nullable; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% semester_entitlement_events: Both; BASE TABLE
+  semester_entitlement_events {
+    char id PK "not null; SQL char(36)"
+    char entitlement_id FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char review_event_id FK "not null; SQL char(36)"
+    char authority_version_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_entitlements: Both; BASE TABLE
+  semester_entitlements {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  semester_entitlements ||--o| entitlement_release_links : "entitlement_release_links_ibfk_1"
+  payment_records ||..o| entitlement_release_links : "entitlement_release_links_ibfk_2"
+  semester_entitlement_events ||..o| entitlement_release_links : "entitlement_release_links_ibfk_3"
+  users ||..o{ entitlement_release_links : "entitlement_release_links_ibfk_4"
+  individual_payment_events |o..o| payment_corrections : "fk_correction_individual_event"
+  payment_records |o..o{ payment_corrections : "fk_correction_individual_payment"
+  payment_records |o..o{ payment_corrections : "fk_correction_payroll_owner"
+  payment_records ||..o{ payment_corrections : "payment_corrections_ibfk_1"
+  ovr_batch_events |o..o| payment_corrections : "payment_corrections_ibfk_2"
+  users ||..o{ payment_corrections : "payment_corrections_ibfk_3"
+  scholarship_records |o..o{ payment_records : "fk_payment_annual_identity"
+  payout_cycles |o..o{ payment_records : "fk_payment_cycle_semester"
+  semester_entitlements |o..o{ payment_records : "fk_payment_entitlement_identity"
+  individual_payment_events |o..o| payment_records : "fk_payment_individual_event"
+  individual_payment_transactions |o..o| payment_records : "fk_payment_individual_owner"
+  ovr_finalizations |o..o{ payment_records : "payment_records_ibfk_1"
+  ovr_batch_events |o..o| payment_records : "payment_records_ibfk_2"
+  payout_cycles ||..o{ payment_records : "payment_records_ibfk_3"
+  scholarship_records ||..o{ payment_records : "payment_records_ibfk_4"
+  users ||..o{ payment_records : "payment_records_ibfk_5"
+  payroll_reconciliation_events ||--o{ payroll_closure_members : "payroll_closure_members_ibfk_1"
+  scholarship_records ||..o{ payroll_closure_members : "payroll_closure_members_ibfk_2"
+  payment_records ||..o{ payroll_closure_members : "payroll_closure_members_ibfk_3"
+  ovr_batches ||..o{ payroll_historical_receipts : "payroll_historical_receipts_ibfk_1"
+  scholarship_records ||..o{ payroll_historical_receipts : "payroll_historical_receipts_ibfk_2"
+  users ||..o{ payroll_historical_receipts : "payroll_historical_receipts_ibfk_3"
+  ovr_batches ||..o| payroll_legacy_conversions : "payroll_legacy_conversions_ibfk_1"
+  ovr_batches ||..o{ payroll_legacy_conversions : "payroll_legacy_conversions_ibfk_2"
+  users ||..o{ payroll_legacy_conversions : "payroll_legacy_conversions_ibfk_3"
+  scholarship_records ||..o{ payroll_omissions : "payroll_omissions_ibfk_1"
+  scholar_semesters ||..o| payroll_omissions : "payroll_omissions_ibfk_2"
+  scholars ||..o{ payroll_omissions : "payroll_omissions_ibfk_3"
+  semesters ||..o{ payroll_omissions : "payroll_omissions_ibfk_4"
+  ovr_finalizations ||..o{ payroll_omissions : "payroll_omissions_ibfk_5"
+  users ||..o{ payroll_omissions : "payroll_omissions_ibfk_6"
+  semester_entitlements |o..o{ payroll_omission_events : "fk_omission_authorized_owner"
+  payroll_omissions ||..o{ payroll_omission_events : "payroll_omission_events_ibfk_1"
+  payroll_submission_windows |o..o{ payroll_omission_events : "payroll_omission_events_ibfk_2"
+  semester_entitlements |o..o{ payroll_omission_events : "payroll_omission_events_ibfk_3"
+  semester_entitlements |o..o{ payroll_omission_events : "payroll_omission_events_ibfk_4"
+  users ||..o{ payroll_omission_events : "payroll_omission_events_ibfk_5"
+  ovr_batch_events ||..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_1"
+  payroll_reconciliation_events |o..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_2"
+  scholarship_records |o..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_3"
+  payment_records |o..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_4"
+  users ||..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_5"
+  payment_records ||..o| payroll_reprocessing : "payroll_reprocessing_ibfk_1"
+  ovr_finalizations ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_2"
+  ovr_finalizations ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_3"
+  scholarship_records ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_4"
+  semesters ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_5"
+  semester_entitlements |o..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_6"
+  users ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_7"
+  payroll_reprocessing ||--o| payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_1"
+  ovr_finalizations ||..o{ payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_2"
+  scholarship_records ||..o{ payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_3"
+  users ||..o{ payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_4"
+  payroll_reprocessing ||..o{ payroll_reprocessing_events : "payroll_reprocessing_events_ibfk_1"
+  ovr_batches |o..o{ payroll_reprocessing_events : "payroll_reprocessing_events_ibfk_2"
+  users ||..o{ payroll_reprocessing_events : "payroll_reprocessing_events_ibfk_3"
+  payment_records ||--o| payroll_treasury_confirmations : "payroll_treasury_confirmations_ibfk_1"
+  payroll_treasury_evidence ||..o{ payroll_treasury_confirmations : "payroll_treasury_confirmations_ibfk_2"
+  users ||..o{ payroll_treasury_confirmations : "payroll_treasury_confirmations_ibfk_3"
+  ovr_batches ||--o{ payroll_treasury_evidence : "payroll_treasury_evidence_ibfk_1"
+  users ||..o{ payroll_treasury_evidence : "payroll_treasury_evidence_ibfk_2"
+  payment_records ||..o{ payroll_unpaid_classifications : "payroll_unpaid_classifications_ibfk_1"
+  users ||..o{ payroll_unpaid_classifications : "payroll_unpaid_classifications_ibfk_2"

@@ -1,3 +1,4 @@
+import {schemaManifest} from '../server/schema-manifest.js';
 import type { WorkflowView } from "../server/masterlists/workflow-model.js";
 import {testConsolidation} from "./test-masterlist-consolidation-scenarios.js";
 import { officialMembership } from "../server/eligibility/official-membership.js";
@@ -55,7 +56,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -630,23 +631,16 @@ try {
     "Concurrent locks have one winner; locked entries/state and publication bytes remain immutable",
   );
   const duplicate = await createDraft(year.id, "Duplicate activation attempt");
-  await ok(
-    request("staff", `/api/v1/masterlists/${duplicate.id}/entries`, {
-      action: "add",
-      expectedVersion: 1,
-      scholarId: person.id,
-      awardNumber: null,
-      ...evidence,
-    }),
-  );
-  await ok(move("submit-verification", 2, "staff", duplicate.id));
-  await ok(move("submit-approval", 3, "staff", duplicate.id));
-  await ok(move("approve", 4, "coordinator", duplicate.id));
-  expectError(
-    await move("publish", 5, "coordinator", duplicate.id),
-    409,
-    "ALREADY_ACTIVATED",
-  );
+  const duplicateAdd = await request("staff", `/api/v1/masterlists/${duplicate.id}/entries`, {
+    action: "add", expectedVersion: 1, scholarId: person.id, awardNumber: null, ...evidence,
+  });
+  expectError(duplicateAdd, 422, "CANDIDATE_INVALID");
+  assert.ok(duplicateAdd.json().error.issues.some((issue: {code:string}) => issue.code === "ALREADY_ACTIVATED"));
+  const duplicateRead = await request("staff", `/api/v1/masterlists/${duplicate.id}`);
+  assert.equal(duplicateRead.statusCode, 200, duplicateRead.body);
+  const duplicateState = duplicateRead.json<DraftDetail>();
+  assert.equal(duplicateState.count, 0);
+  assert.equal(duplicateState.version, 1);
   assert.equal((await workflow(duplicate.id)).publication, null);
   const sessionAccount = accounts.get("coordinator")!;
   assert.equal(
@@ -659,12 +653,12 @@ try {
           origin,
           "content-type": "application/json",
         },
-        payload: { expectedVersion: 5, effectiveOn: "2026-09-03", ...evidence },
+        payload: { expectedVersion: 1, effectiveOn: "2026-09-03", ...evidence },
       })
     ).statusCode,
     403,
   );
-  pass("A second official list cannot reactivate a scholar or bypass CSRF");
+  pass("An existing activation is rejected before preparation; no second publication or CSRF bypass is possible");
   const fresh = await createDraft(year.id, "Browser official workflow");
   const secondResponse = await request("staff", "/api/v1/scholars", {
     expectedVersion: 0,
@@ -763,12 +757,16 @@ try {
     assert.ok(empty.issues.some((i:{code:string})=>i.code==="EMPTY_DRAFT"));
     await ok(attach(staleTarget.id,2,null));
     assert.equal((await request("staff",`/api/v1/masterlists/${staleTarget.id}/addition`)).json().targetId,null);
-    await ok(move("return-draft",5,"coordinator",duplicate.id));
-    await ok(attach(duplicate.id,6,fresh.id,8));
+    // Ordinary preparation now rejects a duplicate early. Exercise the existing
+    // addition-specific duplicate review through an actual addition proposal.
+    await ok(attach(duplicate.id,1,fresh.id,8));
+    await ok(request("staff", `/api/v1/masterlists/${duplicate.id}/entries`, {
+      action: "add", expectedVersion: 2, scholarId: person.id, awardNumber: null, ...evidence,
+    }));
     const duplicatePreview=(await request("staff",`/api/v1/masterlists/${duplicate.id}/addition`)).json();
     assert.ok(duplicatePreview.issues.some((i:{code:string;scholarId:string})=>i.code==="DUPLICATE_ENTRY"&&i.scholarId===person.id));
     assert.ok(duplicatePreview.issues.some((i:{code:string})=>i.code==="ALREADY_ACTIVATED"));
-    expectError(await move("submit-verification",7,"staff",duplicate.id),422,"CANDIDATE_INVALID");
+    expectError(await move("submit-verification",3,"staff",duplicate.id),422,"CANDIDATE_INVALID");
     const thirdResponse=await request("staff","/api/v1/scholars",{expectedVersion:0,reason:"Synthetic third addition",fields:{firstName:"UniqueThird",lastName:"AdditionFixture",academicYearId:year.id,contact:{}}});
     assert.equal(thirdResponse.statusCode,200,thirdResponse.body);
     const third=thirdResponse.json<ScholarResult>();
@@ -831,7 +829,7 @@ try {
       },
     );
     assert.equal(lockedYear.statusCode, 200, lockedYear.body);
-    expectError(await attach(duplicate.id,7,amendmentPublished.json().masterlistId,2),409,"RETURN_TO_DRAFT_REQUIRED");
+    expectError(await attach(duplicate.id,3,amendmentPublished.json().masterlistId,2),409,"RETURN_TO_DRAFT_REQUIRED");
     // Combined official list was already locked above.
     assert.equal((await workflow(fresh.id)).status, "locked");
     pass(

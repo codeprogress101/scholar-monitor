@@ -1,0 +1,159 @@
+%% Semester assessment and prior-batch approval; core tables: scholar_semesters, scholar_semester_revisions, semester_review_events, prior_batch_approvals, prior_batch_members, prior_batch_documents, prior_batch_waiver_corrections
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% academic_changes: Both; BASE TABLE
+  academic_changes {
+    char id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% academic_records: Both; BASE TABLE
+  academic_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char course_pending_exception_id FK "nullable; SQL char(36)"
+  }
+  %% import_jobs: Both; BASE TABLE
+  import_jobs {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% participations: Both; BASE TABLE
+  participations {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK, UK "not null; SQL char(36)"
+    char roster_entry_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% prior_batch_approvals: Both; BASE TABLE
+  prior_batch_approvals {
+    char id PK "not null; SQL char(36)"
+    char import_job_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% prior_batch_documents: Both; BASE TABLE
+  prior_batch_documents {
+    char approval_id PK, FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char instance_id PK, FK "not null; SQL char(36)"
+  }
+  %% prior_batch_members: Both; BASE TABLE
+  prior_batch_members {
+    char approval_id PK, FK "not null; SQL char(36)"
+    char scholar_semester_id PK, FK "not null; SQL char(36)"
+    char review_event_id FK "not null; SQL char(36)"
+  }
+  %% prior_batch_waiver_corrections: Both; BASE TABLE
+  prior_batch_waiver_corrections {
+    char approval_id PK, FK "not null; SQL char(36)"
+    char waiver_id PK, FK, UK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+  }
+  %% requirement_instances: Both; BASE TABLE
+  requirement_instances {
+    char id PK "not null; SQL char(36)"
+    char checklist_id FK "not null; SQL char(36)"
+    char definition_version_id FK "not null; SQL char(36)"
+  }
+  %% requirement_waivers: Both; BASE TABLE
+  requirement_waivers {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_semester_revisions: Both; BASE TABLE
+  scholar_semester_revisions {
+    char scholar_semester_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char academic_record_id FK "nullable; SQL char(36)"
+    char academic_change_id FK "nullable; SQL char(36)"
+    char predecessor_semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_semesters: Both; BASE TABLE
+  scholar_semesters {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char participation_id FK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char scope_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% semester_review_events: Both; BASE TABLE
+  semester_review_events {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    int semester_revision FK "not null; SQL int(10) unsigned"
+    char policy_version_id FK "not null; SQL char(36)"
+    char supersedes_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  %% workflow_authority_versions: Both; BASE TABLE
+  workflow_authority_versions {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% workflow_policy_versions: Both; BASE TABLE
+  workflow_policy_versions {
+    char id PK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% workflow_scope_versions: Both; BASE TABLE
+  workflow_scope_versions {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char policy_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  import_jobs ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_1"
+  semesters ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_2"
+  workflow_authority_versions ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_3"
+  users ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_4"
+  prior_batch_members ||..o{ prior_batch_documents : "prior_batch_documents_ibfk_1"
+  requirement_instances ||--o{ prior_batch_documents : "prior_batch_documents_ibfk_2"
+  prior_batch_approvals ||--o{ prior_batch_members : "prior_batch_members_ibfk_1"
+  scholar_semesters ||--o{ prior_batch_members : "prior_batch_members_ibfk_2"
+  semester_review_events ||..o{ prior_batch_members : "prior_batch_members_ibfk_3"
+  prior_batch_documents ||..o{ prior_batch_waiver_corrections : "prior_batch_waiver_corrections_ibfk_1"
+  requirement_waivers ||--o| prior_batch_waiver_corrections : "prior_batch_waiver_corrections_ibfk_2"
+  participations ||..o{ scholar_semesters : "scholar_semesters_ibfk_1"
+  semesters ||..o{ scholar_semesters : "scholar_semesters_ibfk_2"
+  workflow_scope_versions ||..o{ scholar_semesters : "scholar_semesters_ibfk_3"
+  scholarship_records |o..o{ scholar_semesters : "scholar_semesters_ibfk_4"
+  users ||..o{ scholar_semesters : "scholar_semesters_ibfk_5"
+  scholar_semesters ||--o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_1"
+  academic_records |o..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_2"
+  academic_changes |o..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_3"
+  semesters |o..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_4"
+  users ||..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_5"
+  scholar_semester_revisions ||..o{ semester_review_events : "semester_review_events_ibfk_1"
+  workflow_policy_versions ||..o{ semester_review_events : "semester_review_events_ibfk_2"
+  semester_review_events |o..o{ semester_review_events : "semester_review_events_ibfk_3"
+  users ||..o{ semester_review_events : "semester_review_events_ibfk_4"

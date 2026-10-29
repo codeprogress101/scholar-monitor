@@ -1,3 +1,4 @@
+import {schemaManifest} from '../server/schema-manifest.js';
 import "dotenv/config";
 import { testSemesterAcademic } from "./test-semester-academic-scenarios.js";
 import { testRegularCoverage } from "./test-regular-coverage-scenarios.js";
@@ -50,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,

@@ -1,3 +1,8 @@
+import {pendingPrior} from "./prior-command";
+import PayoutCommandRecovery from "./PayoutCommandRecovery";
+import {ActionButton} from "./ActionProgress";
+import MasterlistSelection from "./MasterlistSelection";
+import MasterlistConflicts from "./MasterlistConflicts";
 import FocusedDialog from "./FocusedDialog";
 import { yearLevelLabel } from "./ScholarAcademicSummary";
 import { PagedTable } from "./WorkspaceUI";
@@ -27,6 +32,7 @@ const failure = (e: unknown) =>
     ? e
     : "Result unconfirmed. Refresh the draft or retry the same command safely.";
 export default function MasterlistsPage({ session }: { session: Session }) {
+  const [recovery,setRecovery]=useState(()=>{const c=pendingPrior(session.user.id);return c?.route==="masterlists"?c.path:null;});
   const [route] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
   const [savedList] = useState(() => {try{return JSON.parse(sessionStorage.getItem("masterlist-list-view") ?? "{}");}catch{return {};}});
   const [listQuery,setListQuery]=useState<string>(savedList.query ?? ""),[listSearch,setListSearch]=useState<string>(savedList.query ?? "");
@@ -35,6 +41,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
   const [uncertainCommand,setUncertainCommand]=useState<{path:string;body:unknown;success:string}|null>(null);
   const [listScope, setListScope] = useState<"current" | "history">(route.get("scope") === "history" ? "history" : "current");
   const [checkedCandidates, setCheckedCandidates] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState<"all" | "page">("page"), [selectionPending, setSelectionPending] = useState(false);
   const [bulkJobs, setBulkJobs] = useState<BulkJob[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const bulkBusy = useRef(false);
@@ -60,6 +67,14 @@ export default function MasterlistsPage({ session }: { session: Session }) {
     name: string;
     target?: {id:string;version:number;title:string};
   }>(null);
+  const conflictRemovalReturn = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!form) {
+      const trigger = conflictRemovalReturn.current;
+      conflictRemovalReturn.current = null;
+      if (trigger?.isConnected) trigger.focus();
+    }
+  }, [form]);
   const [fields, setFields] = useState({
     title: "",
     academicYearId: "",
@@ -72,7 +87,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
   useEffect(() => {
     const params = new URLSearchParams({ draft: selected, view: memberView, scope: listScope, limit:String(candidateLimit) });
     const previous = new URLSearchParams(window.location.hash.split("?")[1]);
-    if (previous.get("draft") === selected) for (const key of ["request", "version", "amendments"]) { const value=previous.get(key); if(value) params.set(key,value); }
+    if (previous.get("draft") === selected) for (const key of ["request", "version", "amendments", "workflow"]) { const value=previous.get(key); if(value) params.set(key,value); }
     if (q) params.set("q", q);
     if (candidateOffset) params.set("offset", String(candidateOffset));
     window.history.replaceState(null, "", selected ? `#masterlists?${params}` : `#masterlists?scope=${listScope}`);
@@ -292,9 +307,10 @@ export default function MasterlistsPage({ session }: { session: Session }) {
     finally { bulkBusy.current = false; setBulkSaving(false); }
   }
   const selectableCandidates = candidates?.items.filter(c => !c.issues.length && !detail?.entries.some(e => e.scholarId === c.scholarId)) ?? [];
-  const disabled = loading || detailLoading || saving || !!uncertainCommand || bulkJobs.length > 0;
+  const disabled = loading || detailLoading || saving || selectionPending || !!uncertainCommand || bulkJobs.length > 0;
   return (
     <section className="scholars-page masterlists-workspace">
+      {recovery&&<PayoutCommandRecovery workspace="masterlists" session={session} path={recovery} onResolved={()=>{setRecovery(null);refresh();}}/>}
       <div className="section-heading">
         <div>
           <h1>{detail?.title ?? "Masterlists"}</h1>
@@ -435,7 +451,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                   ))}
                 {form.action === "remove" && (
                   <p>
-                    Remove this scholar from <strong>{detail?.title} · {detail?.yearCode}</strong>?
+                    Remove <strong className="ml-removal-identity">{form.name}</strong> from <strong>{detail?.title} · {detail?.yearCode}</strong>?
                     {" "}Their profile and scholarship status stay unchanged. The removal is recorded in history.
                   </p>
                 )}
@@ -473,7 +489,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                   </div>
                 ))}</RoutineEvidence>
                 <div className="d-flex gap-2">
-                  <button
+                  <ActionButton pending={saving}
                     className={form.action === "remove" ? "btn btn-danger" : "btn configuration-primary"}
                     type="submit"
                     disabled={
@@ -482,7 +498,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                     }
                   >
                     {saving ? "Saving..." : form.action === "remove" ? "Remove from draft" : form.action === "create" ? "Create draft" : "Save reviewed entry"}
-                  </button>
+                  </ActionButton>
                   <button
                     className="btn btn-outline-secondary"
                     type="button"
@@ -582,8 +598,9 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                   }}
                 /></details>
               )}
+              {detail.status === "published" && access?.permissions.some(p=>p.code==="masterlists.lock") && <details className="secondary-details" open={route.get("workflow")==="1" || undefined}><summary>Lock published official list</summary><MasterlistWorkflow listTitle={detail.title} proposalKind={detail.proposalKind} key={`lock-${detail.id}`} id={detail.id} version={detail.version} session={session} access={access} disabled={disabled || !!form} validation={detail.validation} onChanged={refresh}/></details>}
               {!["published","locked"].includes(detail.status) && <>
-              <MasterlistWorkflow
+              <MasterlistWorkflow listTitle={detail.title}
                 proposalKind={detail.proposalKind}
                 key={`workflow-${detail.id}`}
                 id={detail.id}
@@ -596,7 +613,8 @@ export default function MasterlistsPage({ session }: { session: Session }) {
               />
               </>}
 
-              {detail.count > 0 && !detail.validation.valid && <details className="secondary-details" open><summary>{detail.validation.valid ? "Checks passed" : "Needs attention"}</summary>
+              {detail.proposalKind === "standalone" && !["published", "locked"].includes(detail.status) && <MasterlistConflicts key={`conflicts-${detail.id}-${detail.version}`} id={detail.id} count={detail.validation.issues.filter(i => ["ALREADY_ACTIVATED", "OPERATIONAL_STANDING_REVIEW"].includes(i.code)).length} disabled={disabled || !!form} session={session} onPending={setSelectionPending} onRemoved={result => { setNotice(`${result.removedCount.toLocaleString()} confirmed conflicting draft memberships removed atomically. ${result.remainingCount.toLocaleString()} members remain. Resubmission and approval are required.`); refresh(); }} onReviewRemoval={detail.status === "draft" && !detail.unavailable ? (member, trigger) => { conflictRemovalReturn.current = trigger; openForm("remove", member.scholarId, `${member.name} (${member.humanId ?? "No permanent ID"})`); } : undefined} />}
+              {detail.count > 0 && !detail.validation.valid && detail.validation.issues.some(i => !["ALREADY_ACTIVATED", "OPERATIONAL_STANDING_REVIEW"].includes(i.code)) && <details className="secondary-details" open><summary>{detail.validation.valid ? "Checks passed" : "Needs attention"}</summary>
                 <strong>
                   {detail.validation.valid
                     ? detail.status === "published" ||
@@ -610,7 +628,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                 </strong>
                 {!!detail.validation.issues.length && (
                   <ul className="mb-0">
-                    {detail.validation.issues.map((i, n) => (
+                    {detail.validation.issues.filter(i => !["ALREADY_ACTIVATED", "OPERATIONAL_STANDING_REVIEW"].includes(i.code)).map((i, n) => (
                       <li key={n}>
                         {i.scholarId
                           ? `${detail.entries.find((e) => e.scholarId === i.scholarId)?.snapshot.humanId ?? "Candidate"}: `
@@ -671,18 +689,18 @@ export default function MasterlistsPage({ session }: { session: Session }) {
                   Search candidates
                 </button>
               </form>
-              <div className="candidate-selection-bar" role="region" aria-label="Selected scholar actions" tabIndex={-1}>
+              {detail.proposalKind === "standalone" ? <MasterlistSelection key={`${detail.id}-${q}`} detail={detail} candidates={candidates?.items ?? []} checkedIds={checkedCandidates} setCheckedIds={setCheckedCandidates} mode={selectionMode} setMode={setSelectionMode} q={q} disabled={disabled || !!form} session={session} onPending={setSelectionPending} onAdded={result => { setNotice(`${result.addedCount.toLocaleString()} reviewed eligible scholars added atomically to this draft. Approval and publication remain separate.`); refresh(); }} /> : <div className="candidate-selection-bar" role="region" aria-label="Selected scholar actions" tabIndex={-1}>
                 <span role="status"><strong>{checkedCandidates.length} selected</strong><small>Eligible scholars on this page</small></span>
                 <button type="button" className="btn btn-outline-secondary" disabled={disabled || !!form || !selectableCandidates.length} onClick={() => setCheckedCandidates(selectableCandidates.map(c => c.scholarId))}>Select all eligible ({selectableCandidates.length})</button>
                 <button type="button" className="btn btn-outline-secondary" disabled={disabled || !checkedCandidates.length} onClick={() => setCheckedCandidates([])}>Clear</button>
                 <button type="button" className="btn configuration-primary" disabled={disabled || !!form || !checkedCandidates.length} onClick={reviewSelected}>Add selected ({checkedCandidates.length})</button>
-              </div>
+              </div>}
               <div className="table-responsive" role="region" aria-label="Candidates to add" tabIndex={0}>
                 <table className="table compact-table candidate-table">
-                  <thead><tr><th scope="col"><input type="checkbox" aria-label="Select all eligible candidates on this page" disabled={disabled || !selectableCandidates.length} checked={selectableCandidates.length > 0 && checkedCandidates.length === selectableCandidates.length} onChange={e => setCheckedCandidates(e.target.checked ? selectableCandidates.map(c => c.scholarId) : [])} /></th><th scope="col">Scholar</th><th scope="col">School / year</th><th scope="col">Action</th></tr></thead>
+                  <thead><tr><th scope="col"><input type="checkbox" aria-label="Select all eligible candidates on this page" disabled={disabled || !selectableCandidates.length} checked={selectableCandidates.length > 0 && checkedCandidates.length === selectableCandidates.length} onChange={e => { setSelectionMode("page"); setCheckedCandidates(e.target.checked ? selectableCandidates.map(c => c.scholarId) : []); }} /></th><th scope="col">Scholar</th><th scope="col">School / year</th><th scope="col">Action</th></tr></thead>
                   <tbody>{candidates?.items.map(c => <tr key={c.scholarId}>
-                    <td><input type="checkbox" aria-label={`Select ${c.name} for masterlist`} disabled={disabled || !!c.issues.length || detail.entries.some(e => e.scholarId === c.scholarId)} checked={checkedCandidates.includes(c.scholarId)} onChange={e => setCheckedCandidates(prev => e.target.checked ? [...prev,c.scholarId] : prev.filter(id=>id!==c.scholarId))} /></td>
-                    <td><span className="masterlist-title" tabIndex={0} title={c.name}>{c.name}</span><small className="permanent-id">{c.humanId}</small></td>
+                    <td><input type="checkbox" aria-label={`Select ${c.name} for masterlist`} disabled={disabled || !!c.issues.length || detail.entries.some(e => e.scholarId === c.scholarId)} checked={checkedCandidates.includes(c.scholarId)} onChange={e => { setSelectionMode("page"); setCheckedCandidates(prev => e.target.checked ? [...prev,c.scholarId] : prev.filter(id=>id!==c.scholarId)); }} /></td>
+                    <td><span className="masterlist-title" tabIndex={0} title={c.name}>{c.name}</span><small className="permanent-id">{c.humanId}</small>{c.activationConflict?.masterlistId && <small><span className="status-badge status-warning">Already activated</span> <a href={`#masterlists?draft=${c.activationConflict.masterlistId}`}>{c.activationConflict.title}</a></small>}</td>
                     <td>{c.snapshot ? <>{c.snapshot.placement.school.name}<small>{yearLevelLabel(c.snapshot.placement.yearLevel)} / {c.snapshot.placement.course.name}</small></> : c.issues.some(i => i.code === "ACADEMIC_RECORD_REQUIRED") ? "Academic details required" : "Available after eligibility checks pass"}</td>
                     <td>{detail.entries.some(e => e.scholarId === c.scholarId) ? <span className="status-badge status-success">Added</span> : c.issues.length ? <button className="btn btn-sm btn-outline-secondary" onClick={()=>setIssuesFor(c)}>View reasons ({c.issues.length})</button> : <button type="button" className="btn btn-sm configuration-primary" aria-label={`Add ${c.name} to list`} disabled={disabled || !!form} onClick={() => void addCandidate(c)}>Add to list</button>}</td>
                   </tr>)}</tbody>
@@ -721,7 +739,7 @@ export default function MasterlistsPage({ session }: { session: Session }) {
               )}
               </div>}
               {["published","locked"].includes(detail.status) && <details className="secondary-details"><summary>Publication and workflow history</summary>
-              <MasterlistWorkflow
+              <MasterlistWorkflow listTitle={detail.title}
                 proposalKind={detail.proposalKind}
                 key={`workflow-${detail.id}`}
                 id={detail.id}

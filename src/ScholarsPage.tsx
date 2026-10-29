@@ -1,3 +1,6 @@
+import {ActionButton} from "./ActionProgress";
+import ScholarProfileFacts from "./ScholarProfileFacts";
+import {registryYearMode,resolveRegistryYear,registryPreferences,type RegistryYearMode} from "./registry-view";
 import FocusedDialog from "./FocusedDialog";
 import { receivingContextFromRoute, type ReceivingContext } from "./receiving-selection";
 import NotificationDocument from "./NotificationDocument";
@@ -5,6 +8,9 @@ import RegistryEligibilityCell, { RegistryPeriodPicker, useRegistryEligibility }
 import { newRecordYear } from "./academic-year-options";
 import RoutineEvidence from "./RoutineEvidence";
 import ContinuingBaseline from "./ContinuingBaseline";
+import AnnualIntakePanel, { AnnualRegistrationForm } from "./AnnualIntakePanel";
+import {annualPath,restoreAnnualCommand} from "./annual-intake-api";
+import type {RegistrationResult} from "../server/scholars/annual-intake-model";
 import ErrorNotice from "./ErrorNotice";
 import ScholarRequirements from "./ScholarRequirements";
 import { scholarAddress, scholarSection } from "./scholar-navigation";
@@ -22,6 +28,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
   type FormEvent,
 } from "react";
@@ -90,14 +97,23 @@ export default function ScholarsPage({ session }: { session: Session }) {
   const requestedSection = scholarSection(route);
   const [showImport, setShowImport] = useState(route.has("importJob"));
   const [batchVerification, setBatchVerification] = useState(() => hasPendingBatch(session.user.id));
-  const [priorBatch,setPriorBatch]=useState(()=>pendingPrior(session.user.id)?.route==="scholars");
+  const [annualRegistration,setAnnualRegistration]=useState(()=>restoreAnnualCommand(session.user.id)?.command.path==="scholar-registrations");
+  const [priorBatch,setPriorBatch]=useState(()=>{const p=pendingPrior(session.user.id);return p?.route==="scholars"&&!annualPath(p.path);});
   const [access, setAccess] = useState<Access | null>(null);
   const [list, setList] = useState<ScholarList | null>(null);
   const [years, setYears] = useState<ConfigRecord[]>([]),
     [barangays, setBarangays] = useState<ConfigRecord[]>([]);
-  const [savedRegistry] = useState(() => { try { return JSON.parse(sessionStorage.getItem("registry-view") ?? "{}") as Record<string, string>; } catch { return {}; } });
+  const [savedRegistry] = useState(() => registryPreferences(sessionStorage.getItem("registry-view")));
+  const lastWorkingYear=useRef(savedRegistry.workingYear??"");
   const [exportOpen,setExportOpen]=useState(false), [exportYear,setExportYear]=useState("");
   const [classification,setClassification]=useState(savedRegistry.classification ?? "all");
+  const [yearMode,setYearMode]=useState<RegistryYearMode>(()=>registryYearMode(savedRegistry));
+  const [historicalYear,setHistoricalYear]=useState(savedRegistry.year??"");
+  const [yearLabel,setYearLabel]=useState("Current working academic year");
+  const [yearProblem,setYearProblem]=useState("");
+  const [schools,setSchools]=useState<ConfigRecord[]>([]),[courses,setCourses]=useState<ConfigRecord[]>([]);
+  const [schoolFilter,setSchoolFilter]=useState(savedRegistry.school??""),[courseFilter,setCourseFilter]=useState(savedRegistry.course??"");
+  const permissionCodes=useMemo(()=>access?.permissions.map(p=>p.code)??[],[access]);
   const [pageSize,setPageSize]=useState([25,50,100].includes(Number(savedRegistry.pageSize))?Number(savedRegistry.pageSize):25);
   const [semesterChoice,setSemesterChoice]=useState(savedRegistry.semester ?? "");
   const [registryScope, setRegistryScope] = useState(savedRegistry.scope ?? "current");
@@ -117,13 +133,15 @@ export default function ScholarsPage({ session }: { session: Session }) {
   const [profile, setProfile] = useState<ScholarDetail | null>(null),
     [editing, setEditing] = useState(false);
   const [profileSection, setProfileSection] = useState("overview");
-  const [academicYearChoice, setAcademicYearChoice] = useState(route.get("academicYear") ?? "");
+  const [academicYearChoice, setAcademicYearChoiceValue] = useState(route.get("academicYear") ?? "");
+  const setAcademicYearChoice=useCallback((value:string)=>{if(!pendingPrior(session.user.id))setAcademicYearChoiceValue(value);},[session.user.id]);
   const [academicRevision, setAcademicRevision] = useState(0);
   const [receivingContexts, setReceivingContexts] = useState<Record<string, ReceivingContext>>(() => {
     const context = receivingContextFromRoute(route);
     return requestedScholar && context ? { [requestedScholar]: context } : {};
   });
   function showSection(section: string, yearId = academicYearChoice) {
+    if(pendingPrior(session.user.id))return;
     setProfileSection(section);
     if (profile && section === "requirements" && yearId && receivingContexts[profile.id]?.academicYearId !== yearId) setReceivingContexts(old=>({...old,[profile.id]:{academicYearId:yearId}}));
     if (profile) {
@@ -139,8 +157,8 @@ export default function ScholarsPage({ session }: { session: Session }) {
     const params = new URLSearchParams({ scholar: scholarId, section: "requirements" });
     for (const [key, value] of Object.entries({receivingYear: context.annualId, period: context.periodId, academicYear: context.academicYearId, semester: context.semesterId, payrollCycle: context.payoutCycleId})) if (value) params.set(key, value);
     window.history.replaceState(null, "", `#scholars?${params}`);
-  }, []);
-  useEffect(() => { sessionStorage.setItem("registry-view", JSON.stringify({ scope: registryScope, q: query, year: yearFilter, sort, direction, period: payrollPeriod, classification, pageSize:String(pageSize), semester:semesterChoice, offset: String(offset) })); }, [registryScope, query, yearFilter, sort, direction, payrollPeriod, offset, classification, pageSize, semesterChoice]);
+  }, [setAcademicYearChoice]);
+  useEffect(() => { sessionStorage.setItem("registry-view", JSON.stringify({ scope: registryScope, q: query, yearMode, workingYear:yearMode==="working"?yearFilter:lastWorkingYear.current, year: yearMode==="history"?historicalYear:"", school:schoolFilter, course:courseFilter,sort, direction, period: payrollPeriod, classification, pageSize:String(pageSize), semester:semesterChoice, offset: String(offset) })); }, [registryScope, query, yearFilter,yearMode,historicalYear,schoolFilter,courseFilter,sort, direction, payrollPeriod, offset, classification, pageSize, semesterChoice]);
   const eligibility = useRegistryEligibility(profile ? profile.id : list?.items.map(r => r.id).join(",") ?? "", payrollPeriod, revision, !!access?.permissions.some(p => p.code === "scholars.read"), profile ? academicYearChoice || newRecordYear(years,[],"",profile.academicYearId) : yearFilter, profile ? receivingContexts[profile.id]?.semesterId ?? semesterChoice : semesterChoice);
   const [fields, setFields] = useState<ScholarFields>(blank),
     [reason, setReason] = useState("");
@@ -162,6 +180,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
     generation = useRef(0);
   const pending = useRef<{ signature: string; key: string } | null>(null);
   const panel = useRef<HTMLDivElement>(null);
+  const addScholarButton=useRef<HTMLButtonElement>(null);
   const restoreRegistryPosition = useRef(true);
   const invalidateOpen = useCallback(() => {
     generation.current++;
@@ -184,18 +203,18 @@ export default function ScholarsPage({ session }: { session: Session }) {
         )
       )
         return;
-      const [data, yearChoices, barangayChoices] = await Promise.all([
-        request<ScholarList>(
-          `scholars?sort=${sort}&direction=${direction}&scope=${registryScope}&q=${encodeURIComponent(query)}&offset=${offset}&limit=${pageSize}&classification=${classification}${yearFilter ? "&scholarshipYearId=" + yearFilter : ""}`,
-          { signal: controller.signal },
-        ),
-        choices("academic-years", controller.signal),
-        choices("barangays", controller.signal),
+      setLoading(true);setList(null);setYearProblem("");setError("");
+      const [yearChoices,barangayChoices,schoolChoices,courseChoices]=await Promise.all([
+        choices("academic-years",controller.signal),choices("barangays",controller.signal),choices("schools",controller.signal),choices("courses",controller.signal),
       ]);
-      if (!active) return;
-      setList(data);
-      setYears(yearChoices);
-      setBarangays(barangayChoices);
+      if(!active)return;
+      setYears(yearChoices);setBarangays(barangayChoices);setSchools(schoolChoices);setCourses(courseChoices);
+      const resolved=resolveRegistryYear(yearMode,historicalYear,yearChoices);
+      setYearLabel(resolved.label);setYearFilter(resolved.year);setYearProblem(resolved.error);
+      if(resolved.error)return;
+      if(yearMode==="working"){const changed=Boolean(lastWorkingYear.current&&lastWorkingYear.current!==resolved.year);lastWorkingYear.current=resolved.year;if(changed&&offset){setOffset(0);return;}}
+      const data=await request<ScholarList>(`scholars?sort=${sort}&direction=${direction}&scope=${registryScope}&q=${encodeURIComponent(query)}&offset=${offset}&limit=${pageSize}&classification=${classification}${resolved.year?"&registryYearId="+resolved.year:""}${schoolFilter?"&schoolId="+schoolFilter:""}${courseFilter?"&courseId="+courseFilter:""}`,{signal:controller.signal});
+      if(active)setList(data);
     })()
       .catch((failure: unknown) => {
         if (active) setError(message(failure));
@@ -210,7 +229,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
       window.clearTimeout(timeout);
       invalidateOpen();
     };
-  }, [query, offset, yearFilter, revision, invalidateOpen, registryScope, sort, direction, classification, pageSize]);
+  }, [query, offset, yearMode,historicalYear,schoolFilter,courseFilter,revision, invalidateOpen, registryScope, sort, direction, classification, pageSize]);
   useEffect(() => {
     if (editing || profile) {
       panel.current?.scrollIntoView({ behavior: "instant", block: "start" });
@@ -237,6 +256,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
     return () => cancelAnimationFrame(frame);
   }, [loading, profile, requestedScholar, eligibility.loading, eligibility.data, eligibility.error]);
   function closeProfile() {
+    if(saving||pendingPrior(session.user.id))return;
     if (document.querySelector("dialog[open][data-pending-location]")) return;
     generation.current++;
     setOpening(false);
@@ -247,7 +267,15 @@ export default function ScholarsPage({ session }: { session: Session }) {
       window.dispatchEvent(new PopStateEvent("popstate"));
     }
   }
+  async function annualSaved(result:RegistrationResult){
+    setAnnualRegistration(false);setRevision(n=>n+1);setNotice(`Annual registration saved: ${result.scholarId}. Scholarship approval and payment checks remain separate.`);
+    const year=result.annualIntake.academicYearId;setAcademicYearChoice(year);
+    window.history.replaceState(null,"",scholarAddress(result.id,"overview",year));
+    try{const row=await request<ScholarDetail>(`scholars/${result.id}?contextAcademicYearId=${year}`);setProfile(row);setProfileSection("overview");}
+    catch(e){setError(message(e));setNotice(`Registration saved: ${result.scholarId}. Reload this profile to retry the read; do not register again.`);}
+  }
   function reset() {
+    if(saving||pendingPrior(session.user.id))return;
     generation.current++;
     setError("");
     setNotice("");
@@ -258,6 +286,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
     setList(null);
   }
   async function open(id: string, section = receivingTask ? "requirements" : "overview") {
+    if(saving||pendingPrior(session.user.id))return;
     sessionStorage.setItem("registry-scroll",String(window.scrollY));
     sessionStorage.setItem("registry-focus", `${id}:${section === "requirements" ? "receive" : "view"}`);
     const token = ++generation.current;
@@ -282,6 +311,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
     }
   }
   function edit(row: ScholarDetail | null) {
+    if(saving||pendingPrior(session.user.id))return;
     setProfile(row);
     setFields(row ? asFields(row) : { ...blank, academicYearId: newRecordYear(years, [], "", "") });
     clearReview();
@@ -395,13 +425,26 @@ export default function ScholarsPage({ session }: { session: Session }) {
   }
   const availableYears = years.filter((year) => year.working !== false && !year.archived && !year.locked);
   return (
-    <>
-      <div className="page-heading">
+    <div className="u1-registry">
+      <div className="page-heading u1-registry-heading">
         <div>
-          <div className="eyebrow">SCHOLAR RECORDS</div>
-          <h1>Scholar registry</h1>
-          <p>{receivingTask ? "Find a scholar to receive or review their documents." : "Find a scholar to view records or receive documents."}</p>
+          <div className="eyebrow">{profile&&!editing?profile.scholarId:"SCHOLAR RECORDS"}</div>
+          <h1>{profile&&!editing?profile.displayName:"Scholar registry"}</h1>
+          <p hidden={!!profile}>{receivingTask ? "Find a scholar to receive or review their documents." : "Search records or add a scholar."}</p>
         </div>
+        <div className="registry-header-actions">            {!profile&&!editing&&!annualRegistration&&allowed("scholars.create") && (
+              <button
+                className="btn configuration-primary"
+                disabled={
+                  loading || saving || opening || !availableYears.length
+                }
+                onClick={() => {setEditing(false);setProfile(null);setAnnualRegistration(true);}}
+                ref={addScholarButton}
+              >
+                <Plus size={17} />
+                Add Scholar
+              </button>
+            )}
         <button
           className="btn btn-outline-secondary quiet-button"
           disabled={loading || saving}
@@ -412,7 +455,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
         >
           <RefreshCw size={16} />
           Refresh
-        </button>
+        </button></div>
       </div>
       <ErrorNotice error={error} />
       {notice && (
@@ -436,7 +479,9 @@ export default function ScholarsPage({ session }: { session: Session }) {
       )}
       {allowed("scholars.read") && (
         <>
-          <div className="configuration-toolbar scholar-registry-toolbar" hidden={!!profile || editing}>
+          {!profile&&!editing&&!annualRegistration&&<div className="registry-year-context"><div><strong>{yearMode==="working"?"Current academic year":"All Years / Historical"}</strong><p>{yearLabel}</p></div><button type="button" className="btn btn-outline-secondary" disabled={saving||Boolean(pendingPrior(session.user.id))} onClick={()=>{reset();setYearMode(yearMode==="working"?"history":"working");setHistoricalYear("");setOffset(0);setPayrollPeriod("");setSemesterChoice("");}}>{yearMode==="working"?"All Years / Historical":"Current working year"}</button></div>}
+          {!profile&&!editing&&yearProblem&&<p role="alert" className="alert alert-warning">{yearProblem}</p>}
+          <div className="configuration-toolbar scholar-registry-toolbar" hidden={!!profile || editing || annualRegistration}>
             <form
               className="configuration-search"
               onSubmit={(event) => {
@@ -467,45 +512,22 @@ export default function ScholarsPage({ session }: { session: Session }) {
                 <Search size={18} />
               </button>
             </form>
+            <label className="scholar-year-filter">Scholar status<select className="form-select" value={registryScope} disabled={saving} onChange={e=>{reset();setRegistryScope(e.target.value);setOffset(0);}}><option value="current">Current scholars</option><option value="graduated">Graduated / Archived</option><option value="all">All statuses</option></select></label>
+            {yearMode==="history"&&<label className="scholar-year-filter">Academic year<select className="form-select" value={historicalYear} disabled={saving} onChange={e=>{reset();setHistoricalYear(e.target.value);setOffset(0);setPayrollPeriod("");setSemesterChoice("");}}><option value="">All Years</option>{years.map(y=><option key={y.id} value={y.id}>{y.code} - {y.name}</option>)}</select></label>}
+            <details className="registry-more-filters"><summary>More filters{classification!=="all"||schoolFilter||courseFilter||sort!=="name"||direction!=="asc"?" (active)":""}</summary><div className="registry-filter-fields">
             <label className="scholar-year-filter">Classification<select className="form-select" aria-label="Classification" value={classification} onChange={e=>{setClassification(e.target.value);setOffset(0);}}><option value="all">All</option><option value="new">New</option><option value="continuing">Continuing</option><option value="unknown">Not recorded</option></select></label>
-            {allowed("scholars.export") && <button className="btn btn-outline-secondary" onClick={()=>setExportOpen(true)}>Export</button>}
             <label className="scholar-year-filter">Sort by<select className="form-select" value={sort} onChange={e => { setSort(e.target.value); setOffset(0); }}>{[["name", "Name"], ["scholarId", "Scholar ID"], ["school", "School"], ["yearLevel", "Year Level"], ["classification", "New / Continuing"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>
             <label className="scholar-year-filter">Direction<select className="form-select" value={direction} onChange={e => { setDirection(e.target.value); setOffset(0); }}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
-            <label className="scholar-year-filter"><span className="visually-hidden">Registry view</span><select className="form-select" value={registryScope} onChange={e => { setRegistryScope(e.target.value); setOffset(0); }}><option value="current">Current scholars</option><option value="graduated">Graduated / Archived</option><option value="all">All records</option></select></label>
-            <label className="scholar-year-filter scholar-year-filter--year">
-              <span className="visually-hidden">Filter scholarship year</span>
-              <select
-                className="form-select"
-                value={yearFilter}
-                disabled={saving}
-                onChange={(event) => {
-                  reset();
-                  setYearFilter(event.target.value);
-                  setPayrollPeriod("");setSemesterChoice("");
-                  setOffset(0);
-                }}
-              >
-                <option value="">All scholarship years</option>
-                {years.map((year) => (
-                  <option key={year.id} value={year.id}>
-                    {year.code}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {allowed("scholars.create") && (
-              <button
-                className="btn configuration-primary"
-                disabled={
-                  loading || saving || opening || !availableYears.length
-                }
-                onClick={() => edit(null)}
-              >
-                <Plus size={17} />
-                Add scholar
-              </button>
-            )}
-            {allowed("scholars.create") && (
+              <label>School<select className="form-select" value={schoolFilter} disabled={saving} onChange={e=>{reset();setSchoolFilter(e.target.value);setOffset(0);}}><option value="">All schools</option>{schools.map(s=><option key={s.id} value={s.id}>{s.name}{s.archived?" (archived)":""}</option>)}</select></label>
+              <label>Course<select className="form-select" value={courseFilter} disabled={saving} onChange={e=>{reset();setCourseFilter(e.target.value);setOffset(0);}}><option value="">All courses</option>{courses.map(c=><option key={c.id} value={c.id}>{c.name}{c.archived?" (archived)":""}</option>)}</select></label>
+              {(classification!=="all"||schoolFilter||courseFilter||sort!=="name"||direction!=="asc")&&<button type="button" className="btn btn-outline-secondary" disabled={saving} onClick={()=>{setClassification("all");setSort("name");setDirection("asc");setSchoolFilter("");setCourseFilter("");setOffset(0);}}>Clear filters</button>}
+            </div></details>
+
+          </div>
+          {!profile&&!editing&&!annualRegistration&&<details className="registry-help"><summary>About this view</summary><p>Annual association is recorded evidence, not approval. Unassociated identities remain in All Years.{yearMode==="history"&&!historicalYear&&" Choose a year for its annual facts; unfiltered rows use working-year context."}</p></details>}
+          {annualRegistration&&<AnnualRegistrationForm session={session} onSaved={r=>void annualSaved(r)} onBusyChange={setSaving} onCancel={()=>{setAnnualRegistration(false);requestAnimationFrame(()=>addScholarButton.current?.focus());}}/>}
+          {!profile&&!editing&&<details className="registry-workflows u1-registry-workflows" aria-label="Other Registry tasks" hidden={annualRegistration} open={showImport||batchVerification||priorBatch||undefined}><summary>Files &amp; document workflows</summary><div className="u1-workflow-actions">
+            <div><h2>Excel files</h2><div className="registry-action-group">            {allowed("scholars.create") && (
               <button
                 className="btn btn-outline-secondary"
                 disabled={saving || opening}
@@ -513,17 +535,18 @@ export default function ScholarsPage({ session }: { session: Session }) {
               >
                 {showImport ? "Close import" : "Import Excel"}
               </button>
-            )}
-          </div>
-          {allowed("requirements.verify") && !profile && !editing && <button className="btn btn-outline-secondary my-2" disabled={saving || opening} onClick={() => setBatchVerification(true)}>Verify batch documents</button>}
-          {allowed("academic.changes.approve")&&!profile&&!editing&&<button className="btn configuration-primary my-2 ms-2" disabled={saving||opening||batchVerification} onClick={()=>setPriorBatch(true)}>Record prior batch approval</button>}
+            )}{allowed("scholars.export")&&<button className="btn btn-outline-secondary" onClick={()=>setExportOpen(true)}>Export</button>}</div></div>
+            <div><h2>Documents and prior approvals</h2><div className="registry-action-group">          {allowed("requirements.verify") && !profile && !editing && <button className="btn btn-outline-secondary" disabled={saving || opening} onClick={() => setBatchVerification(true)}>Verify batch documents</button>}
+          {allowed("academic.changes.approve")&&!profile&&!editing&&<button className="btn btn-outline-secondary" disabled={saving||opening||batchVerification} onClick={()=>setPriorBatch(true)}>Prior-batch approval</button>}
+</div></div>
+          </div></details>}
           {priorBatch&&<PriorBatchApproval session={session} semesters={eligibility.data?.semesters??[]} initialSemester={semesterChoice||eligibility.data?.semesterId||""} onClose={()=>setPriorBatch(false)} onChanged={()=>setRevision(n=>n+1)}/>}
           {batchVerification && <BatchDocumentVerification session={session} semesters={eligibility.data?.semesters ?? []} initialSemester={semesterChoice || eligibility.data?.semesterId || ""} canReviewPlacement={Boolean(allowed("semesters.configure") && allowed("academic.edit"))} onClose={() => setBatchVerification(false)} onChanged={() => setRevision(n => n + 1)} />}
-          {showImport && !profile && !editing && allowed("scholars.create") && (
+          {showImport && !profile && !editing && allowed("scholars.create") && (<div hidden={annualRegistration}>
             <ScholarImport
               session={session}
               onImported={() => setRevision((n) => n + 1)}
-            />
+            /></div>
           )}
           {exportOpen && <FocusedDialog title="Export registry" onClose={()=>setExportOpen(false)}><p>This existing export uses registration year, independently of the scholarship-year view.</p><label>Registration year<select className="form-select" value={exportYear} onChange={e=>setExportYear(e.target.value)}><option value="">Choose registration year</option>{years.map(y=><option key={y.id} value={y.id}>{y.code}</option>)}</select></label><ExcelExport kind="scholars" session={session} academicYearId={exportYear||undefined} yearLabel={years.find(y=>y.id===exportYear)?.code} q={query}/></FocusedDialog>}
           {!loading && !availableYears.length && (
@@ -539,9 +562,9 @@ export default function ScholarsPage({ session }: { session: Session }) {
             </div>
           )}
           {opening && <p role="status">Opening scholar profile…</p>}
-          {(editing || profile) && (
+          {!annualRegistration&&(editing || profile) && (
             <div
-              className="info-panel scholar-profile"
+              className="info-panel scholar-profile u1-profile"
               ref={panel}
               tabIndex={-1}
             >
@@ -555,7 +578,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                       ? profile
                         ? "Edit scholar"
                         : "Add scholar"
-                      : profile?.displayName}
+                      : "Scholar details"}
                   </h2>
                 </div>
                 <button
@@ -849,7 +872,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                       </div>
                     )}
                     <div className="configuration-form-actions">
-                      <button
+                      <ActionButton pending={saving} activeLabel="Checking / saving..."
                         className="btn configuration-primary"
                         type="submit"
                       >
@@ -860,7 +883,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                             : duplicateCheck?.total
                               ? "Create separate scholar"
                               : "Check and create scholar"}
-                      </button>
+                      </ActionButton>
                       <button
                         className="btn btn-outline-secondary"
                         type="button"
@@ -895,16 +918,6 @@ export default function ScholarsPage({ session }: { session: Session }) {
                       </div>
                     )}
                     {profile.graduation && <p className="alert alert-info">{profile.graduation.label}{profile.graduation.semesterName && ` · ${profile.graduation.semesterName}`}</p>}
-                    <ContinuingBaseline key={`baseline-${profile.id}`} scholarId={profile.id} />
-                    {<ScholarAcademicSummary
-                      key={`academic-summary-${profile.id}`}
-                      scholarId={profile.id}
-                      suppliedPlacement={profile.placement ?? undefined}
-                      years={years}
-                      academicYearId={academicYearChoice || newRecordYear(years, [], "", profile.academicYearId) || undefined}
-                      refreshKey={`${profile.version}-${academicRevision}`}
-                      onEdit={(yearId) => { setAcademicYearChoice(yearId); showSection("academic", yearId); }}
-                    />}
                     <nav
                       aria-label="Scholar profile sections"
                       className="d-flex flex-wrap gap-2 my-3 profile-tabs"
@@ -919,6 +932,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                         <button
                           key={value}
                           type="button"
+                          disabled={saving}
                           aria-pressed={profileSection === value}
                           className={`btn ${profileSection === value ? "configuration-primary" : "btn-outline-secondary"}`}
                           onClick={() => showSection(value)}
@@ -927,6 +941,33 @@ export default function ScholarsPage({ session }: { session: Session }) {
                         </button>
                       ))}
                     </nav>
+                    <ScholarProfileFacts person={profile} yearId={academicYearChoice||newRecordYear(years,[],"",profile.academicYearId)}/>
+
+                    <div hidden={profileSection!=="overview"&&!saving}>
+                      <details className="u1-annual-facts" open={saving||undefined}><summary>Annual registration &amp; supplied facts</summary>
+                    <ContinuingBaseline key={`baseline-${profile.id}`} scholarId={profile.id} />
+                    <AnnualIntakePanel key={`intake-${profile.id}-${academicYearChoice}`} session={session} person={profile} yearId={academicYearChoice||newRecordYear(years,[],"",profile.academicYearId)} permissions={permissionCodes} onBusyChange={setSaving} onChanged={()=>{
+                      setAcademicRevision(n=>n+1);setRevision(n=>n+1);
+                      const selectedYear=academicYearChoice||newRecordYear(years,[],"",profile.academicYearId);
+                      void request<ScholarDetail>(`scholars/${profile.id}?contextAcademicYearId=${selectedYear}`).then(row=>{
+                        const context=new URLSearchParams(window.location.hash.split('?')[1]);
+                        if(context.get('scholar')===row.id&&(!context.get('academicYear')||context.get('academicYear')===selectedYear))setProfile(row);
+                      }).catch(e=>setError(message(e)));
+                    }}/>
+                      </details>
+                      <details className="u1-academic-summary"><summary>Academic placement &amp; available setup</summary>
+                    {<ScholarAcademicSummary
+                      key={`academic-summary-${profile.id}`}
+                      scholarId={profile.id}
+                      suppliedPlacement={profile.placement ?? undefined}
+                      years={years}
+                      academicYearId={academicYearChoice || newRecordYear(years, [], "", profile.academicYearId) || undefined}
+                      refreshKey={`${profile.version}-${academicRevision}`}
+                      onEdit={(yearId) => { setAcademicYearChoice(yearId); showSection("academic", yearId); }}
+                    />}
+                      </details>
+                    </div>
+
                     {profileSection === "overview" && (
                       <>
                         <div className="profile-status-grid">
@@ -934,7 +975,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                          <section><h3>Academic assessment</h3><RegistryEligibilityCell state={eligibility} scholarId={profile.id} /></section>
                          <section><h3>Payout</h3><RegistryEligibilityCell state={eligibility} scholarId={profile.id} mode="payout" /></section>
                         </div>
-                        <dl className="scholar-detail-grid">
+                        <details className="u1-contact-details"><summary>Personal &amp; contact details</summary><dl className="scholar-detail-grid">
                           {[
                             ["Birth date", profile.birthDate],
                             ["Barangay", profile.barangay?.name],
@@ -951,7 +992,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                               <dd>{value || "Not recorded"}</dd>
                             </div>
                           ))}
-                        </dl>
+                        </dl></details>
                       </>
                     )}
                     {profileSection === "requirements" && access && (
@@ -1029,7 +1070,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
             </div>
           )}
           {!loading && list && !profile && !editing && (
-            <section hidden={!!profile || editing}
+            <section hidden={!!profile || editing || annualRegistration}
               className="info-panel configuration-list"
               aria-label="Scholar search results"
             >
@@ -1056,11 +1097,10 @@ export default function ScholarsPage({ session }: { session: Session }) {
               ) : (
                 <><div className="registry-period-toolbar"><label>Requirements semester<select className="form-select" value={semesterChoice || eligibility.data?.semesterId || ""} onChange={e=>{setSemesterChoice(e.target.value);setPayrollPeriod("");}}><option value="">Choose semester</option>{eligibility.data?.semesters?.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
                   <RegistryPeriodPicker state={eligibility} value={payrollPeriod} onChange={setPayrollPeriod} />
-                  </div><div className="registry-table-scroll" role="region" aria-label="Scholar registry" tabIndex={0}><table className="table configuration-table registry-table">
+                  </div><div className="registry-table-scroll" role="region" aria-label="Scholar registry" tabIndex={0} onFocusCapture={e=>{if(e.target!==e.currentTarget)e.target.scrollIntoView({block:"nearest",inline:"nearest"});}}><table className="table configuration-table registry-table registry-compact">
                     <thead>
                       <tr>
-                        <th>Scholar ID</th>
-                        <th>Scholar name</th>
+                        <th>Scholar / ID</th>
                         <th>School / Year</th>
                         <th>Classification</th>
                         <th>Requirements</th><th>Payout</th>
@@ -1070,13 +1110,10 @@ export default function ScholarsPage({ session }: { session: Session }) {
                     <tbody>
                       {list.items.map((row) => (
                         <tr key={row.id}>
-                          <td>
-                            <strong>{row.scholarId}</strong>
-                          </td>
-                          <td><span className="registry-truncate" tabIndex={0} title={row.displayName}>{row.displayName}</span>{row.graduation && <small className="d-block">{row.graduation.label}</small>}</td>
-                          <td><span className="registry-truncate" tabIndex={0} title={row.placement?.school ?? "Not recorded"}>{row.placement?.school ?? "Not recorded"}</span><small>{yearLevelLabel(row.placement?.yearLevel)}{row.placement?.provisional ? " · Provisional" : ""}</small></td>
-                          <td>{row.placement?.classification === "continuing" ? "Continuing" : row.placement?.classification === "new" ? "New" : "Not recorded"}</td>
-                          <td><RegistryEligibilityCell state={eligibility} scholarId={row.id} mode="requirements" /></td><td><RegistryEligibilityCell state={eligibility} scholarId={row.id} mode="payout" /></td>
+                          <td className="registry-person"><strong>{row.displayName}</strong><small>{row.scholarId}</small>{row.graduation&&<small>{row.graduation.label}</small>}</td>
+                          <td className="registry-school"><span>{row.placement?.school??"Not recorded"}</span><small>{yearLevelLabel(row.placement?.yearLevel)}{row.placement?.provisional?" / Supplied":""}</small></td>
+                          <td>{row.placement?.classification === "continuing" ? "Continuing" : row.placement?.classification === "new" ? "New" : "Not recorded"}{row.placement?.classificationBasis==="legacy_derived"&&<small className="d-block">Legacy-derived</small>}</td>
+                          <td><RegistryEligibilityCell state={eligibility} scholarId={row.id} mode="requirements" compact scholarLabel={row.scholarId} /></td><td><RegistryEligibilityCell state={eligibility} scholarId={row.id} mode="payout" compact scholarLabel={row.scholarId} /></td>
                           <td>
                             <button
                               className="btn btn-sm btn-outline-secondary"
@@ -1087,7 +1124,7 @@ export default function ScholarsPage({ session }: { session: Session }) {
                             >
                               View
                             </button>
-                            {allowed("requirements.receive") && <button className="btn btn-sm btn-outline-secondary" aria-label="Receive documents" data-registry-action={`${row.id}:receive`} disabled={saving || opening} onClick={() => open(row.id,"requirements")}>Receive</button>}
+                            {allowed("requirements.receive") && <button className="btn btn-sm btn-outline-secondary" aria-label={"Receive documents for " + row.scholarId} data-registry-action={`${row.id}:receive`} disabled={saving || opening} onClick={() => open(row.id,"requirements")}>Receive</button>}
                           </td>
                         </tr>
                       ))}
@@ -1126,6 +1163,6 @@ export default function ScholarsPage({ session }: { session: Session }) {
           )}
         </>
       )}
-    </>
+    </div>
   );
 }

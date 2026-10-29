@@ -3,10 +3,9 @@ import { z } from "zod";
 import type { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
 import { REPORTS, type ReportKind } from "../reports/model.js";
-import { readOperationalReport } from "../reports/service.js";
 import { currentPayout } from "../payouts/service.js";
-import type { EligibilityView } from "../eligibility/model.js";
-import { cohortReads } from "../eligibility/cohort-reads.js";
+import { dashboardCards } from "./summary.js";
+import {annualOverview,payrollOverview} from "./overview.js";
 
 export function parseDashboard(raw: unknown) {
   const result = z.object({ cycleId: z.uuid() }).strict().safeParse(raw);
@@ -21,6 +20,22 @@ export function parseDashboard(raw: unknown) {
 }
 export class DashboardService {
   constructor(private authorization: AuthorizationService) {}
+  annual(actor:string,raw:unknown) {
+    const q=parseDashboard(raw);
+    return this.authorization.readSnapshot(actor,"configuration.read",async (db,access)=>{
+      if(!access.permissions.some(p=>p.code==="scholars.read"))throw new AuthError(403,"PERMISSION_DENIED","Scholar summary requires scholar access.");
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+      return annualOverview(db,await currentPayout(db,q.cycleId));
+    });
+  }
+  payroll(actor:string,raw:unknown) {
+    const q=parseDashboard(raw);
+    return this.authorization.readSnapshot(actor,"configuration.read",async (db,access)=>{
+      if(!access.permissions.some(p=>p.code==="ovr.process"))throw new AuthError(403,"PERMISSION_DENIED","Payroll outcome summary requires Payment Recording access.");
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+      return payrollOverview(db,await currentPayout(db,q.cycleId));
+    });
+  }
   async read(actor: string, raw: unknown) {
     const q = parseDashboard(raw);
     return this.authorization.readSnapshot(
@@ -40,29 +55,7 @@ export class DashboardService {
           "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
         );
         const cycle = await currentPayout(db, q.cycleId);
-        const reads = await cohortReads(db, cycle.academicYearId, cycle.semesterId, cycle.id);
-        const cards = [];
-        const assessments = new Map<string, EligibilityView>();
-        for (const kind of kinds) {
-          const report = await readOperationalReport(
-            reads,
-            {
-              kind,
-              cycleId: cycle.id,
-              limit: 1,
-              offset: 0,
-            },
-            assessments,
-          );
-          cards.push({
-            kind,
-            label: REPORTS[kind].label,
-            total: report.total,
-            counts: report.counts,
-            scope: report.scope,
-            sourceHash: report.sourceHash,
-          });
-        }
+        const cards = await dashboardCards(db, cycle, kinds);
         return {
           generatedAt: new Date().toISOString(),
           context: {

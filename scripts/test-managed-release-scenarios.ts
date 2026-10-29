@@ -1,4 +1,5 @@
 import { testTreasury } from "./test-treasury-scenarios.js";
+import { verifyReturnedPayroll } from "./test-payroll-reconciliation.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { Connection, Pool, RowDataPacket } from "mysql2/promise";
@@ -32,7 +33,17 @@ export async function testManagedRelease({ request, admin, runtime, batch, later
   const frozen = (await read()).finalization;
   assert.equal((await read()).releases!.length, 2);
   for (const p of [people[0],people[2]]) assert.equal((await read()).releases!.find(e => e.scholarshipId === p.annual)!.state, "approved_for_release");
+  if(process.argv.includes("--payroll-reconciliation")){
+    const o=(await ok(request("staff",path+"/reconciliation-summary"))).json();
+    await ok(request("staff",path+"/reconciliation-commands",{action:"report",expectedRevision:o.summary.revision,expectedReconciliationRevision:o.reconciliationRevision,scholarshipId:people[0].annual,description:"Synthetic returned document discrepancy before processing"}));
+    const report=(await ok(request("coordinator",path+"/discrepancies"))).json().items[0],current=(await ok(request("coordinator",path+"/reconciliation-summary"))).json();
+    assert.equal(report.paymentId,null);
+    await ok(request("coordinator",path+"/reconciliation-commands",{action:"dismiss",expectedRevision:current.summary.revision,expectedReconciliationRevision:current.reconciliationRevision,caseId:report.id,reason:"Pre-processing document matches; no payment correction needed"}));
+  }
   await ok(command("submit", {}, "coordinator")); await ok(command("mark-processed"));
+  if(process.argv.includes("--payment-recording")) {
+    await (await import("./test-payment-recording.js")).testPaymentRecording({runtime,request,batch,admin,semester});return;
+  }
   await error(command("payments",{scholarshipId:people[0].annual,outcome:"paid",amount:"5000.00",remarks:"",receiptConfirmed:true}),"TREASURY_EVIDENCE_REQUIRED");
   const treasury=(await ok(request("staff",path+"/treasury-evidence",{expectedRevision:0,payrollReference:"TREASURY-SYNTHETIC-001",officeReceivedOn:day,reason:"Synthetic signed payroll received"}))).json();
   if(process.argv.includes("--treasury")){await testTreasury({request,admin,runtime,batch,people});return;}
@@ -85,6 +96,7 @@ export async function testManagedRelease({ request, admin, runtime, batch, later
   console.log("PASS Registry displays paid graduate and existing payroll membership separately from eligibility");
   // Reconciled unclaimed entitlement survives closure/locking and can be
   // claimed only by a separately approved correction with unchanged evidence.
+  await verifyReturnedPayroll(request,batch);
   await ok(command("close", { reconciled: true }, "coordinator"));
   if (process.argv.includes("--reprocessing")) {
     const targetPath=`/api/v1/ovr-batches/${laterBatch}`;
@@ -130,6 +142,7 @@ export async function testManagedRelease({ request, admin, runtime, batch, later
         assert.equal((await targetRead()).reprocessing!.find(q=>q.paymentId === originalPayment.id)!.reasons.length,0);
         console.log("PASS cross-batch correction approval versus payment: pending blocks release, one winner, false-Paid reversal retains entitlement and permits release");
       }
+      if(action==="close")await verifyReturnedPayroll(request,laterBatch);
       await ok(request(["submit","close"].includes(action)?"coordinator":"staff",`${targetPath}/${action}`,{expectedRevision:target.batch.revision,effectiveOn:day,reason:"Synthetic reprocessing payment",reference:"REPROCESS-RECEIPT",...(action === "payments" ? {treasuryEvidenceRevision:targetTreasury.revision,scholarshipId:people[2].annual,outcome:"paid",amount:"5000.00",remarks:"Actual synthetic receipt",receiptConfirmed:true} : {}),...(action === "close" ? {reconciled:true} : {})}));
     }
     assert.equal((await read()).payments.find(p=>p.scholarshipId === people[2].annual)!.outcome,"not_paid");

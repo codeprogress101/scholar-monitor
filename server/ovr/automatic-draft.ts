@@ -5,15 +5,16 @@ import { academicCurrent } from "../academic/changes-service.js";
 import { digest } from "../auth/crypto.js";
 import { cohortReads } from "../eligibility/cohort-reads.js";
 import { eligibilityView } from "../eligibility/service.js";
-import type { OfficialSnapshot } from "../masterlists/workflow-model.js";
 import type { PayoutCycle } from "../payouts/model.js";
 import type { OvrBatch, OvrEntry } from "./model.js";
 import { payrollYear, type PayrollForm } from "./payroll-form.js";
 import { ovrEligibilityIssues, ovrEvidence } from "./rules.js";
 import { currentPayrollTemplate } from "./payroll-form.js";
+import { candidateReads } from "./candidate-reads.js";
+import { publicationAward } from "../eligibility/publication-index.js";
 
 /** Live draft projection for pre-numbered payrolls. Reads never alter saved membership. */
-export async function automaticDraft(db: PoolConnection, batch: OvrBatch, cycle: PayoutCycle) {
+export async function automaticDraft(db: PoolConnection, batch: OvrBatch, cycle: PayoutCycle, annualIds?: readonly string[]) {
   if (batch.state !== "draft" && !(batch.state === "review" && batch.automaticSourceHash)) return null;
   if (cycle.state !== "open" || cycle.periodUnavailable) return null;
   const [windows] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=?", [batch.id]);
@@ -30,8 +31,9 @@ export async function automaticDraft(db: PoolConnection, batch: OvrBatch, cycle:
     seen.add(key);
     if (r.action === "add") assigned.add(r.scholarship_id);
   }
-  const [records] = await db.execute<RowDataPacket[]>("SELECT r.id,r.scholar_id,a.id AS academic_id,s.first_name,s.middle_name,s.last_name,s.suffix FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id LEFT JOIN academic_records a ON a.scholar_id=r.scholar_id AND a.academic_year_id=r.academic_year_id WHERE r.academic_year_id=? ORDER BY s.last_name,s.first_name,r.id", [cycle.academicYearId]);
-  db = await cohortReads(db, cycle.academicYearId, cycle.semesterId, cycle.id);
+  const selected = annualIds ? ` AND r.id IN (${annualIds.length ? annualIds.map(() => "?").join(",") : "NULL"})` : "";
+  const [records] = await db.execute<RowDataPacket[]>(`SELECT r.id,r.scholar_id,a.id AS academic_id,s.first_name,s.middle_name,s.last_name,s.suffix FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id LEFT JOIN academic_records a ON a.scholar_id=r.scholar_id AND a.academic_year_id=r.academic_year_id WHERE r.academic_year_id=?${selected} ORDER BY s.last_name,s.first_name,r.id`, [cycle.academicYearId, ...annualIds ?? []]);
+  db = await cohortReads(await candidateReads(db, records.map(r => String(r.id)), cycle.semesterId), cycle.academicYearId, cycle.semesterId, cycle.id, annualIds);
   const entries: OvrEntry[] = [];
   const form: PayrollForm = { template: currentPayrollTemplate, year: cycle.yearCode.replace(/^AY\s*/i, ""), term, batchNumber: batches.findIndex(b => b.id === batch.id) + 1, rows: [], ...await currentSignatories(db) };
   const expired = (await claimDeadline(db, cycle.semesterId)).expired;
@@ -45,13 +47,14 @@ export async function automaticDraft(db: PoolConnection, batch: OvrBatch, cycle:
     const { placement } = await academicCurrent(db, r.academic_id);
     const yearLevel = payrollYear(placement.yearLevel);
     if (!yearLevel) continue;
-    const [[publication]] = await db.execute<RowDataPacket[]>("SELECT snapshot FROM masterlist_publications WHERE masterlist_id=?", [view.current.sources.official.masterlistId]);
-    const published: OfficialSnapshot | null = publication ? (typeof publication.snapshot === "string" ? JSON.parse(publication.snapshot) : publication.snapshot) : null;
+    const awardNumber = await publicationAward(db, view.current.sources.official.masterlistId, r.id, false);
     entries.push({ scholarshipId: r.id, addedRevision: batch.revision, evidence: ovrEvidence(view) });
-    form.rows.push({ scholarshipId: r.id, scholarId: r.scholar_id, humanId: view.current.sources.scholarship.humanId, awardNumber: published?.entries.find(e => e.snapshot.scholarshipId === r.id)?.awardNumber ?? "", lastName: [r.last_name,r.suffix].filter(Boolean).join(" "), firstName: r.first_name, middleName: r.middle_name ?? "", school: placement.school.name, course: placement.course.name, yearLevel, amountCentavos: 500000 });
+    form.rows.push({ scholarshipId: r.id, scholarId: r.scholar_id, humanId: view.current.sources.scholarship.humanId, awardNumber, lastName: [r.last_name,r.suffix].filter(Boolean).join(" "), firstName: r.first_name, middleName: r.middle_name ?? "", school: placement.school.name, course: placement.course.name, yearLevel, amountCentavos: 500000 });
   }
-  for (const retry of await retryCandidates(db, batch, cycle)) {
-    if (entries.some(e => e.scholarshipId === retry.scholarshipId)) continue;
+  const included = new Set(entries.map(e => e.scholarshipId));
+  for (const retry of await retryCandidates(db, batch, cycle, annualIds)) {
+    if (included.has(retry.scholarshipId)) continue;
+    included.add(retry.scholarshipId);
     entries.push({scholarshipId:retry.scholarshipId, addedRevision:batch.revision, evidence:retry.evidence});
     form.rows.push(retry.row!);
   }

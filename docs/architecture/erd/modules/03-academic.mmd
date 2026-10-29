@@ -1,0 +1,192 @@
+%% Academic placement and graduation; core tables: schools, courses, academic_records, academic_changes, academic_change_decisions, placement_policy_reviews, course_pending_exceptions, course_pending_events, program_duration_references, program_duration_events, graduation_monitoring_cases, graduation_monitoring_events, graduation_confirmations, graduation_record_corrections
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% academic_change_decisions: Both; BASE TABLE
+  academic_change_decisions {
+    char request_id PK, FK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% academic_changes: Both; BASE TABLE
+  academic_changes {
+    char id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% academic_records: Both; BASE TABLE
+  academic_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char course_pending_exception_id FK "nullable; SQL char(36)"
+  }
+  %% academic_years: Both; BASE TABLE
+  academic_years {
+    char id PK "not null; SQL char(36)"
+  }
+  %% course_pending_events: Both; BASE TABLE
+  course_pending_events {
+    char exception_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(11)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% course_pending_exceptions: Both; BASE TABLE
+  course_pending_exceptions {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char import_job_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% courses: Both; BASE TABLE
+  courses {
+    char id PK "not null; SQL char(36)"
+  }
+  %% graduation_confirmations: Both; BASE TABLE
+  graduation_confirmations {
+    char request_id PK, FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% graduation_monitoring_cases: Both; BASE TABLE
+  graduation_monitoring_cases {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% graduation_monitoring_events: Both; BASE TABLE
+  graduation_monitoring_events {
+    char case_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int previous_revision FK "nullable; SQL int(10) unsigned"
+    int assessment_revision FK "nullable; SQL int(10) unsigned"
+    int pending_review_revision FK "nullable; SQL int(10) unsigned"
+    int program_context_revision FK "nullable; SQL int(10) unsigned"
+    char duration_reference_id FK "nullable; SQL char(36)"
+    int duration_revision FK "nullable; SQL int(10) unsigned"
+    int corrects_revision FK "nullable; SQL int(10) unsigned"
+    int reviews_revision FK "nullable; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% graduation_record_corrections: Both; BASE TABLE
+  graduation_record_corrections {
+    char request_id PK, FK "not null; SQL char(36)"
+    char graduated_before_year_id FK "not null; SQL char(36)"
+  }
+  %% import_jobs: Both; BASE TABLE
+  import_jobs {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% placement_policy_reviews: Both; BASE TABLE
+  placement_policy_reviews {
+    char id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% program_duration_events: Both; BASE TABLE
+  program_duration_events {
+    char reference_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int previous_revision FK "nullable; SQL int(10) unsigned"
+    char applies_from_year_id FK "not null; SQL char(36)"
+    char applies_through_year_id FK "nullable; SQL char(36)"
+    char review_academic_year_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% program_duration_references: Both; BASE TABLE
+  program_duration_references {
+    char id PK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "not null; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% scholars: Both; BASE TABLE
+  scholars {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char barangay_id FK "nullable; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% schools: Both; BASE TABLE
+  schools {
+    char id PK "not null; SQL char(36)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% status_change_decisions: Both; BASE TABLE
+  status_change_decisions {
+    char request_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  academic_records ||..o{ academic_changes : "academic_changes_ibfk_1"
+  schools ||..o{ academic_changes : "academic_changes_ibfk_2"
+  courses ||..o{ academic_changes : "academic_changes_ibfk_3"
+  users ||..o{ academic_changes : "academic_changes_ibfk_4"
+  academic_changes ||--o| academic_change_decisions : "academic_change_decisions_ibfk_1"
+  academic_records ||..o{ academic_change_decisions : "academic_change_decisions_ibfk_2"
+  users ||..o{ academic_change_decisions : "academic_change_decisions_ibfk_3"
+  scholars ||..o{ academic_records : "academic_records_ibfk_1"
+  academic_years ||..o{ academic_records : "academic_records_ibfk_2"
+  schools ||..o{ academic_records : "academic_records_ibfk_3"
+  courses |o..o{ academic_records : "academic_records_ibfk_4"
+  users ||..o{ academic_records : "academic_records_ibfk_5"
+  course_pending_exceptions |o..o{ academic_records : "academic_records_ibfk_6"
+  course_pending_exceptions ||--o{ course_pending_events : "course_pending_events_ibfk_1"
+  users ||..o{ course_pending_events : "course_pending_events_ibfk_2"
+  scholars ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_1"
+  academic_years ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_2"
+  import_jobs ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_3"
+  users ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_4"
+  status_change_decisions ||--o| graduation_confirmations : "graduation_confirmations_ibfk_1"
+  scholarship_records ||..o{ graduation_confirmations : "graduation_confirmations_ibfk_2"
+  semesters ||..o{ graduation_confirmations : "graduation_confirmations_ibfk_3"
+  users ||..o{ graduation_confirmations : "graduation_confirmations_ibfk_4"
+  scholars ||..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_1"
+  academic_years ||..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_2"
+  semesters |o..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_3"
+  users ||..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_4"
+  graduation_monitoring_cases ||--o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_1"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_2"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_3"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_4"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_5"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_6"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_7"
+  program_duration_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_8"
+  users ||..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_9"
+  graduation_confirmations ||--o| graduation_record_corrections : "graduation_record_corrections_ibfk_1"
+  academic_years ||..o{ graduation_record_corrections : "graduation_record_corrections_ibfk_2"
+  academic_records ||..o{ placement_policy_reviews : "placement_policy_reviews_ibfk_1"
+  users ||..o{ placement_policy_reviews : "placement_policy_reviews_ibfk_2"
+  program_duration_references ||--o{ program_duration_events : "program_duration_events_ibfk_1"
+  program_duration_events |o..o{ program_duration_events : "program_duration_events_ibfk_2"
+  academic_years ||..o{ program_duration_events : "program_duration_events_ibfk_3"
+  academic_years |o..o{ program_duration_events : "program_duration_events_ibfk_4"
+  academic_years ||..o{ program_duration_events : "program_duration_events_ibfk_5"
+  users ||..o{ program_duration_events : "program_duration_events_ibfk_6"
+  schools ||..o{ program_duration_references : "program_duration_references_ibfk_1"
+  courses ||..o{ program_duration_references : "program_duration_references_ibfk_2"
+  users ||..o{ program_duration_references : "program_duration_references_ibfk_3"

@@ -1,17 +1,26 @@
-import type { RowDataPacket } from "mysql2/promise";
+import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { z } from "zod";
 import { AuthorizationService } from "../authorization/service.js";
 import { AuthError } from "../auth/service.js";
-import { sourceSql, reviewerSql } from "./sources.js";
+import { pendingAction } from "./pending-action.js";
+import { notificationQuery, type NoticeFilters } from "./queries.js";
 
-const querySchema = z.object({ mode: z.enum(["updates", "pending"]).default("updates"), offset: z.coerce.number().int().min(0).max(100000).default(0), type: z.string().max(40).optional(), source: z.uuid().optional(), year: z.uuid().optional(), semester: z.uuid().optional() }).strict();
-export type Notice = { id: string; kind: string; sourceId: string; title: string; state: string; action: string | null; occurredAt: string; read: boolean; year: string | null; semester: string | null; href: string; revision: number | null };
+const querySchema = z.object({ mode: z.enum(["updates", "pending"]).default("updates"), offset: z.coerce.number().int().min(0).max(100000).default(0), limit: z.coerce.number().int().min(1).max(100).default(25), type: z.string().max(40).optional(), source: z.uuid().optional(), year: z.uuid().optional(), semester: z.uuid().optional(), unread: z.enum(["true", "false"]).transform(v => v === "true").optional() }).strict();
+export function parseNoticeFilters(raw: unknown): NoticeFilters {
+  const parsed = querySchema.safeParse(raw);
+  if (!parsed.success) throw new AuthError(422, "VALIDATION_FAILED", "Choose valid notification filters.");
+  return parsed.data;
+}
+export type Notice = { id: string; kind: string; sourceId: string; title: string; state: string; action: string | null; nextAction?: string | null; occurredAt: string; read: boolean; year: string | null; semester: string | null; href: string; revision: number | null };
 export type NoticeList = { items: Notice[]; total: number; unread: number; pending: number; groups: { type: string; count: number }[]; years: { id: string; label: string }[]; semesters: { id: string; label: string }[]; offset: number; limit: number };
-export function noticeLink(r: Record<string, unknown>) {
+export type NoticePage = Pick<NoticeList, "items" | "total" | "offset" | "limit">;
+export type NoticePending = Pick<NoticeList, "pending" | "groups">;
+export type NoticePeriods = Pick<NoticeList, "years" | "semesters">;
+export function noticeLink(r: Record<string, unknown>, pending = false) {
   const params = new URLSearchParams({ request: String(r.source_id), ...(r.revision == null ? {} : { version: String(r.revision) }) });
   let page = "scholars";
   if (r.kind === "account" || r.kind === "export") return `#notifications?type=${r.kind}&source=${r.source_id}`;
-  else if (r.kind === "masterlist" || r.kind === "masterlist-amendment") { page = "masterlists"; params.set("draft", String(r.kind === "masterlist" ? r.source_id : r.batch_id)); }
+  else if (r.kind === "masterlist" || r.kind === "masterlist-amendment") { page = "masterlists"; params.set("draft", String(r.kind === "masterlist" ? r.source_id : r.batch_id)); if(pending && r.kind === "masterlist" && r.state === "published")params.set("workflow","1"); }
   else if (r.kind === "roster") { params.set("roster", String(r.source_id)); page = "continuing"; }
   else if (["payroll", "payroll-amendment", "payment-correction", "override"].includes(String(r.kind))) { page = "payouts"; params.set("cycle", String(r.cycle_id)); if (r.batch_id) params.set("batch", String(r.batch_id)); if (r.kind === "override") { params.set("view","eligibility"); params.set("annual",String(r.annual_id)); } }
   else if (r.kind === "import") params.set("importJob", String(r.source_id));
@@ -21,41 +30,67 @@ export function noticeLink(r: Record<string, unknown>) {
     if (r.year_id) params.set("academicYear", String(r.year_id));
     if (r.kind === "document") { params.set("document", String(r.source_id)); }
   }
+  if(pending && r.kind === "payroll") {
+    if(r.state === "processed" && Number(r.managed_batch))params.set("view",r.pending_permission === "ovr.close"?"reconciliation":"recording");
+    else if(["finalized","submitted","processed"].includes(String(r.state)))params.set("task","processing");
+  }
   return `#${page}?${params}`;
+}
+
+const base: NoticeFilters = { mode: "updates", offset: 0, limit: 25 };
+async function rows(db: PoolConnection, sql: string | null) { return sql ? (await db.query<RowDataPacket[]>(sql))[0] : []; }
+async function count(db: PoolConnection, actor: string, permissions: string[], input: NoticeFilters) {
+  const result = await rows(db, notificationQuery(db, actor, permissions, input, "count"));
+  return Number(result[0]?.count ?? 0);
+}
+async function page(db: PoolConnection, actor: string, permissions: string[], input: NoticeFilters): Promise<NoticePage> {
+  const total = await count(db, actor, permissions, input);
+  const selected = await rows(db, notificationQuery(db, actor, permissions, input, "page"));
+  const keys = selected.map(r => String(r.notice_id));
+  const details = keys.length ? await rows(db, notificationQuery(db, actor, permissions, input, "details", keys)) : [];
+  const byId = new Map(details.map(r => [String(r.notice_id), r]));
+  return { items: keys.map(id => {
+    const r = byId.get(id)!;
+    return { id: r.notice_id, kind: r.kind, sourceId: r.source_id, title: r.title + (r.human_id ? ` / ${r.human_id}` : ""), state: r.state, action: r.event_action, occurredAt: r.event_time, read: Boolean(r.is_read), year: r.year_label ?? null, semester: r.semester_label ?? null, href: noticeLink(r, input.mode === "pending"), ...(input.mode === "pending" ? {nextAction: pendingAction(r.pending_permission,r.state)} : {}), revision: r.revision == null ? null : Number(r.revision) };
+  }), total, offset: input.offset, limit: input.limit };
+}
+async function pending(db: PoolConnection, actor: string, permissions: string[]): Promise<NoticePending> {
+  const groups = (await rows(db, notificationQuery(db, actor, permissions, { ...base, mode: "pending" }, "groups"))).map(r => ({ type: String(r.type), count: Number(r.count) }));
+  return { pending: groups.reduce((sum, r) => sum + r.count, 0), groups };
+}
+async function periods(db: PoolConnection, actor: string, permissions: string[], input: NoticeFilters): Promise<NoticePeriods> {
+  const result = await rows(db, notificationQuery(db, actor, permissions, { ...base, mode: input.mode }, "periods"));
+  return { years: [...new Map(result.filter(r => r.year_id).map(r => [r.year_id, { id: String(r.year_id), label: String(r.code) }])).values()], semesters: [...new Map(result.filter(r => r.semester_id).map(r => [r.semester_id, { id: String(r.semester_id), label: String(r.name) }])).values()] };
 }
 export class NotificationService {
   constructor(private authorization: AuthorizationService) {}
+  // Legacy clients retain the complete DTO and one consistent authorized snapshot.
   async read(actor: string, raw: unknown) {
-    const parsed = querySchema.safeParse(raw);
-    if (!parsed.success) throw new AuthError(422, "VALIDATION_FAILED", "Choose valid notification filters.");
-    const input = parsed.data;
+    const input = parseNoticeFilters(raw);
     return this.authorization.readSnapshot(actor, null, async (db, access): Promise<NoticeList> => {
       const permissions = access.permissions.map(p => p.code);
-      const allowed = permissions.length ? permissions.map(p => db.escape(p)).join(",") : "NULL";
-      const user = db.escape(actor);
-      const readable = `s.read_permission IN (${allowed})`;
-      const pending = `${readable} AND s.pending_permission IN (${allowed}) AND (s.owner_only=0 OR s.owner_id=${user})`;
-      const visible = `${readable} AND ((n.owner_id=${user} AND (n.actor_id IS NULL OR n.actor_id<>${user} OR n.kind IN ('import','export'))) OR (${reviewerSql}) IN (${allowed}))`;
-      const sources = `(${sourceSql}) s`;
-      const events = `notification_events n JOIN ${sources} ON s.kind=n.kind AND s.source_id=n.source_id LEFT JOIN notification_reads nr ON nr.event_id=n.id AND nr.user_id=${user}`;
-      const [unread] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) AS count FROM ${events} WHERE ${visible} AND nr.event_id IS NULL`);
-      const [groups] = await db.query<RowDataPacket[]>(`SELECT s.kind,COUNT(*) AS count FROM ${sources} WHERE ${pending} GROUP BY s.kind`);
-      const filter = `${input.source ? ` AND s.source_id=${db.escape(input.source)}` : ""}${input.type ? ` AND s.kind=${db.escape(input.type)}` : ""}${input.year ? ` AND s.year_id=${db.escape(input.year)}` : ""}${input.semester ? ` AND s.semester_id=${db.escape(input.semester)}` : ""}`;
-      const isPending = input.mode === "pending";
-      const from = `${isPending ? sources : events} LEFT JOIN academic_years y ON y.id=s.year_id LEFT JOIN semesters sem ON sem.id=s.semester_id LEFT JOIN scholar_identifiers ident ON ident.scholar_id=s.scholar_id`;
-      const where = `${isPending ? pending : visible}${filter}`;
-      const [totals] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) AS count FROM ${from} WHERE ${where}`);
-      const [rows] = await db.query<RowDataPacket[]>(`SELECT s.*,ident.human_id,y.code AS year_label,sem.name AS semester_label,${isPending ? "CONCAT(s.kind,':',s.source_id)" : "n.id"} AS notice_id,${isPending ? "NULL" : "n.action"} AS event_action,${isPending ? "0" : "nr.event_id IS NOT NULL"} AS is_read,DATE_FORMAT(${isPending ? "s.source_time" : "n.occurred_at"},'%Y-%m-%dT%H:%i:%s.%fZ') AS event_time FROM ${from} WHERE ${where} ORDER BY ${isPending ? "s.source_time ASC" : "n.occurred_at DESC"},notice_id LIMIT 25 OFFSET ${input.offset}`);
-      const [periods] = await db.query<RowDataPacket[]>(`SELECT DISTINCT s.year_id,y.code,s.semester_id,sem.name FROM ${from} WHERE ${isPending ? pending : visible} ORDER BY y.code,sem.name`);
-      return { items: rows.map(r => ({ id: r.notice_id, kind: r.kind, sourceId: r.source_id, title: r.title + (r.human_id ? ` / ${r.human_id}` : ""), state: r.state, action: r.event_action, occurredAt: r.event_time, read: Boolean(r.is_read), year: r.year_label ?? null, semester: r.semester_label ?? null, href: noticeLink(r), revision: r.revision == null ? null : Number(r.revision) })), total: Number(totals[0].count), unread: Number(unread[0].count), pending: groups.reduce((sum, r) => sum + Number(r.count), 0), groups: groups.map(r => ({ type: r.kind, count: Number(r.count) })), years: [...new Map(periods.filter(r => r.year_id).map(r => [r.year_id, { id: r.year_id, label: r.code }])).values()], semesters: [...new Map(periods.filter(r => r.semester_id).map(r => [r.semester_id, { id: r.semester_id, label: r.name }])).values()], offset: input.offset, limit: 25 };
+      return { ...await page(db, actor, permissions, input), unread: await count(db, actor, permissions, { ...base, unread: true }), ...await pending(db, actor, permissions), ...await periods(db, actor, permissions, input) };
     });
+  }
+  async page(actor: string, raw: unknown) {
+    const input = parseNoticeFilters(raw);
+    return this.authorization.readSnapshot(actor, null, (db, access) => page(db, actor, access.permissions.map(p => p.code), input));
+  }
+  async count(actor: string) {
+    return this.authorization.readSnapshot(actor, null, async (db, access) => ({ unread: await count(db, actor, access.permissions.map(p => p.code), { ...base, unread: true }) }));
+  }
+  async pending(actor: string) {
+    return this.authorization.readSnapshot(actor, null, (db, access) => pending(db, actor, access.permissions.map(p => p.code)));
+  }
+  async periods(actor: string, raw: unknown) {
+    const input = parseNoticeFilters(raw);
+    return this.authorization.readSnapshot(actor, null, (db, access) => periods(db, actor, access.permissions.map(p => p.code), input));
   }
   async mark(actor: string, id: string, raw: unknown) {
     if (!z.uuid().safeParse(id).success || !z.object({ read: z.boolean() }).strict().safeParse(raw).success) throw new AuthError(422, "VALIDATION_FAILED", "Choose a notification and read state.");
     return this.authorization.withAccess(actor, async (db, access) => {
-      const allowed = access.permissions.length ? access.permissions.map(p => db.escape(p.code)).join(",") : "NULL";
-      const [rows] = await db.query<RowDataPacket[]>(`SELECT n.id FROM notification_events n JOIN (${sourceSql}) s ON s.kind=n.kind AND s.source_id=n.source_id WHERE n.id=? AND s.read_permission IN (${allowed}) AND ((n.owner_id=? AND (n.actor_id IS NULL OR n.actor_id<>? OR n.kind IN ('import','export'))) OR (${reviewerSql}) IN (${allowed}))`, [id, actor, actor]);
-      if (!rows.length) throw new AuthError(404, "NOTIFICATION_NOT_FOUND", "This notification is unavailable for your account.");
+      const result = await rows(db, notificationQuery(db, actor, access.permissions.map(p => p.code), base, "count", [id]));
+      if (!Number(result[0]?.count)) throw new AuthError(404, "NOTIFICATION_NOT_FOUND", "This notification is unavailable for your account.");
       if ((raw as { read: boolean }).read) await db.execute("INSERT INTO notification_reads(user_id,event_id,read_at) VALUES(?,?,UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE read_at=read_at", [actor,id]);
       else await db.execute("DELETE FROM notification_reads WHERE user_id=? AND event_id=?", [actor,id]);
       return { saved: true };

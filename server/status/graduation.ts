@@ -1,6 +1,7 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthError } from "../auth/service.js";
 import { paymentRecords } from "../ovr/processing-state.js";
+import {individualClaims} from '../payments/settlement-reads.js';
 
 export type Graduation = { scholarshipId?: string; requestId: string | null; semesterId: string | null; semesterName: string | null; archived: boolean; label: string };
 export async function graduationRecords(db: PoolConnection, scholarId?: string): Promise<Map<string, Graduation>> {
@@ -13,6 +14,10 @@ export async function graduationRecords(db: PoolConnection, scholarId?: string):
     WHERE (r.operational_status='graduated' OR x.no_outstanding_stipend=1) ${scholarId ? "AND r.scholar_id=?" : ""} ORDER BY r.status_effective_on DESC`, scholarId ? [scholarId] : []);
   const result = new Map<string, Graduation>();
   const paymentCache = new Map<string, Awaited<ReturnType<typeof paymentRecords>>>();
+  const individualBySemester=new Map<string,Awaited<ReturnType<typeof individualClaims>>>();
+  const annualsBySemester=new Map<string,Set<string>>();
+  for(const row of rows)if(row.semester_id&&!row.no_outstanding_stipend){const ids=annualsBySemester.get(row.semester_id)??new Set<string>();ids.add(row.scholarship_id);annualsBySemester.set(row.semester_id,ids);}
+  for(const [semester,ids] of annualsBySemester)individualBySemester.set(semester,await individualClaims(db,[...ids],semester));
   for (const r of rows) {
     if (result.has(r.scholar_id)) continue;
     if (r.no_outstanding_stipend) {
@@ -24,9 +29,11 @@ export async function graduationRecords(db: PoolConnection, scholarId?: string):
     if (r.semester_id) {
       const [batches] = await db.execute<RowDataPacket[]>("SELECT DISTINCT p.batch_id,p.scholarship_id FROM payment_records p JOIN scholarship_records a ON a.id=p.scholarship_id JOIN payout_cycles c ON c.id=p.cycle_id WHERE a.scholar_id=? AND c.semester_id=?", [r.scholar_id, r.semester_id]);
       for (const b of batches) {
+        if(!b.batch_id)continue;
         if (!paymentCache.has(b.batch_id)) paymentCache.set(b.batch_id, await paymentRecords(db, b.batch_id));
         paid ||= paymentCache.get(b.batch_id)!.some(p => p.scholarshipId === b.scholarship_id && p.outcome === "paid" && p.amount === "5000.00");
       }
+      if(!paid)paid=individualBySemester.get(r.semester_id)?.attempts.get(r.scholarship_id)?.some(p=>p.outcome==='paid'&&p.amount==='5000.00')??false;
     }
     const [[entitlement]] = await db.execute<RowDataPacket[]>("SELECT id FROM semester_entitlements WHERE scholar_id=? AND semester_id=? LIMIT 1 LOCK IN SHARE MODE", [r.scholar_id, r.semester_id ?? null]);
     result.set(r.scholar_id, { scholarshipId: r.scholarship_id, requestId: r.request_id ?? null, semesterId: r.semester_id ?? null, semesterName: r.semester_name ?? null, archived: paid,

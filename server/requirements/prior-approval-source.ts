@@ -5,6 +5,7 @@ import { scopeAcceptsOwner } from "../continuing/scope-access.js";
 import { today } from "../scholars/validation.js";
 import {unresolvedFindings,type RecordingCorrection} from "../continuing/finding-corrections.js";
 import {computedRead} from "../read-cache.js";
+import {compatiblePublishedActivation} from './prior-approval-compatibility.js';
 
 export const decodePrior = <T>(v: string | T): T => typeof v === "string" ? JSON.parse(v) as T : v;
 export type PriorApproval = {
@@ -12,6 +13,7 @@ export type PriorApproval = {
  authorityId: string; reviewId: string; sourceHash: string; reference: string; sourceLocation: string;
  approvalOn: string | null; deadlineOn: string; recordedAt: string; actorName: string;
  valid: boolean; issue: string | null;
+ activationCompatibility?: {masterlistId:string;publicationHash:string;effectiveOn:string};
 };
 
 /** Raw authoritative evidence only. Never reads its own derived approval/state,
@@ -86,15 +88,19 @@ export async function priorApprovalForOwner(db: PoolConnection, ownerId: string)
  return computedRead(db,`prior-approval:${ownerId}`,()=>readPriorApprovalForOwner(db,ownerId));
 }
 async function readPriorApprovalForOwner(db: PoolConnection, ownerId: string):Promise<PriorApproval|null> {
- const [[r]] = await db.execute<RowDataPacket[]>(`SELECT a.*,m.source_hash,m.review_event_id,u.full_name,
+ const [[r]] = await db.execute<RowDataPacket[]>(`SELECT a.*,m.source_hash,m.review_event_id,m.snapshot approved_snapshot,u.full_name,authority.scope approval_scope,
+ DATE_FORMAT(authority.valid_from,'%Y-%m-%d') authority_starts,DATE_FORMAT(authority.valid_until,'%Y-%m-%d') authority_ends,
  DATE_FORMAT(a.approval_on,'%Y-%m-%d') AS approval_date,DATE_FORMAT(a.deadline_on,'%Y-%m-%d') AS deadline_date,
  DATE_FORMAT(a.recorded_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS recorded
- FROM prior_batch_members m JOIN prior_batch_approvals a ON a.id=m.approval_id JOIN users u ON u.id=a.actor_id
+ FROM prior_batch_members m JOIN prior_batch_approvals a ON a.id=m.approval_id JOIN users u ON u.id=a.actor_id JOIN workflow_authority_versions authority ON authority.id=a.authority_version_id
  WHERE m.scholar_semester_id=? ORDER BY a.recorded_at DESC,a.revision DESC LIMIT 1`, [ownerId]);
  if (!r) return null;
  const current = await priorMemberSource(db, ownerId);
- const issue = !current || current.hash !== r.source_hash ? "The prior batch approval is stale because its authoritative sources changed. Review this batch again." : current.issues[0] ?? null;
- return { id:r.id, revision:r.revision, importId:r.import_job_id, ownerId, semesterId:r.semester_id, authorityId:r.authority_version_id, reviewId:r.review_event_id, sourceHash:r.source_hash, reference:r.reference_text, sourceLocation:r.source_location, approvalOn:r.approval_date, deadlineOn:r.deadline_date, recordedAt:r.recorded, actorName:r.full_name, valid:!issue, issue };
+ const authority=decodePrior<{purpose?:string;importId?:string;semesterId?:string}>(r.approval_scope);
+ const authorityAvailable=r.authority_starts<=today()&&(!r.authority_ends||r.authority_ends>=today())&&authority.purpose==='prior_batch_approval'&&authority.importId===r.import_job_id&&authority.semesterId===r.semester_id;
+ const compatibility=current&&current.hash!==r.source_hash&&!current.issues.length?await compatiblePublishedActivation(db,decodePrior(r.approved_snapshot),current.snapshot,r.source_hash,r.recorded):null;
+ const issue = !authorityAvailable?'The recorded prior-batch authority is unavailable; Coordinator source review is required.':!current || (current.hash !== r.source_hash&&!compatibility) ? "The prior batch approval is stale because its authoritative sources changed. Review this batch again." : current.issues[0] ?? null;
+ return { id:r.id, revision:r.revision, importId:r.import_job_id, ownerId, semesterId:r.semester_id, authorityId:r.authority_version_id, reviewId:r.review_event_id, sourceHash:r.source_hash, reference:r.reference_text, sourceLocation:r.source_location, approvalOn:r.approval_date, deadlineOn:r.deadline_date, recordedAt:r.recorded, actorName:r.full_name, valid:!issue, issue,...(compatibility?{activationCompatibility:compatibility}:{}) };
 }
 
 export async function priorApprovalForDocument(db: PoolConnection, instanceId: string) {

@@ -16,6 +16,13 @@ export function ovrWorkflowState(
     "Submit a Draft for review, or return/finalize a batch currently under review. Finalized batches are immutable.",
   );
 }
+/** Review is reversible; only finalization waits for all timely applicants. */
+export function requireManagedReview(action: "submit-review" | "finalize", candidates: {opened:boolean;opensOn:string;cutoffReached:boolean;cutoffOn:string;cutoffPolicy?:string;pendingCount:number;form:{rows:readonly unknown[]}}) {
+  if (!candidates.opened) throw new AuthError(409, "WINDOW_NOT_OPEN", `This payroll window opens on ${candidates.opensOn}.`);
+  if (action === "finalize" && !candidates.cutoffReached) throw new AuthError(409, "CUTOFF_NOT_REACHED", `Finalization is available after ${candidates.cutoffPolicy && candidates.cutoffPolicy !== "whole_day_v1" ? "the recorded timed cutoff instant on" : "the whole-day cutoff"} ${candidates.cutoffOn} (Philippine time). Review may proceed now; the roster is not frozen.`);
+  if (candidates.pendingCount) throw new AuthError(409, "PENDING_TIMELY_SUBMISSIONS", "Review or explicitly defer every unresolved on-time submission or uncertain receipt-time case before submitting for review or finalizing.");
+  if (!candidates.form.rows.length) throw new AuthError(409, "EMPTY_PAYROLL", "No eligible included scholars are available. Review the excluded scholars.");
+}
 export function requireDraft(state: string) {
   if (state !== "draft")
     throw new AuthError(

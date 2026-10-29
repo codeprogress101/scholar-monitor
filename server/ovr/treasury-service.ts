@@ -13,6 +13,7 @@ import { treasuryEvidence } from "./treasury-state.js";
 import { effectiveRoster } from "./amendment-state.js";
 import { currentPayout } from "../payouts/service.js";
 import { assertNoPaidClaim, claimDeadline } from "./reprocessing.js";
+import { assertNoIndividualRoute } from "../payments/individual-writes.js";
 import { OvrProcessingService, parseProcessing } from "./processing-service.js";
 
 const schema = z.object({expectedRevision: z.number().int().min(0),
@@ -44,6 +45,7 @@ export class TreasuryService {
         if(!frozen.snapshot.entries.some(e=>e.scholarshipId===input.scholarshipId))throw new AuthError(409,"PAYMENT_NOT_IN_ROSTER","Select a member of this frozen payroll.");
         if(input.actualPaidOn && (input.actualPaidOn>deadline.endsOn || input.actualPaidOn>evidence.officeReceivedOn))throw new AuthError(422,"INVALID_PAYMENT_DATE","Historical receipt must precede expiry and receipt of the signed evidence.");
         await assertNoPaidClaim(db,input.scholarshipId,cycle.semesterId);
+        await assertNoIndividualRoute(db,input.scholarshipId,cycle.semesterId);
         if ((await paymentRecords(db,id)).some(p=>p.scholarshipId===input.scholarshipId))throw new AuthError(409,"PAYMENT_CORRECTION_REQUIRED","This attempt already has an outcome. Use its controlled payment correction workflow.");
         receipt={id:randomUUID(),scholarshipId:input.scholarshipId,evidenceRevision:input.evidenceRevision,actualPaidOn:input.actualPaidOn,beforeDeadlineEvidence:input.beforeDeadlineEvidence,requestedBy:actor,frozenHash:frozen.hash,endsOn:deadline.endsOn,state:"pending",version:1};
       }else{

@@ -5,16 +5,17 @@ import type { LightMyRequestResponse } from "fastify";
 import type { DocumentBatchPreview } from "../server/requirements/batch-model.js";
 
 type Request = (role: string, url: string, body?: object, key?: string) => Promise<LightMyRequestResponse>;
-export async function testDocumentBatches(request: Request, pool: Pool, importId: string, semesterId: string, day: string) {
+export async function testDocumentBatches(request: Request, pool: Pool, importId: string, semesterId: string, day: string, count=835) {
+  const historicalCount=count-380;
   const previewPath = `/api/v1/document-batches/preview?importId=${importId}&semesterId=${semesterId}`;
   const ok = async <T>(r: Promise<LightMyRequestResponse>): Promise<T> => { const response = await r; assert.equal(response.statusCode, 200, response.body); return response.json<T>(); };
   const preview = () => ok<DocumentBatchPreview>(request("staff", previewPath));
   const start = performance.now();
   let current = await preview();
-  assert.equal(current.scholarCount, 835); assert.equal(current.missingScholarCount, 0);
-  assert.equal(current.documents.length, 1670);
-  assert.equal(current.documents.filter(d => d.outcome === "ready").length, 835);
-  assert.equal(current.documents.filter(d => d.historicalPlacement).length, 455);
+  assert.equal(current.scholarCount, count); assert.equal(current.missingScholarCount, 0);
+  assert.equal(current.documents.length, count*2);
+  assert.equal(current.documents.filter(d => d.outcome === "ready").length, count);
+  assert.equal(current.documents.filter(d => d.historicalPlacement).length, historicalCount);
   assert.ok(current.documents.filter(d => d.kind === "cog").every(d => d.issue?.code === "ACADEMIC_RECORD_REQUIRED"));
   assert.equal((await request("system_admin", previewPath)).statusCode, 403);
   const makeVerify = (p: DocumentBatchPreview, ids: string[]) => ({ importId, semesterId, scopeHash: p.scopeHash,
@@ -43,7 +44,7 @@ export async function testDocumentBatches(request: Request, pool: Pool, importId
   await pool.query("DROP TRIGGER fail_batch_verify");
   const results = await Promise.all([request("staff", "/api/v1/document-batches/verify", verifyBody, verifyKey), request("staff", "/api/v1/document-batches/verify", verifyBody, verifyKey)]);
   assert.equal(results[0].statusCode, 200, results[0].body); assert.equal(results[1].statusCode, 200, results[1].body);
-  assert.deepEqual(results[0].json(), results[1].json()); assert.equal(results[0].json().verifiedCount, 835);
+  assert.deepEqual(results[0].json(), results[1].json()); assert.equal(results[0].json().verifiedCount, count);
   assert.deepEqual(await ok(request("staff", "/api/v1/document-batches/verify", verifyBody, verifyKey)), results[0].json());
   assert.equal((await request("staff", "/api/v1/document-batches/verify", { ...verifyBody, reference: "Changed" }, verifyKey)).statusCode, 409);
   assert.equal((await request("staff", "/api/v1/document-batches/verify", smallBody)).statusCode, 409);
@@ -51,7 +52,7 @@ export async function testDocumentBatches(request: Request, pool: Pool, importId
   const deferredEvidence = typeof deferred.details === "string" ? JSON.parse(deferred.details) : deferred.details;
   assert.equal(deferredEvidence.checks.placement, false); assert.equal(deferredEvidence.attestation, "course-comparison-deferred");
   const [[beforeReceipt]] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n,SUM(UNIX_TIMESTAMP(recorded_at)) timestamps FROM requirement_receipts");
-  current = await preview(); assert.equal(current.documents.filter(d => d.outcome === "current").length, 835);
+  current = await preview(); assert.equal(current.documents.filter(d => d.outcome === "current").length, count);
   const placements = current.documents.filter(d => d.historicalPlacement);
   const placementBody = { importId, semesterId, scopeHash: current.scopeHash, reason: "Held COGs reviewed for past-semester school and course", reference: "TEST-HISTORICAL-PAPERS", coveredPlacementConfirmed: true,
     items: placements.map(d => ({ id: d.id, sourceHash: d.historicalPlacement!.sourceHash, yearLevel: null })),
@@ -67,17 +68,17 @@ export async function testDocumentBatches(request: Request, pool: Pool, importId
   assert.equal(Number(absent.n), 0);
   await pool.query("DROP TRIGGER fail_batch_placement");
   const placementKey = randomUUID(), reviewed = await ok<{ reviewedCount: number }>(request("coordinator", "/api/v1/document-batches/historical-placement", placementBody, placementKey));
-  assert.equal(reviewed.reviewedCount, 455);
+  assert.equal(reviewed.reviewedCount, historicalCount);
   assert.deepEqual(await ok(request("coordinator", "/api/v1/document-batches/historical-placement", placementBody, placementKey)), reviewed);
   const [[historical]] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n FROM academic_records WHERE academic_year_id=? AND year_level='Not recorded'", [placements[0].historicalPlacement!.academicYearId]);
-  assert.equal(Number(historical.n), 455);
+  assert.equal(Number(historical.n), historicalCount);
   const [[scholarships]] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n FROM scholarship_records WHERE academic_year_id=?", [placements[0].historicalPlacement!.academicYearId]);
   assert.equal(Number(scholarships.n), 0);
   current = await preview();
   const cogs = current.documents.filter(d => d.kind === "cog" && d.outcome === "ready");
-  assert.equal(cogs.length, 455); assert.equal(current.documents.filter(d => d.outcome === "blocked").length, 380);
+  assert.equal(cogs.length, historicalCount); assert.equal(current.documents.filter(d => d.outcome === "blocked").length, 380);
   const cogBody = makeVerify(current, cogs.map(d => d.id));
-  assert.equal((await ok<{ verifiedCount: number }>(request("coordinator", "/api/v1/document-batches/verify", cogBody))).verifiedCount, 455);
+  assert.equal((await ok<{ verifiedCount: number }>(request("coordinator", "/api/v1/document-batches/verify", cogBody))).verifiedCount, historicalCount);
   const [[afterReceipt]] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n,SUM(UNIX_TIMESTAMP(recorded_at)) timestamps FROM requirement_receipts");
   assert.deepEqual(afterReceipt, beforeReceipt);
   const [[waivers]] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) n FROM requirement_waivers"); assert.equal(Number(waivers.n), 0);
@@ -87,5 +88,5 @@ export async function testDocumentBatches(request: Request, pool: Pool, importId
   assert.equal(registry.items[0].requirements.total, 2); assert.notEqual(registry.items[0].requirements.label, "Unconfigured");
   assert.ok(registry.items[0].payout.reasons.some(r => r.code === "PAYROLL_PERIOD_SETUP_REQUIRED"));
   assert.ok(!registry.items[0].payout.reasons.some(r => ["CHECKLIST_MISSING", "PAYOUT_POLICY_EMPTY"].includes(r.code)));
-  console.log(`PASS Batch verification: 835 COR + 455 COG verified; 380 unknown historical courses unresolved; Coordinator historical review; truthful deferred checks; concurrent exact retry; stale revisions; audit rollback; no receipt changes or historical scholarship creation; elapsed=${Math.round(performance.now() - start)}ms`);
+  console.log(`PASS Batch verification: ${count} COR + ${historicalCount} COG verified; 380 unknown historical courses unresolved; Coordinator historical review; truthful deferred checks; concurrent exact retry; stale revisions; audit rollback; no receipt changes or historical scholarship creation; elapsed=${Math.round(performance.now() - start)}ms`);
 }

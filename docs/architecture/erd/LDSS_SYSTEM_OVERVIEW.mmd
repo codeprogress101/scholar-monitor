@@ -1,0 +1,26 @@
+flowchart TD
+  %% Selected cross-domain FK groups only; full inventory is in LDSS_COMPLETE_ERD.mmd. Not a workflow sequence.
+  01_authentication["Accounts, roles and authentication<br/>8 core objects"]
+  02_scholars["Scholars, annual records and participation<br/>22 core objects"]
+  03_academic["Academic placement and graduation<br/>14 core objects"]
+  04_documents["COR/COG, receiving and requirement evidence<br/>12 core objects"]
+  05_semester_approval["Semester assessment and prior-batch approval<br/>7 core objects"]
+  06_masterlists["Masterlists, activation and amendments<br/>14 core objects"]
+  07_payroll_windows["Payroll periods, cutoffs and preparation<br/>13 core objects"]
+  08_payroll_entitlements["Payroll batches, frozen rosters and entitlements<br/>8 core objects"]
+  09_payments["Payments, corrections, omissions and reconciliation<br/>15 core objects"]
+  10_individual_documents["Individual disbursements and stored documents<br/>5 core objects"]
+  11_configuration["Signatory storage, configuration and authority<br/>5 core objects"]
+  12_audit_commands["Audit, notifications and command ledgers<br/>27 core objects"]
+  13_environment["Migration journal and UAT ownership markers<br/>4 core objects"]
+  01_authentication -->|"23 FKs"| 12_audit_commands
+  02_scholars -->|"15 FKs"| 03_academic
+  01_authentication -->|"14 FKs"| 02_scholars
+  02_scholars -->|"5 FKs"| 06_masterlists
+  08_payroll_entitlements -->|"20 FKs"| 09_payments
+  02_scholars -->|"6 FKs"| 07_payroll_windows
+  09_payments -->|"3 FKs"| 10_individual_documents
+  07_payroll_windows -->|"1 FKs"| 08_payroll_entitlements
+  02_scholars -->|"6 FKs"| 05_semester_approval
+  11_configuration -->|"3 FKs"| 05_semester_approval
+  05_semester_approval -->|"3 FKs"| 04_documents

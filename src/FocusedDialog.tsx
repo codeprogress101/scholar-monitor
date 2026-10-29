@@ -1,10 +1,12 @@
+import {OperationProgress,type OperationFeedback} from "./ActionProgress";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 /** Native modal: focus is contained by the browser and returned to its trigger. */
-export default function FocusedDialog({ title, busy = false, onClose, children, className = "" }: {
-  title: string; busy?: boolean; onClose: () => void; children: ReactNode; className?: string;
+export default function FocusedDialog({ title, busy = false, onClose, children, className = "", progress }: {
+  title: string; busy?: boolean; onClose: () => void; children?: ReactNode; className?: string; progress?:OperationFeedback;
 }) {
   const dialog = useRef<HTMLDialogElement>(null), label = useId();
+  const progressReturn=useRef<HTMLElement|null>(null);
   useEffect(() => {
     const trigger = document.activeElement as HTMLElement | null;
     const element = dialog.current;
@@ -21,7 +23,20 @@ export default function FocusedDialog({ title, busy = false, onClose, children, 
     window.addEventListener("beforeunload", prevent);
     return () => {window.removeEventListener("beforeunload", prevent);window.removeEventListener("popstate",retain,true);window.removeEventListener("hashchange",retain,true);};
   }, [busy]);
-  return <dialog ref={dialog} className={`focused-dialog ${className}`} aria-labelledby={label} data-pending-location={busy ? window.location.hash : undefined}
+  const progressing=Boolean(progress&&(progress.pending||progress.uncertain));
+  useEffect(()=>{
+    const element=dialog.current;if(!element)return;
+    if(progressing&&document.activeElement instanceof HTMLElement&&!document.activeElement.closest(".operation-progress"))progressReturn.current=document.activeElement;
+    const frame=requestAnimationFrame(()=>{
+      if(progressing)element.querySelector<HTMLElement>(".operation-progress-status")?.focus();
+      else if(progressReturn.current){
+        const target=progressReturn.current;progressReturn.current=null;
+        if(target.isConnected&&!target.matches(":disabled"))target.focus();
+        else element.querySelector<HTMLElement>("button:not(:disabled),input:not(:disabled),[tabindex='-1']")?.focus();
+      }
+    });return()=>cancelAnimationFrame(frame);
+  },[progressing,progress?.pending]);
+  return <dialog ref={dialog} className={`focused-dialog ${className} ${progressing?"operation-progress-dialog":""}`} aria-labelledby={label} data-pending-location={busy ? window.location.hash : undefined}
     onKeyDownCapture={event => {
       if (event.key !== "Tab") return;
       event.preventDefault();
@@ -33,7 +48,8 @@ export default function FocusedDialog({ title, busy = false, onClose, children, 
       controls[next].focus();
     }}
     onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    <header><h2 id={label}>{title}</h2><button type="button" className="btn btn-outline-secondary" disabled={busy} onClick={onClose}>Close</button></header>
-    {children}
+    <header><h2 id={label}>{title}</h2><button type="button" hidden={progressing} className="btn btn-outline-secondary" disabled={busy} onClick={onClose}>Close</button></header>
+    {progressing&&progress&&<OperationProgress {...progress}/>}
+    {progress?<div hidden={progressing}>{children}</div>:children}
   </dialog>;
 }

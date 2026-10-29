@@ -1,6 +1,10 @@
+import {preflightIntakeText} from './intake-text-preflight.mjs';
+import {preflightImportBindings} from './import-intake-preflight.mjs';
+import {preflightGraduationMonitoring,graduationTables} from './graduation-monitoring-preflight.mjs';
 import { readdir, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import mysql from "mysql2/promise";
+import { preflightAnnualIntakes } from "./annual-intake-preflight.mjs";
 
 export async function localAdmin() {
   if (
@@ -23,7 +27,7 @@ export async function localAdmin() {
   });
 }
 
-export async function applyMigrations(connection) {
+export async function applyMigrations(connection, options = {}) {
   const [lock] = await connection.query(
     "SELECT GET_LOCK(CONCAT(DATABASE(), ':migrations'), 10) AS acquired",
   );
@@ -65,8 +69,17 @@ export async function applyMigrations(connection) {
     }
     const appliedNow = [];
     for (const migration of migrations) {
+      if (options.through && migration.version > options.through) continue;
       if (existing.some((entry) => entry.version === migration.version))
         continue;
+      if (migration.version === '20261025020000_f56_intake_supplied_text.sql')
+        await preflightIntakeText(connection,options.intakeTextReview);
+      if (migration.version === '20261025010000_f55_import_intake_bindings.sql')
+        await preflightImportBindings(connection,options.importBindingReview);
+      if (migration.version === '20261024020000_f54_graduation_monitoring.sql')
+        await preflightGraduationMonitoring(connection,options.graduationReview);
+      if (migration.version === '20261024010000_f53_annual_intake_registration.sql')
+        await preflightAnnualIntakes(connection,options.localUatReview);
       for (const statement of migration.sql.split(
         /\r?\n-- statement-break\r?\n/,
       ))
@@ -90,7 +103,19 @@ export async function grantAuthRuntime(connection, database, user) {
     throw new Error("Invalid database identity.");
   const table = (name) => `\`${database}\`.\`${name}\``;
   const identity = `${connection.escape(user)}@'localhost'`;
+  const [cutoffReady]=await connection.query("SELECT version FROM schema_migrations WHERE version='20261027010000_f57_payroll_cutoff_policy.sql'");
+  if(cutoffReady.length)await connection.query(`GRANT SELECT ON ${table('payroll_cutoff_rule_versions')} TO ${identity}`);
+  const [textReady]=await connection.query("SELECT version FROM schema_migrations WHERE version='20261025020000_f56_intake_supplied_text.sql'");
+  if(textReady.length)await connection.query(`GRANT SELECT, INSERT ON ${table('scholar_intake_text_events')} TO ${identity}`);
+  const [bindingReady]=await connection.query("SELECT version FROM schema_migrations WHERE version='20261025010000_f55_import_intake_bindings.sql'");
+  if(bindingReady.length)await connection.query(`GRANT SELECT, INSERT ON ${table('import_intake_bindings')} TO ${identity}`);
+  const [graduationReady]=await connection.query("SELECT version FROM schema_migrations WHERE version='20261024020000_f54_graduation_monitoring.sql'");
+  if(graduationReady.length)for(const name of graduationTables)await connection.query(`GRANT SELECT, INSERT ON ${table(name)} TO ${identity}`);
   await connection.query(`GRANT SELECT ON ${table("notification_events")} TO ${identity}`);
+  await connection.query(`GRANT SELECT, INSERT ON ${table("entitlement_payment_routes")} TO ${identity}`);
+  await connection.query(`GRANT UPDATE (transaction_id,event_transaction_id,event_revision) ON ${table("entitlement_payment_routes")} TO ${identity}`);
+  await connection.query(`GRANT SELECT, INSERT ON ${table("individual_document_contents")} TO ${identity}`);
+  await connection.query(`GRANT UPDATE (revision,document_hash,content_base64) ON ${table("individual_document_contents")} TO ${identity}`);
   await connection.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${table("notification_reads")} TO ${identity}`);
   await connection.query(`GRANT SELECT ON ${table("scholar_profile_audit")} TO ${identity}`);
   await connection.query(`GRANT SELECT ON ${table("export_audit_metadata")} TO ${identity}`);
@@ -103,6 +128,14 @@ export async function grantAuthRuntime(connection, database, user) {
     "payroll_legacy_conversions",
     "placement_policy_reviews",
     "payroll_treasury_evidence",
+    "payroll_reconciliation_events",
+    "individual_payment_transactions",
+    "individual_payment_events",
+    "individual_document_versions",
+    "payroll_preparation_versions",
+    "payroll_omissions",
+    "payroll_omission_events",
+    "payroll_closure_members",
     "payroll_treasury_confirmations",
     "payroll_historical_receipts",
     "regular_payout_periods",
@@ -138,6 +171,8 @@ export async function grantAuthRuntime(connection, database, user) {
     "requirement_coverage",
     "workflow_scope_versions",
     "scholar_intakes",
+    "scholar_intake_revisions",
+    "annual_intake_commands",
     "course_pending_exceptions",
     "course_pending_events",
     "import_jobs",

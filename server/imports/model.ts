@@ -22,6 +22,8 @@ export type ReferenceMapping = { kind: "schools" | "courses"; supplied: string; 
 export type Intake = { schoolName?: string; courseName?: string; academicYearId: string; schoolId: string; courseId: string | null; yearLevel: string; classification: IntakeClassification };
 export type ImportColumn = (typeof IMPORT_COLUMNS)[number];
 export type ImportRow = {
+  textReviewFormat?: "intake-match/v2";
+  identityResolution?: import("./intake-binding.js").IdentityResolution;
   receipts?: { periodId: string; cor: boolean; cog: boolean; receivedOn?: string };
   row: number;
   cells: Record<ImportColumn, string>;
@@ -33,6 +35,11 @@ export type ImportRow = {
   approvedSelection?: { reference: string; effectiveOn: string };
 };
 export type ImportPreviewRow = ImportRow & {
+  suppliedTextTargets?:{school:import("./intake-binding.js").TextTarget;course:import("./intake-binding.js").TextTarget};
+  suppliedTextContext?:import("./intake-binding.js").TextContext;
+  confirmingActor?:string;
+  identityCandidates?: {snapshot:string;total:number;candidates:(import("../scholars/model.js").DuplicateCandidate & {suppliedText?:import("../scholars/intake-text-model.js").TextState;intake?:import("../scholars/annual-intake-model.js").AnnualIntake})[]};
+  existingHumanId?:string;
   receiptIssue?: { code: string; message: string };
   coursePending?: boolean;
   receiptContext?: { sourceHash:string; cor:string; cog:string; cogExempt?: boolean };
@@ -51,9 +58,10 @@ export type ImportPreviewRow = ImportRow & {
     courseId: string;
     yearLevel: string;
   };
-  references: { id: string; version: number }[];
+  references: { id: string; version: number;name?:string;code?:string }[];
 };
 export type ImportResult = {
+  format?: "bound-import/v1"|"bound-import/v2";
   coursePendingCount?: number;
   receivedCount?: number;
   selectedCount?: number;
@@ -63,6 +71,7 @@ export type ImportResult = {
     id: string;
     scholarId: string;
     academicRecordId?: string;
+    source?: {kind:"import-root";intakeId:string}|{kind:"manual-binding";intakeId:string;bindingId:string;bindingHash:string};
   }[];
 };
 export type ImportPreview = {

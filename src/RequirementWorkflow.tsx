@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useActionForm } from "./use-action-form";
 import { receivingToday } from "./receiving-selection";
 import { documentLabels } from "./document-labels";
@@ -358,7 +359,7 @@ export default function RequirementWorkflow({
               />
             </label>
             <div className="d-flex gap-2 flex-wrap">
-              <button
+              <ActionButton pending={saving} activeLabel={action==="verify"?"Verifying...":"Saving decision..."}
                 className="btn configuration-primary"
                 disabled={
                   action === "verify" &&
@@ -366,7 +367,7 @@ export default function RequirementWorkflow({
                 }
               >
                 {labels[action]}
-              </button>
+              </ActionButton>
               <button
                 className="btn btn-outline-secondary"
                 type="button"

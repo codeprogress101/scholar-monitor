@@ -26,3 +26,13 @@ export type OperationalReport = {
   offset: number;
   limit: number;
 };
+
+/** A page fingerprint never claims to identify unrequested rows. */
+export type ReportPage = OperationalReport & {
+  sourceHashBasis: "report-page-v1" | "report-content-v1";
+  countsScope: "page" | "report";
+};
+export type ReportSummary = Omit<OperationalReport, "items" | "offset" | "limit" | "columns"> & {
+  sourceHashBasis: "dashboard-summary-v1";
+  period: { semesterId: string; semesterCode: string; academicYearCode: string };
+};

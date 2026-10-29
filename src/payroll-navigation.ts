@@ -6,8 +6,9 @@ export function payrollSelection(key: "cycle" | "batch") {
 export function rememberPayroll(cycle: string | null, batch: string | null = null) {
   const params = new URLSearchParams();
   const previous = new URLSearchParams(window.location.hash.split("?")[1]);
-  if (previous.get("cycle") === cycle && (!batch || previous.get("batch") === batch)) for (const key of ["request", "version", "view", "annual"]) { const value=previous.get(key); if(value) params.set(key,value); }
+  if (previous.get("cycle") === cycle && (!batch || previous.get("batch") === batch)) for (const key of ["request", "version", "view", "annual", "recovery"]) { const value=previous.get(key); if(value) params.set(key,value); }
   if (cycle) params.set("cycle", cycle);
   if (cycle && batch) params.set("batch", batch);
   window.history.replaceState(null, "", `#payouts${params.size ? "?" + params.toString() : ""}`);
+  window.dispatchEvent(new Event("payroll-location-changed"));
 }

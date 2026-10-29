@@ -11,7 +11,7 @@ import {digest} from "../server/auth/crypto.js";
 import {today} from "../server/scholars/validation.js";
 import {checkManagedPayment} from "../server/ovr/managed-release.js";
 type Request=(role:string,url:string,body?:object,key?:string)=>Promise<LightMyRequestResponse>;
-export async function testPriorBatchApproval(request:Request,pool:Pool,importId:string,semesterId:string,day:string){
+export async function testPriorBatchApproval(request:Request,pool:Pool,importId:string,semesterId:string,day:string,runtime?:Pool){
  const start=performance.now(),evidence={reason:"Synthetic confirmed previously completed batch assessment",reference:"TEST-PRIOR-BATCH"};
  const ok=async<T>(p:Promise<LightMyRequestResponse>):Promise<T>=>{const r=await p;assert.equal(r.statusCode,200,r.body);return r.json<T>();};
  const path=`/api/v1/document-batches/prior-approval-preview?importId=${importId}&semesterId=${semesterId}`;
@@ -80,11 +80,17 @@ export async function testPriorBatchApproval(request:Request,pool:Pool,importId:
  assert.deepEqual(payrollLayout(detail.managed!.form).map(p=>p.rows.length),Array.from({length:Math.ceil(total/20)},(_,i)=>Math.min(20,total-i*20)));
  console.log(`Prior-batch fixture: ${total} eligible rows; candidate payload ${Buffer.byteLength(JSON.stringify(detail.managed))} bytes; validating bounded storage under the unchanged database packet limit`);
  const payload=(d:OvrDetail)=>({expectedRevision:d.batch.revision,expectedSourceHash:d.managed!.sourceHash,...evidence});
+ let omittedAnnual:string|undefined;
+ if(process.argv.includes('--omitted-historical')){
+  const [[annual]]=await pool.execute<RowDataPacket[]>('SELECT id FROM scholarship_records WHERE scholar_id=? AND academic_year_id=?',[people[1].id,period.academic_year_id]);omittedAnnual=String(annual.id);
+  await ok(request('coordinator',`/api/v1/ovr-batches/${setup.batchId}/defer`,{...payload(detail),scholarshipId:omittedAnnual,reason:'Synthetic original historical payroll omission'}));detail=await read();assert.equal(detail.managed!.form.rows.length,total-1);
+ }
  await ok(request("staff",`/api/v1/ovr-batches/${setup.batchId}/submit-review`,payload(detail)));detail=await read();
  const finalKey=randomUUID(),finalPayload=payload(detail),finalPath=`/api/v1/ovr-batches/${setup.batchId}/finalize`;
  const finalized=await ok(request("coordinator",finalPath,finalPayload,finalKey));
  assert.deepEqual(await ok(request("coordinator",finalPath,finalPayload,finalKey)),finalized,'A lost finalization response must replay the same expanded result');
  assert.equal((await request("coordinator",finalPath,finalPayload)).statusCode,409,'A second finalization must not allocate a second stipend');
+ if(omittedAnnual){await (await import('./test-omission-historical.js')).testOmissionHistorical({request,pool,cycleId:cycle.id,source:setup.batchId,annual:omittedAnnual,scholar:people[1].id,semester:semesterId,importId});return;}
  const [[frozen]]=await pool.query<RowDataPacket[]>("SELECT snapshot FROM ovr_finalizations WHERE batch_id=? ORDER BY batch_revision DESC LIMIT 1",[setup.batchId]);const frozenHash=digest(JSON.stringify(frozen));
  const frozenForm=decodeStoredJson<OvrFinalization>(frozen.snapshot).payrollForm!;
  assert.equal(frozenForm.template,currentPayrollTemplate);assert.equal(payrollLayout(frozenForm).length,Math.ceil(total/20));
@@ -93,6 +99,12 @@ export async function testPriorBatchApproval(request:Request,pool:Pool,importId:
  const [[annual]]=await pool.execute<RowDataPacket[]>("SELECT id FROM scholarship_records WHERE scholar_id=? AND academic_year_id=?",[sample.scholarId,period.academic_year_id]);
  const releaseDb=await pool.getConnection();try{const entry=await checkManagedPayment(releaseDb,setup.batchId,annual.id,"paid","5000.00");assert.equal(entry?.state,"approved_for_release");assert.deepEqual(entry?.reasons,[]);}finally{releaseDb.release();}
  const [[payments]]=await pool.query<RowDataPacket[]>("SELECT COUNT(*) n FROM payment_records");assert.equal(Number(payments.n),0);
+ if(process.argv.includes("--payment-recording-large")) {
+   let batch=(await read()).batch;
+   for(const action of ["submit","mark-processed"]){batch=await ok(request(action==="submit"?"coordinator":"staff",`/api/v1/ovr-batches/${setup.batchId}/${action}`,{expectedRevision:batch.revision,effectiveOn:day,reason:"Synthetic payment recording stage",reference:"P02-SYNTHETIC"}));}
+   await (await import("./test-payment-recording-large.js")).testPaymentRecordingLarge({runtime:runtime??pool,root:pool,request,batch:setup.batchId,total});
+   return;
+ }
  const [[sameFrozen]]=await pool.query<RowDataPacket[]>("SELECT snapshot FROM ovr_finalizations WHERE batch_id=? ORDER BY batch_revision DESC LIMIT 1",[setup.batchId]);assert.equal(digest(JSON.stringify(sameFrozen)),frozenHash);
  await pool.execute("UPDATE scholars SET version=version+1 WHERE id=?",[sample.scholarId]);
  const changed=await ok<PriorBatchPreview>(request("coordinator",path));assert.equal(changed.members.find(m=>m.scholarId===sample.scholarId)!.approval!.valid,false,'A source change invalidates current approval');

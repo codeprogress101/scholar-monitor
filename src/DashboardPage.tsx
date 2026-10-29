@@ -1,101 +1,85 @@
-import { useEffect, useState } from "react";
-import { ArrowRight, Search, FileInput, ClipboardCheck, Wallet, RefreshCw } from "lucide-react";
-import { configurationRequest as request } from "./configuration-api";
-import { ApiError } from "./auth-api";
-import type { Access, PermissionCode } from "../server/authorization/policy";
-import type { PayoutCycle } from "../server/payouts/model";
-import type { Dashboard } from "../server/dashboard/service";
-import type { NoticeList } from "../server/notifications/service";
-import { REPORTS, type ReportKind } from "../server/reports/model";
-import type { Masterlist } from "../server/masterlists/model";
+import {useEffect,useRef,useState} from "react";
+import {ArrowRight,Search,FileInput,ClipboardCheck,Wallet,RefreshCw,GraduationCap,Users,Clock3} from "lucide-react";
+import {configurationRequest as request} from "./configuration-api";
+import {ApiError} from "./auth-api";
+import type {Access,PermissionCode} from "../server/authorization/policy";
+import type {PayoutCycle} from "../server/payouts/model";
+import type {Dashboard} from "../server/dashboard/service";
+import type {AnnualOverview,PayrollOverview} from "../server/dashboard/overview";
+import type {NoticePage} from "../server/notifications/service";
+import type {Masterlist} from "../server/masterlists/model";
+import {REPORTS} from "../server/reports/model";
 import AdminGuide from "./AdminGuide";
+import DashboardScholarCharts from "./DashboardScholarCharts";
+import DashboardCharts,{recordingLink} from "./DashboardCharts";
 
-type Card = Dashboard["cards"][number];
-const units: Record<ReportKind,string> = { scholars:"annual scholar records", missing:"documents", verification:"documents", eligibility:"annual scholar assessments", ovr:"batches", payments:"processing entries", masterlists:"masterlist versions" };
-const labels: Record<string,string> = {not_generated:"Not Generated",ovr_blocked:"Payroll checks blocked",ovr_passed:"Payroll checks passed",not_paid:"Not paid",pending:"No recorded outcome"};
-const label = (value:string) => labels[value] ?? value.replaceAll("_"," ").replace(/^./,c=>c.toUpperCase());
-const failure = (e:unknown) => e instanceof ApiError ? e.code === "REPORT_SCOPE_TOO_LARGE" ? e.message : e.message : "Could not load this information. Refresh to try again.";
-const reportLink = (cycleId:string,kind:ReportKind) => `#reports?cycleId=${cycleId}&kind=${kind}`;
-
-const readableYear=(value:string)=>value.replace(/^AY/,"Academic year ");
-const readableSemester=(value:string)=>/1ST$/i.test(value)?"First semester":/2ND$/i.test(value)?"Second semester":value;
-const dateLabel=(value:string)=>new Date(`${value}T12:00:00+08:00`).toLocaleDateString("en-PH",{month:"short",day:"numeric",year:"numeric",timeZone:"Asia/Manila"});
-function Counts({card}:{card:Card}) {return <dl className="desk-counts">{Object.entries(card.counts).map(([key,value])=><div key={key}><dt>{label(key)}</dt><dd>{value.toLocaleString()}</dd></div>)}</dl>;}
-export default function DashboardPage() {
+const failure=(e:unknown)=>e instanceof ApiError?e.message:"Could not load this information. Refresh to retry.";
+const dateLabel=(s:string)=>new Date(`${s}T12:00:00+08:00`).toLocaleDateString("en-PH",{month:"short",day:"numeric",year:"numeric",timeZone:"Asia/Manila"});
+const labels:Record<string,string>={not_generated:"Not Generated",ovr_blocked:"Payroll checks blocked",ovr_passed:"Payroll checks passed",not_paid:"Not paid",pending:"No recorded outcome"};
+const readable=(s:string)=>labels[s]??s.replaceAll("_"," ").replace(/^./,c=>c.toUpperCase());
+export const cycleDescription=(cycle:Pick<PayoutCycle,"name"|"yearCode"|"semesterCode"|"state">)=>`${cycle.name} / ${cycle.yearCode} / ${cycle.semesterCode} (${cycle.state})`;
+export const cycleOptionLabel=(name:string)=>Array.from(name).length>24?Array.from(name).slice(0,23).join("")+"\u2026":name;
+export const graduationDashboardLink=(year:string,semester:string,filter:string)=>`#scholars?${new URLSearchParams({task:"graduation",academicYearId:year,semesterId:semester,filter})}`;
+export default function DashboardPage(){
  const [access,setAccess]=useState<Access|null>(null),[cycles,setCycles]=useState<PayoutCycle[]>([]),[cycleId,setCycleId]=useState("");
- const [metadataReady,setMetadataReady]=useState(false),[metadataError,setMetadataError]=useState("");
- const [data,setData]=useState<Dashboard|null>(null),[error,setError]=useState("");
- const [pending,setPending]=useState<NoticeList|null>(null),[pendingError,setPendingError]=useState("");
- const [reload,setReload]=useState(0),[metricsLoading,setMetricsLoading]=useState(false),[pendingLoading,setPendingLoading]=useState(true);
- const [selectionMessage,setSelectionMessage]=useState("");
- const [official,setOfficial]=useState<Masterlist[]|null>(null),[officialError,setOfficialError]=useState("");
+ const [metadataReady,setMetadataReady]=useState(false),[metadataError,setMetadataError]=useState(""),[reload,setReload]=useState(0),[selectionMessage,setSelectionMessage]=useState("");
+ const [annual,setAnnual]=useState<AnnualOverview|null>(null),[annualError,setAnnualError]=useState(""),[payroll,setPayroll]=useState<PayrollOverview|null>(null),[payrollError,setPayrollError]=useState("");
+ const [pending,setPending]=useState<NoticePage|null>(null),[pendingError,setPendingError]=useState(""),[official,setOfficial]=useState<Masterlist[]|null>(null),[officialError,setOfficialError]=useState("");
+ const [detailsOpen,setDetailsOpen]=useState(false),[detail,setDetail]=useState<Dashboard|null>(null),[detailError,setDetailError]=useState("");
+ const attentionTitle=useRef<HTMLHeadingElement>(null);
  const can=(code:PermissionCode)=>!!access?.permissions.some(p=>p.code===code);
- const masterlistAccess=!!access?.permissions.some(p=>p.code==="masterlists.prepare");
- const operational=!!access && Object.values(REPORTS).some(r=>access.permissions.some(p=>p.code===r.permission));
- useEffect(()=>{
-  const controller=new AbortController(); const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(60000)]);
-  (async()=>{
-   const a=await request<Access>("me/permissions",{signal});if(controller.signal.aborted)return;setAccess(a);
-   if(!Object.values(REPORTS).some(r=>a.permissions.some(p=>p.code===r.permission)))return;
-   const all:PayoutCycle[]=[];
-   for(let offset=0;;){const result=await request<{items:PayoutCycle[];total:number}>(`payout-cycles?limit=100&offset=${offset}`,{signal});all.push(...result.items);offset+=result.items.length;if(offset>=result.total || !result.items.length)break;}
-   if(controller.signal.aborted)return;setCycles(all);
-   const saved=sessionStorage.getItem(`home-cycle:${a.userId}`);
-   const open=all.filter(c=>c.state==="open"&&!c.periodUnavailable);
-   if(saved && all.some(c=>c.id===saved)){setCycleId(saved);setSelectionMessage("");}
-   else if(saved){setCycleId("");setSelectionMessage("Your saved cycle is no longer available. Choose a period to continue.");}
-   else {setCycleId(open.length===1?open[0].id:"");setSelectionMessage("");}
-  })().catch(e=>{if(!controller.signal.aborted)setMetadataError(failure(e));}).finally(()=>{if(!controller.signal.aborted)setMetadataReady(true);});
-  return ()=>controller.abort();
+ const operational=!!access&&Object.values(REPORTS).some(r=>access.permissions.some(p=>p.code===r.permission));
+ const masterlistAccess=can("masterlists.prepare"),scholarAccess=can("scholars.read"),paymentAccess=can("ovr.process");
+ useEffect(()=>{const controller=new AbortController(),signal=AbortSignal.any([controller.signal,AbortSignal.timeout(60000)]);
+  (async()=>{const a=await request<Access>("me/permissions",{signal});if(controller.signal.aborted)return;setAccess(a);if(!Object.values(REPORTS).some(r=>a.permissions.some(p=>p.code===r.permission)))return;
+   const all:PayoutCycle[]=[];for(let offset=0;;){const page=await request<{items:PayoutCycle[];total:number}>(`payout-cycles?limit=100&offset=${offset}`,{signal});if(page.total>1000)throw new Error("Too many payout cycles for this Dashboard. Use Payroll to narrow the scope.");all.push(...page.items);offset+=page.items.length;if(offset>=page.total||!page.items.length)break;}
+   if(controller.signal.aborted)return;setCycles(all);const saved=sessionStorage.getItem(`home-cycle:${a.userId}`),open=all.filter(c=>c.state==="open"&&!c.periodUnavailable);
+   if(saved&&all.some(c=>c.id===saved)){setCycleId(saved);setSelectionMessage("");}else if(saved){setCycleId("");setSelectionMessage("Your saved cycle is no longer available. Choose a period.");}else setCycleId(open.length===1?open[0].id:"");
+  })().catch(e=>{if(!controller.signal.aborted)setMetadataError(failure(e));}).finally(()=>{if(!controller.signal.aborted)setMetadataReady(true);});return()=>controller.abort();
  },[reload]);
- useEffect(()=>{
-  if(!metadataReady || metadataError || !operational || !cycleId)return;
-  const controller=new AbortController();
-  request<Dashboard>(`dashboard?cycleId=${cycleId}`,{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(60000)])})
-   .then(value=>{if(!controller.signal.aborted)setData(value);}).catch(e=>{if(!controller.signal.aborted)setError(failure(e));}).finally(()=>{if(!controller.signal.aborted)setMetricsLoading(false);});
-  return ()=>controller.abort();
- },[cycleId,metadataReady,metadataError,operational]);
- useEffect(()=>{
-  if(!operational)return;
-  const controller=new AbortController();
-  request<NoticeList>("notifications?mode=pending",{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])})
-   .then(value=>{if(!controller.signal.aborted)setPending(value);}).catch(e=>{if(!controller.signal.aborted)setPendingError(failure(e));}).finally(()=>{if(!controller.signal.aborted)setPendingLoading(false);});
-  return ()=>controller.abort();
- },[operational,reload]);
- useEffect(()=>{
-  if(!masterlistAccess)return;
-  const controller=new AbortController();
-  (async()=>{const all:Masterlist[]=[];for(let offset=0;;){const result=await request<{items:Masterlist[];total:number}>(`masterlists?scope=current&offset=${offset}`,{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])});all.push(...result.items);offset+=result.items.length;if(offset>=result.total||!result.items.length)break;}if(!controller.signal.aborted){setOfficial(all.filter(m=>["published","locked"].includes(m.status)));setOfficialError("");}})().catch(e=>{if(!controller.signal.aborted)setOfficialError(failure(e));});
-  return ()=>controller.abort();
- },[masterlistAccess,reload]);
- const selected=cycles.find(c=>c.id===cycleId);
- const current=data?.context.cycleId===cycleId && metadataReady && !metadataError ? data : null;
- const card=(kind:ReportKind)=>current?.cards.find(c=>c.kind===kind);
+ useEffect(()=>{if(!metadataReady||metadataError||!cycleId||!scholarAccess)return;const c=new AbortController();request<AnnualOverview>(`dashboard/annual?cycleId=${cycleId}`,{signal:AbortSignal.any([c.signal,AbortSignal.timeout(15000)])}).then(v=>{if(!c.signal.aborted)setAnnual(v);}).catch(e=>{if(!c.signal.aborted)setAnnualError(failure(e));});return()=>c.abort();},[cycleId,metadataReady,metadataError,scholarAccess]);
+ useEffect(()=>{if(!metadataReady||metadataError||!cycleId||!paymentAccess)return;const c=new AbortController();request<PayrollOverview>(`dashboard/payroll?cycleId=${cycleId}`,{signal:AbortSignal.any([c.signal,AbortSignal.timeout(15000)])}).then(v=>{if(!c.signal.aborted)setPayroll(v);}).catch(e=>{if(!c.signal.aborted)setPayrollError(failure(e));});return()=>c.abort();},[cycleId,metadataReady,metadataError,paymentAccess]);
+ useEffect(()=>{if(!operational)return;const c=new AbortController();request<NoticePage>("notifications/page?mode=pending&limit=3",{signal:AbortSignal.any([c.signal,AbortSignal.timeout(15000)])}).then(v=>{if(!c.signal.aborted)setPending(v);}).catch(e=>{if(!c.signal.aborted)setPendingError(failure(e));});return()=>c.abort();},[operational,reload]);
+ useEffect(()=>{if(!masterlistAccess)return;const c=new AbortController(),signal=AbortSignal.any([c.signal,AbortSignal.timeout(15000)]);(async()=>{const all:Masterlist[]=[];for(let offset=0;;){const page=await request<{items:Masterlist[];total:number}>(`masterlists?scope=current&limit=100&offset=${offset}`,{signal});if(page.total>1000)throw new Error("Current Masterlist summary exceeds the Dashboard limit. Open Masterlists for the complete scope.");all.push(...page.items);offset+=page.items.length;if(offset>=page.total||!page.items.length)break;}if(!c.signal.aborted)setOfficial(all.filter(m=>["published","locked"].includes(m.status)));})().catch(e=>{if(!c.signal.aborted)setOfficialError(failure(e));});return()=>c.abort();},[masterlistAccess,reload]);
+ useEffect(()=>{if(!detailsOpen||!cycleId||!metadataReady||metadataError)return;const c=new AbortController();request<Dashboard>(`dashboard?cycleId=${cycleId}`,{signal:AbortSignal.any([c.signal,AbortSignal.timeout(60000)])}).then(v=>{if(!c.signal.aborted)setDetail(v);}).catch(e=>{if(!c.signal.aborted)setDetailError(failure(e));});return()=>c.abort();},[detailsOpen,cycleId,metadataReady,metadataError]);
+ const selected=cycles.find(c=>c.id===cycleId),ready=metadataReady&&!metadataError&&!!selected;
+ const currentAnnual=ready&&annual?.academicYearId===selected.academicYearId?annual:null;
+ const currentPayroll=ready&&payroll?.academicYearId===selected.academicYearId&&payroll.semesterId===selected.semesterId?payroll:null;
+ const currentDetail=ready&&detail?.context.cycleId===cycleId?detail:null;
+ function clearPeriod(){setAnnual(null);setAnnualError("");setPayroll(null);setPayrollError("");setDetail(null);setDetailError("");setDetailsOpen(false);}
+ function choose(id:string){clearPeriod();setCycleId(id);setSelectionMessage("");if(access)sessionStorage.setItem(`home-cycle:${access.userId}`,id);}
+ function refresh(){clearPeriod();setMetadataReady(false);setMetadataError("");setPending(null);setPendingError("");setOfficial(null);setOfficialError("");setReload(n=>n+1);}
+ const annualState=!scholarAccess?"Unavailable for this account":annualError?"Unavailable":"Loading…";
  const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Manila",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
- const overdue=selected?.state==="open" && selected.targetDate && selected.targetDate<today;
- const value=(kind:ReportKind,key:string)=>card(kind)?.counts[key]??0;
- const kpis:[ReportKind,string,string,string][]=[["scholars","active","Active scholars","Annual standing"],["missing","not_submitted","Not submitted","Document records"],["eligibility","ovr_passed","Payroll checks passed","Before batch validation"],["payments","paid","Confirmed paid entries","Effective recorded outcomes"]];
- function choose(id:string){setMetricsLoading(Boolean(id));setCycleId(id);setData(null);setError("");setSelectionMessage("");if(access)sessionStorage.setItem(`home-cycle:${access.userId}`,id);}
-
- return <section className="operations-desk" aria-labelledby="dashboard-title">
-  <header className="desk-heading"><div><h1 id="dashboard-title">Home</h1><p className="desk-subtitle">{operational?"Scholarship operations desk":"LDSS workspace"}</p></div><button className="btn btn-outline-secondary" disabled={!metadataReady||(operational&&(metricsLoading||pendingLoading))} onClick={()=>{setData(null);setError("");setMetadataError("");setMetadataReady(false);setPending(null);setPendingError("");setOfficial(null);setOfficialError("");setPendingLoading(true);setReload(n=>n+1);}}><RefreshCw size={16}/> Refresh</button></header>
-  {metadataError && <p role="alert" className="alert alert-danger">{metadataError}</p>}
-  {!access ? !metadataError && <p role="status">Loading workspace...</p> : !operational ? can("configuration.manage") ? <div className="desk-admin"><AdminGuide/></div> : <p>Your account has no operational dashboard access. <a href="#access">Review my permissions</a>.</p> : <>
-   <section className="desk-period" aria-label="Selected period"><div><span className="desk-overline">{selected?readableYear(selected.yearCode):"Semester overview"}</span><h2>{selected?readableSemester(selected.semesterCode):"Choose your working period"}</h2><p>{selected?label(selected.state):"Select a payout cycle"}{selected?.periodUnavailable && " / Operations unavailable"}</p></div><div className="desk-target"><span>Target payout</span><strong>{selected?.targetDate?dateLabel(selected.targetDate):selected?"Not configured":"Select a cycle"}</strong>{overdue && <span className="desk-overdue">Target date passed / cycle open</span>}</div><label>Payout cycle<select className="form-select" aria-label="Payout cycle" disabled={!metadataReady} value={cycleId} onChange={e=>choose(e.target.value)}><option value="">Choose a cycle</option>{cycles.map(c=><option key={c.id} value={c.id}>{c.name}{cycles.filter(other=>other.name===c.name).length>1?` / ${c.code}`:""} ({c.state})</option>)}</select></label></section>
-   <nav className="desk-actions" aria-label="Common tasks">
-    {can("scholars.read")&&<a className="btn configuration-primary" href="#scholars"><Search size={17}/> Find Scholar</a>}
-    {can("requirements.receive")&&<a className="btn btn-outline-secondary" href="#scholars?task=receive"><FileInput size={17}/> Receive Documents</a>}
-    {can("scholars.read")&&<a className="btn btn-outline-secondary" href="#admissions"><ClipboardCheck size={17}/> Admission Review</a>}
-    {can("ovr.prepare")&&<a className="btn btn-outline-secondary" href="#payouts"><Wallet size={17}/> Prepare Payroll</a>}
-   </nav>
-   {!metadataReady ? <p role="status">Loading periods...</p> : !cycleId ? <p>{selectionMessage || (cycles.length?"Choose a cycle to view its records. Historical cycles remain available.":"No payout cycles are configured. Ask the Administrator to prepare the semester setup.")}</p> : error ? <p className="alert alert-danger" role="alert">{error}</p> : !current ? <p role="status">Reading current records...</p> : <div className="desk-grid">
-    <div className="desk-kpis">{kpis.filter(([kind])=>card(kind)).map(([kind,key,title,note])=><a key={kind} className="desk-kpi" href={reportLink(cycleId,kind)} aria-label={`${title}: ${value(kind,key)}. Open ${card(kind)?.label} report`}><span>{title}<ArrowRight size={16}/></span><strong>{value(kind,key).toLocaleString()}</strong><small>{note}</small></a>)}</div>
-    <section className="desk-panel desk-documents"><header><h2>Document workload</h2><a href={reportLink(cycleId,"missing")}>View report <ArrowRight size={15}/></a></header><div className="desk-workload">{[["Not submitted",card("missing")?value("missing","not_submitted"):null,"missing"],["Awaiting verification",card("verification")?.total??null,"verification"],["For correction",card("missing")?value("missing","for_correction"):null,"missing"],["Rejected",card("missing")?value("missing","rejected"):null,"missing"]].map(([title,n,kind])=><a key={String(title)} href={reportLink(cycleId,kind as ReportKind)}><span>{title}</span><strong>{n===null?"Unavailable":Number(n).toLocaleString()}</strong></a>)}</div>{card("missing") && value("missing","not_generated")>0 && <div className="desk-initialization"><strong>{value("missing","not_generated").toLocaleString()} Not Generated</strong><span>No resolved checklist document status.</span><details><summary>What to check</summary><p>Review checklist initialization, coverage and policy version. This count does not establish that a physical document is missing.</p></details></div>}</section>
-   <aside className="desk-queue" aria-labelledby="pending-title"><h2 id="pending-title">Pending across periods</h2>{pendingError?<p role="alert">{pendingError}</p>:!pending?<p role="status">Reading pending work...</p>:pending.total===0?<p className="text-muted">No pending work for your account.</p>:<><p className="desk-queue-count">{pending.total} awaiting action <span>Oldest first</span></p><ol>{pending.items.slice(0,3).map(n=><li key={n.id}><a href={n.href}><strong>{n.title}</strong><ArrowRight size={16}/></a><span>{[n.year,n.semester,label(n.state)].filter(Boolean).join(" / ")}</span></li>)}</ol><a className="desk-all" href="#notifications?mode=pending">View all pending work <ArrowRight size={16}/></a></>}</aside>
-    <section className="desk-panel desk-payroll"><header><h2>Payroll &amp; payments</h2><a href={reportLink(cycleId,"ovr")}>View report <ArrowRight size={15}/></a></header>{card("ovr") && <><p className="desk-panel-total"><strong>{card("ovr")!.total}</strong> payroll batches</p><Counts card={card("ovr")!}/></>}{card("payments") && <><h3>Payment entries</h3>{card("payments")!.total===0?<p className="desk-zero">No payment entries in this cycle.</p>:<Counts card={card("payments")!}/>}</>}<details><summary>Assessment &amp; payment scope</summary>{card("eligibility") && <Counts card={card("eligibility")!}/>}<p>Academic assessment and payroll checks are separate. Batch validation still applies. Payment entries include processing attempts, not additional entitlements.</p></details></section>
-    <section className="desk-panel desk-masterlists"><header><h2>Official masterlists <small className="desk-working-year">Working year</small></h2><a href="#masterlists?scope=current">Open current lists <ArrowRight size={15}/></a></header>{officialError?<p role="alert">{officialError}</p>:!can("masterlists.prepare")?<p>Current membership is available to authorized masterlist users.</p>:!official?<p role="status">Reading current lists...</p>:official.length===0?<p>No current official lists in the working year.</p>:<ul className="desk-official">{official.map(m=><li key={m.id}><a href={`#masterlists?scope=current&draft=${m.id}`}><strong>{m.title}</strong><span>{m.count} {m.count===1?"scholar":"scholars"} / {readableYear(m.yearCode)}</span></a></li>)}</ul>}{card("masterlists") && <details><summary>{card("masterlists")!.total} historical and current versions in selected year</summary><Counts card={card("masterlists")!}/><a href={reportLink(cycleId,"masterlists")}>View version report</a></details>}</section>
-    <footer className="desk-foot"><span>Updated {new Date(current.generatedAt).toLocaleString("en-PH",{timeZone:"Asia/Manila"})} (Manila)</span><details><summary>Report definitions</summary><p>Links open the corresponding cycle report, not a status-filtered list.</p>{current.cards.map(c=><p key={c.kind}><strong>{c.label} ({units[c.kind]}): </strong>{c.scope}</p>)}</details></footer>
-   </div>}
+ const overdue=selected?.state==="open"&&selected.targetDate&&selected.targetDate<today;
+ const firstBatch=currentPayroll?.batches[0],paymentHref=firstBatch?recordingLink(firstBatch):cycleId?`#payouts?cycle=${cycleId}`:"#payouts";
+ return <section className="operations-desk d1-dashboard d13-dashboard d14-dashboard" aria-labelledby="dashboard-title">
+  <header className="d1-heading"><div><h1 id="dashboard-title">Home</h1><p>Scholarship operations desk</p></div><button className="btn btn-outline-secondary" disabled={!metadataReady} onClick={refresh}><RefreshCw size={16}/> Refresh</button></header>
+  {metadataError&&<p role="alert" className="alert alert-danger">{metadataError}</p>}
+  {!access?!metadataError&&<p role="status">Loading workspace…</p>:!operational?can("configuration.manage")?<AdminGuide/>:<p>Your account has no operational Dashboard access. <a href="#access">Review my permissions</a>.</p>:<>
+   <section className="d1-period" aria-label="Selected period"><div><span>{selected?.yearCode??"Academic year"}</span><h2>{selected?.semesterCode??"Choose your working period"}</h2><p>{selected?readable(selected.state):"Select a payout cycle"}{selected?.periodUnavailable&&" / Operations unavailable"}</p></div><div className="d1-cycle-control"><label htmlFor="d1-cycle">Payout cycle</label><select id="d1-cycle" className="form-select" aria-label="Payout cycle" title={selected?cycleDescription(selected):"Choose a cycle"} aria-describedby={selected?"d1-cycle-description":undefined} disabled={!metadataReady||!!metadataError} value={cycleId} onChange={e=>choose(e.target.value)}><option value="">Choose a cycle</option>{cycles.map(c=><option key={c.id} value={c.id}>{cycleOptionLabel(c.name)}</option>)}</select>{selected&&<details className="d1-cycle-details"><summary>Full cycle details</summary><p id="d1-cycle-description">{cycleDescription(selected)}</p></details>}</div><div className="d1-target"><span>Target payout date</span><strong>{selected?.targetDate?dateLabel(selected.targetDate):"Not configured"}</strong><small>{selected?.periodUnavailable?"Period unavailable":overdue?"Target date passed / cycle open":"Selected cycle"}</small></div></section>
+   {!metadataReady?<p role="status">Loading periods…</p>:metadataError?<p className="d1-empty">Period information is unavailable. Refresh to retry; no previous summary is being shown.</p>:!cycleId?<p className="d1-empty">{selectionMessage||(cycles.length?"Choose a cycle. Historical periods remain available.":"No payout cycles are configured. Ask the Administrator to prepare the semester setup.")}</p>:<>
+    <div className="d1-overview" aria-label="Dashboard summaries" data-annual-ready={Boolean(currentAnnual)} data-payroll-ready={Boolean(currentPayroll)}>
+     <section className="d1-stat"><span className="d1-stat-icon"><Users size={21}/></span><div><h2>Total Scholars</h2><strong className="d1-number">{currentAnnual?currentAnnual.total.toLocaleString():annualState}</strong><p>{currentAnnual?.workingYear?"Current working year":"Selected academic year"} · all statuses</p></div></section>
+     <section className="d1-stat"><span className="d1-stat-icon d1-attention-icon"><Clock3 size={21}/></span><div><h2>Pending Tasks</h2><strong className="d1-number">{pending?pending.total.toLocaleString():pendingError?"Unavailable":"Loading…"}</strong><p>Your account · across periods</p><button type="button" className="d13-task-link" onClick={()=>{attentionTitle.current?.focus({preventScroll:true});attentionTitle.current?.scrollIntoView({block:"start"});}}>View pending tasks <ArrowRight size={14} aria-hidden="true"/></button></div></section>
+     {scholarAccess&&<section className="d1-stat d13-review-card" aria-labelledby="d12-graduation-title"><header><GraduationCap size={22} aria-hidden="true"/><h2 id="d12-graduation-title">Graduation Monitoring</h2></header><p>Review graduation indicators and supporting evidence.</p><a className="d13-card-action" href={graduationDashboardLink(selected!.academicYearId,selected!.semesterId,"final_year_review")}>View Monitoring<ArrowRight size={16} aria-hidden="true"/></a></section>}
+     {scholarAccess&&<section className="d1-stat d13-review-card" aria-labelledby="d12-requirements-title"><header><ClipboardCheck size={22} aria-hidden="true"/><h2 id="d12-requirements-title">Admission &amp; Requirements</h2></header><p>Review applications and requirements for the selected year.</p><a className="d13-card-action" href={`#admissions?year=${selected!.academicYearId}&stage=for_validation`}>Open Admission Review<ArrowRight size={16} aria-hidden="true"/></a></section>}
+    </div>
+    {currentPayroll?<DashboardCharts data={currentPayroll}/>:<section className="d1-panel d1-chart-unavailable"><h2>Payment status</h2><p role={payrollError?"alert":"status"}>{payrollError||(!paymentAccess?"Payment Recording access is required to view these outcomes.":"Loading authoritative payroll summaries...")}</p>{(paymentAccess||can("ovr.prepare"))&&<a href="#payouts">Open Payroll</a>}</section>}
+    {annualError&&<p className="alert alert-warning" role="alert">Annual summary unavailable: {annualError}</p>}
+    {currentAnnual?<DashboardScholarCharts data={currentAnnual}/>:<section className="d1-panel d12-scholar-unavailable"><h2>Scholar overview</h2><p role={annualError?"alert":"status"}>{annualError||annualState}</p></section>}
+    <div className="d1-work-grid"><section className="d1-panel" aria-labelledby="d1-attention-title"><header><div><p className="d1-overline">Across periods · oldest first</p><h2 id="d1-attention-title" ref={attentionTitle} tabIndex={-1}>Needs attention</h2></div><a href="#notifications?mode=pending">View all</a></header>{pendingError?<p role="alert">{pendingError}</p>:!pending?<p role="status">Reading pending work…</p>:pending.total===0?<p className="d1-empty">No pending work for your account.</p>:<ol className="d1-task-list">{pending.items.map(n=><li key={n.id}><a href={n.href}><span><strong>{n.title}</strong><small>{n.nextAction&&<span className="d-block">{n.nextAction}</span>}{[n.year,n.semester,readable(n.state)].filter(Boolean).join(" / ")}</small></span><ArrowRight size={17}/></a></li>)}</ol>}</section>
+     <section className="d1-panel" aria-labelledby="d1-actions-title"><header><h2 id="d1-actions-title">Quick actions</h2></header><nav className="d1-quick-actions" aria-label="Common tasks">
+      {scholarAccess&&<a href="#scholars"><Search size={21}/><span><strong>{can("scholars.create")?"Find or add scholar":"Find scholar"}</strong><small>Scholar Registry</small></span><ArrowRight size={16}/></a>}
+      {can("requirements.receive")&&<a href="#scholars?task=receive"><FileInput size={21}/><span><strong>Receive documents</strong><small>Record received documents</small></span><ArrowRight size={16}/></a>}
+      {can("requirements.verify")&&<a href="#scholars?task=receive"><ClipboardCheck size={21}/><span><strong>Verify documents</strong><small>Review received evidence</small></span><ArrowRight size={16}/></a>}
+      {paymentAccess?<a href={paymentHref}><Wallet size={21}/><span><strong>Payment Recording</strong><small>Review actual batch outcomes</small></span><ArrowRight size={16}/></a>:can("ovr.prepare")&&<a href="#payouts"><Wallet size={21}/><span><strong>Prepare Payroll</strong><small>Payroll workspace</small></span><ArrowRight size={16}/></a>}
+      <a href="#reports"><ClipboardCheck size={21}/><span><strong>Reports</strong><small>View authorized reports</small></span><ArrowRight size={16}/></a>
+     </nav></section></div>
+    <section className="d1-panel d1-masterlists"><header><div><p className="d1-overline">Current working year</p><h2>Official Masterlists</h2></div>{masterlistAccess&&<a href="#masterlists?scope=current">Open current lists</a>}</header>{officialError?<p role="alert">{officialError}</p>:!masterlistAccess?<p>Current membership is available to authorized Masterlist users.</p>:!official?<p role="status">Reading current lists…</p>:!official.length?<p className="d1-empty">No current official lists in the working year.</p>:<ul>{official.map(m=><li key={m.id}><a href={`#masterlists?scope=current&draft=${m.id}`}><strong>{m.title}</strong><span>{m.count.toLocaleString()} scholars · {m.yearCode}</span></a></li>)}</ul>}</section>
+    <details className="d1-panel d1-detail" open={detailsOpen} onToggle={e=>setDetailsOpen(e.currentTarget.open)}><summary>Detailed document &amp; eligibility assessments</summary><p>Read the existing authoritative report summaries on demand. These checks do not grant admission, publication or payment authority.</p>{detailsOpen&&(detailError?<p role="alert">{detailError}</p>:!currentDetail?<p role="status">Reading complete selected-cycle assessments…</p>:<div className="d1-detail-grid">{currentDetail.cards.map(card=><section key={card.kind}><h3><a href={`#reports?cycleId=${cycleId}&kind=${card.kind}`}>{card.label}</a></h3><p>{card.scope}</p><dl>{Object.entries(card.counts).map(([key,n])=><div key={key}><dt>{readable(key)}</dt><dd>{n.toLocaleString()}</dd></div>)}</dl></section>)}</div>)}</details>
+    <footer className="d1-foot"><p>Annual association is discovery evidence, not admission or payment readiness. Masterlist membership is not Paid.</p>{currentAnnual&&<span>Annual and payroll summaries are fresh reads. Refresh to recheck records.</span>}</footer>
+   </>}
   </>}
  </section>;
 }

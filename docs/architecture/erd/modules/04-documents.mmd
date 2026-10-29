@@ -1,0 +1,167 @@
+%% COR/COG, receiving and requirement evidence; core tables: requirement_definitions, requirement_definition_versions, requirement_checklists, requirement_instances, requirement_receipts, requirement_coverage, requirement_document_evidence, requirement_timing_decisions, requirement_workflow_events, requirement_waivers, entrant_grading_card_reviews, semester_document_reconciliations
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% entrant_grading_card_reviews: Both; BASE TABLE
+  entrant_grading_card_reviews {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_cycle_versions: Both; BASE TABLE
+  payout_cycle_versions {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_cycles: Both; BASE TABLE
+  payout_cycles {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+  }
+  %% payroll_submission_windows: Both; BASE TABLE
+  payroll_submission_windows {
+    char batch_id PK, FK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_checklists: Both; BASE TABLE
+  requirement_checklists {
+    char id PK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char payout_cycle_id FK "nullable; SQL char(36)"
+    char payout_version_id FK "nullable; SQL char(36)"
+    char scholar_semester_id FK "nullable; SQL char(36)"
+  }
+  %% requirement_coverage: Both; BASE TABLE
+  requirement_coverage {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char requirement_instance_id FK "not null; SQL char(36)"
+    char coverage_semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_definition_versions: Both; BASE TABLE
+  requirement_definition_versions {
+    char id PK "not null; SQL char(36)"
+    char definition_id FK "not null; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_definitions: Both; BASE TABLE
+  requirement_definitions {
+    char id PK "not null; SQL char(36)"
+  }
+  %% requirement_document_evidence: Both; BASE TABLE
+  requirement_document_evidence {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char receipt_id FK, UK "nullable; SQL char(36)"
+    char workflow_event_id FK, UK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char entrant_review_id FK "nullable; SQL char(36)"
+  }
+  %% requirement_instances: Both; BASE TABLE
+  requirement_instances {
+    char id PK "not null; SQL char(36)"
+    char checklist_id FK "not null; SQL char(36)"
+    char definition_version_id FK "not null; SQL char(36)"
+  }
+  %% requirement_receipts: Both; BASE TABLE
+  requirement_receipts {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_timing_decisions: Both; BASE TABLE
+  requirement_timing_decisions {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_waivers: Both; BASE TABLE
+  requirement_waivers {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_workflow_events: Both; BASE TABLE
+  requirement_workflow_events {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char correction_of FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_semesters: Both; BASE TABLE
+  scholar_semesters {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char participation_id FK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char scope_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% semester_document_reconciliations: Both; BASE TABLE
+  semester_document_reconciliations {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char legacy_instance_id FK "not null; SQL char(36)"
+    char source_instance_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  requirement_instances ||..o{ entrant_grading_card_reviews : "entrant_grading_card_reviews_ibfk_1"
+  users ||..o{ entrant_grading_card_reviews : "entrant_grading_card_reviews_ibfk_2"
+  scholar_semesters |o..o{ requirement_checklists : "fk_requirement_semester_owner"
+  scholarship_records |o..o{ requirement_checklists : "requirement_checklists_ibfk_1"
+  semesters ||..o{ requirement_checklists : "requirement_checklists_ibfk_2"
+  users ||..o{ requirement_checklists : "requirement_checklists_ibfk_3"
+  payout_cycles |o..o{ requirement_checklists : "requirement_checklists_ibfk_4"
+  payout_cycle_versions |o..o{ requirement_checklists : "requirement_checklists_ibfk_5"
+  scholar_semesters ||..o{ requirement_coverage : "requirement_coverage_ibfk_1"
+  requirement_instances ||..o{ requirement_coverage : "requirement_coverage_ibfk_2"
+  semesters |o..o{ requirement_coverage : "requirement_coverage_ibfk_3"
+  users ||..o{ requirement_coverage : "requirement_coverage_ibfk_4"
+  requirement_definitions ||..o{ requirement_definition_versions : "requirement_definition_versions_ibfk_1"
+  semesters |o..o{ requirement_definition_versions : "requirement_definition_versions_ibfk_2"
+  users ||..o{ requirement_definition_versions : "requirement_definition_versions_ibfk_3"
+  entrant_grading_card_reviews |o..o{ requirement_document_evidence : "fk_document_entrant_review"
+  requirement_instances ||..o{ requirement_document_evidence : "requirement_document_evidence_ibfk_1"
+  requirement_receipts |o..o| requirement_document_evidence : "requirement_document_evidence_ibfk_2"
+  requirement_workflow_events |o..o| requirement_document_evidence : "requirement_document_evidence_ibfk_3"
+  users ||..o{ requirement_document_evidence : "requirement_document_evidence_ibfk_4"
+  requirement_checklists ||..o{ requirement_instances : "requirement_instances_ibfk_1"
+  requirement_definition_versions ||..o{ requirement_instances : "requirement_instances_ibfk_2"
+  requirement_instances ||..o| requirement_receipts : "requirement_receipts_ibfk_1"
+  users ||..o{ requirement_receipts : "requirement_receipts_ibfk_2"
+  requirement_instances ||..o{ requirement_timing_decisions : "requirement_timing_decisions_ibfk_1"
+  payroll_submission_windows ||..o{ requirement_timing_decisions : "requirement_timing_decisions_ibfk_2"
+  users ||..o{ requirement_timing_decisions : "requirement_timing_decisions_ibfk_3"
+  requirement_instances ||..o| requirement_waivers : "requirement_waivers_ibfk_1"
+  users ||..o{ requirement_waivers : "requirement_waivers_ibfk_2"
+  requirement_instances ||..o{ requirement_workflow_events : "requirement_workflow_events_ibfk_1"
+  requirement_workflow_events |o..o{ requirement_workflow_events : "requirement_workflow_events_ibfk_2"
+  users ||..o{ requirement_workflow_events : "requirement_workflow_events_ibfk_3"
+  scholar_semesters ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_1"
+  requirement_instances ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_2"
+  requirement_instances ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_3"
+  users ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_4"

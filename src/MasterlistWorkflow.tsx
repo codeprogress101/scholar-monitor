@@ -1,3 +1,4 @@
+import {retainPriorCommand,masterlistResultUncertain} from "./prior-command";
 import FocusedDialog from "./FocusedDialog";
 import RoutineEvidence from "./RoutineEvidence";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -43,6 +44,7 @@ export default function MasterlistWorkflow({
   disabled,
   validation,
   onChanged,
+  listTitle,
   proposalKind="standalone",
 }: {
   id: string;
@@ -52,6 +54,7 @@ export default function MasterlistWorkflow({
   disabled: boolean;
   validation: DraftValidation;
   onChanged: () => void;
+  listTitle?: string;
   proposalKind?: "standalone" | "addition" | "consolidation";
 }) {
   const [view, setView] = useState<WorkflowView | null>(null),
@@ -92,8 +95,8 @@ export default function MasterlistWorkflow({
       controller.abort();
     };
   }, [id, version, revision]);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function submit(e?: FormEvent) {
+    e?.preventDefault();
     if (!action || !view || busy.current) return;
     const body = {
       expectedVersion: view.version,
@@ -106,6 +109,8 @@ export default function MasterlistWorkflow({
     if (!uncertain && pending.current?.signature !== signature)
       pending.current = { signature, key: crypto.randomUUID(), path, body };
     if (!pending.current) return;
+    const retrying=uncertain;
+    retainPriorCommand(session.user.id,{path:pending.current.path,key:pending.current.key,body:pending.current.body as Record<string,unknown>,route:"masterlists"});
     busy.current = true;
     setSaving(true);
     setError("");
@@ -116,7 +121,7 @@ export default function MasterlistWorkflow({
         csrf: session.csrfToken,
         key: pending.current.key,
       });
-      pending.current = null;
+      retainPriorCommand(session.user.id,null); pending.current = null;
       setUncertain(false);
       setAction(null);
       setNotice("Masterlist workflow command saved.");
@@ -124,7 +129,7 @@ export default function MasterlistWorkflow({
       setRevision((n) => n + 1);
       onChanged();
     } catch (e) {
-      setUncertain(!(e instanceof ApiError) || e.status >= 500);
+      const unknown=masterlistResultUncertain(e,retrying);setUncertain(unknown);if(!unknown)retainPriorCommand(session.user.id,null);
       setError(
         e instanceof ApiError
           ? e.message
@@ -189,7 +194,7 @@ export default function MasterlistWorkflow({
           {view.status === "draft" && !validation.valid && <p className="text-muted">{validation.count === 0 ? "Add a scholar to enable submission." : "Resolve the items marked Needs attention before submitting."}</p>}
           <details className="secondary-details"><summary>Approval steps and permissions</summary><p>Draft → For verification → Submitted for approval → Approved → Published → Locked.</p><p>Staff and Coordinators prepare and review. Coordinator approval and publication remain required. A Coordinator may approve their own prepared submission under the existing policy.</p></details>
           {action && (
-            <FocusedDialog title={action === "publish" && proposalKind === "consolidation" ? "Publish consolidated revision" : labels[action]} busy={saving || uncertain} onClose={()=>setAction(null)}>
+            <FocusedDialog progress={{operation:labels[action],identity:`${listTitle??"Masterlist"} / ${id}`,count:validation.count,pending:saving,uncertain,error,retry:()=>void submit()}} title={action === "publish" && proposalKind === "consolidation" ? "Publish consolidated revision" : labels[action]} busy={saving || uncertain} onClose={()=>setAction(null)}>
             <form onSubmit={submit}>
               <fieldset disabled={disabled || saving || loading || uncertain}>
                 <legend className="visually-hidden">{action === "publish" && proposalKind === "consolidation" ? "Publish consolidated revision" : labels[action]}</legend>

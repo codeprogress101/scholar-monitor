@@ -1,3 +1,5 @@
+import {enrichTextReviews,identityResolutionSchema,matchingIntakes,bindingConflict,appendBinding} from "./intake-binding.js";
+import {validateConfirmedScope} from "./confirmed-scope.js";
 import {resolvePlacementReferences} from "../academic/references.js";
 import { receiptPreview } from "./receipt-preview.js";
 import { createCoursePending } from "../academic/course-pending.js";
@@ -40,6 +42,7 @@ const evidence = {
 async function validate(
   db: PoolConnection,
   rows: ImportRow[],
+  identityPreview = true,
 ): Promise<ImportPreviewRow[]> {
   const preview: ImportPreviewRow[] = [];
   for (const raw of rows) {
@@ -75,7 +78,7 @@ async function validate(
         r.errors.push(`${field}: use an active, unlocked configuration code.`);
         return null;
       }
-      r.references.push({ id: found[0].id, version: found[0].version });
+      r.references.push({ id: found[0].id, version: found[0].version,...(raw.textReviewFormat&&r.identityCandidates?.total?{name:String(found[0].name),code:String(found[0].code)}:{}) });
       return found[0].id as string;
     };
     const yearId = await reference(
@@ -142,7 +145,14 @@ async function validate(
       else {
         r.fields = parsed.data;
         const matches = await checkDuplicates(db, parsed.data);
-        if (matches.total)
+        if(identityPreview&&raw.format==='simple')r.identityCandidates={...matches,candidates:matches.candidates};
+        const resolution=raw.identityResolution;
+        if(resolution){
+          const selected=matches.candidates.find(m=>m.id===resolution.scholarId);
+          if(matches.total>100||!selected||matches.snapshot!==resolution.duplicateSnapshot||selected.version!==resolution.expectedVersion)r.errors.push('Identity match changed or is outside the bounded duplicate review. Review again.');
+          else {r.existingId=selected.id;r.existingVersion=selected.version;r.existingHumanId=selected.scholarId;r.existingName=selected.displayName;}
+        }
+        if (matches.total && !resolution)
           r.warnings.push(
             `Possible existing person: ${matches.candidates.map((m) => `${m.scholarId} (${m.displayName})`).join("; ")}. Resolve in Scholar registry before importing.`,
           );
@@ -158,7 +168,7 @@ async function validate(
         const status = normalizeIntakeStatus(raw.status ?? "");
         if (!["new", "old", "continuing"].includes(status)) r.errors.push("Status: choose New, Continuing or Old.");
         if (!c.yearLevel || c.yearLevel.length > 60 || !/^\P{Cc}*$/u.test(c.yearLevel)) r.errors.push("Year Level: required, up to 60 characters, without control characters.");
-        if (!c.courseCode) r.notices = [...(r.notices ?? []), "Course not recorded — complete later."];
+        if (!c.courseCode) r.notices = [...(r.notices ?? []), "Course not recorded â€” complete later."];
         if (schoolId !== null && yearId && ["new", "old", "continuing"].includes(status)) r.intake = { ...(schoolId === "" ? {schoolName:c.schoolCode}:{}), ...(courseId === "" ? {courseName:c.courseCode}:{}), academicYearId: yearId, schoolId, courseId, yearLevel: normalizeYearLevel(c.yearLevel), classification: status === "new" ? "new" : "continuing" };
       }
       if (raw.format !== "simple" || c.courseCode) try {
@@ -220,11 +230,25 @@ async function validate(
     }
     preview.push(r);
   }
+  const people=[...new Set(preview.flatMap(r=>r.identityCandidates?.candidates.map(m=>m.id)??[]))];
+  const year=preview.find(r=>r.working)?.working?.yearId;
+  const intakes=year?await matchingIntakes(db,people,year):new Map<string,import("../scholars/annual-intake-model.js").AnnualIntake>();
+  const reused=preview.filter(r=>r.identityResolution),reusedIds=reused.map(r=>r.identityResolution!.scholarId);
+  const establishedIds=new Set<string>();
+  if(reusedIds.length){const [records]=await db.execute<RowDataPacket[]>(`SELECT scholar_id FROM academic_records WHERE academic_year_id=? AND scholar_id IN (${reusedIds.map(()=>'?').join(',')}) UNION SELECT scholar_id FROM scholarship_records WHERE academic_year_id=? AND scholar_id IN (${reusedIds.map(()=>'?').join(',')}) UNION SELECT scholar_id FROM participations WHERE scholar_id IN (${reusedIds.map(()=>'?').join(',')})`,[year??null,...reusedIds,year??null,...reusedIds,...reusedIds]);for(const record of records)establishedIds.add(String(record.scholar_id));}
+  for(const r of preview){
+   if(r.identityCandidates)r.identityCandidates.candidates=r.identityCandidates.candidates.map(m=>({...m,...(intakes.has(m.id)?{intake:intakes.get(m.id)}:{})}));
+   if(!r.identityResolution)continue;
+   const conflict=bindingConflict(r,intakes.get(r.identityResolution.scholarId));if(conflict)r.errors.push(conflict);
+   if(establishedIds.has(r.identityResolution.scholarId))r.errors.push('Existing academic, scholarship annual or participation evidence requires its controlled workflow. A2.1 supports registration-only reuse.');
+   if(reusedIds.filter(id=>id===r.identityResolution!.scholarId).length!==1)r.errors.push('An existing person may be matched only once in this workbook.');
+  }
+  await enrichTextReviews(db,preview,intakes);
   for (let i = 0; i < preview.length; i++)
     for (let j = i + 1; j < preview.length; j++) {
       const a = preview[i],
         b = preview[j];
-      if (a.fields && b.fields && duplicateEvidence(a.fields, b.fields)) {
+      if (a.fields && b.fields && duplicateEvidence(a.fields, b.fields) && !(a.identityResolution&&b.identityResolution&&a.existingId&&b.existingId&&a.existingId!==b.existingId&&!a.errors.length&&!b.errors.length)) {
         a.warnings.push(`Possible duplicate person in row ${b.row}.`);
         b.warnings.push(`Possible duplicate person in row ${a.row}.`);
       }
@@ -254,6 +278,7 @@ export class ImportService {
     const key = parseKey(rawKey);
     const parsed = z
       .object({
+        identityResolutions: z.array(identityResolutionSchema).max(MAX_IMPORT_ROWS).optional(),
         receipts: z.object({periodId:z.uuid(),cor:z.boolean(),cog:z.boolean(),receivedOn:z.iso.date().refine(d=>d>="1900-01-01"&&d<=today()).optional()}).strict().refine(v=>v.cor||v.cog).optional(),
         approvedSelection: z.object({ reference: z.string().trim().min(3).max(200).regex(/^\P{Cc}+$/u), effectiveOn: z.iso.date().refine(d => d >= "1900-01-01" && d <= today(), "Use a valid non-future approval date.") }).strict().optional(),
         mappings: z.array(z.object({ kind: z.enum(["schools", "courses"]), supplied: z.string().trim().min(1).max(1000), id: z.uuid() }).strict()).max(MAX_IMPORT_ROWS * 2).default([]),
@@ -286,7 +311,7 @@ export class ImportService {
       async () => {},
     );
     const buffer = Buffer.from(parsed.data.base64, "base64"),
-      fileHash = digest(JSON.stringify({ base64: buffer.toString("base64"), mappings: parsed.data.mappings, ...(parsed.data.receipts ? {receipts:parsed.data.receipts}:{}), ...(parsed.data.approvedSelection ? { approvedSelection: parsed.data.approvedSelection } : {}) }));
+      fileHash = digest(JSON.stringify({ base64: buffer.toString("base64"), mappings: parsed.data.mappings, ...(parsed.data.identityResolutions?.length ? {identityResolutions:[...parsed.data.identityResolutions].sort((a,b)=>a.row-b.row)}:{}), ...(parsed.data.receipts ? {receipts:parsed.data.receipts}:{}), ...(parsed.data.approvedSelection ? { approvedSelection: parsed.data.approvedSelection } : {}) }));
     const rows = await parseWorkbook(buffer);
     return this.authorization.withPermission(
       actor,
@@ -318,10 +343,15 @@ export class ImportService {
           const working = await workingYear(db);
           if (!working) throw new AuthError(409, "WORKING_YEAR_REQUIRED", "Set the working academic year before importing scholars.");
           const [years] = await db.execute<RowDataPacket[]>("SELECT code FROM academic_years WHERE id=?", [working.yearId]);
-          for (const row of rows) { row.working = { ...working, code: years[0].code }; row.cells.academicYearCode = years[0].code; row.mappings = parsed.data.mappings; }
+          for (const row of rows) { row.textReviewFormat='intake-match/v2'; row.working = { ...working, code: years[0].code }; row.cells.academicYearCode = years[0].code; row.mappings = parsed.data.mappings; }
         }
         if (parsed.data.approvedSelection) for (const row of rows) row.approvedSelection = parsed.data.approvedSelection;
         if (parsed.data.receipts) for (const row of rows) row.receipts=parsed.data.receipts;
+        if(parsed.data.identityResolutions?.length){
+          const resolutions=parsed.data.identityResolutions;
+          if(!parsed.data.approvedSelection||new Set(resolutions.map(r=>r.row)).size!==resolutions.length||new Set(resolutions.map(r=>r.scholarId)).size!==resolutions.length||resolutions.some(r=>!rows.some(x=>x.row===r.row&&x.format==='simple')))throw new AuthError(422,'INVALID_IDENTITY_RESOLUTIONS','Use one reviewed existing person per actual row of an approved simple workbook.');
+          for(const row of rows){const resolution=resolutions.find(r=>r.row===row.row);if(resolution)row.identityResolution=resolution;}
+        }
         const preview = await validate(db, rows),
           hash = digest(JSON.stringify(preview)),
           id = randomUUID();
@@ -470,6 +500,7 @@ export class ImportService {
         const fresh = await validate(
           db,
           decodeImportRows<ImportRow>(raw[0].raw_rows as string),
+          staged.rows.some(r=>r.identityCandidates!==undefined||r.identityResolution!==undefined),
         );
         if (!ready(fresh) || digest(JSON.stringify(fresh)) !== staged.hash)
           throw new AuthError(
@@ -495,11 +526,11 @@ export class ImportService {
         const scholars = new ScholarService({...scoped, readSnapshot: (user,permission,run) => scoped.withPermission(user,permission ?? "scholars.read",run)}),
           academic = new AcademicService(scoped),
           qualification = new QualificationService(scoped, approved ? id : undefined),
-          result: ImportResult = { items: [] };
+          result: ImportResult = { ...(fresh.some(r=>r.identityResolution)?{format:(fresh.some(r=>r.identityResolution&&"format" in r.identityResolution)?"bound-import/v2":"bound-import/v1") as "bound-import/v1"|"bound-import/v2"}:{}), items: [] };
         const continuing: { scholarId: string; version: number; sourceRow: number; originalName: string }[] = [];
         for (const row of fresh) {
           const person = row.existingId
-            ? { id: row.existingId, scholarId: row.cells.scholarId }
+            ? { id: row.existingId, scholarId: row.existingHumanId??row.cells.scholarId }
             : await scholars.write(
                 actor,
                 undefined,
@@ -511,6 +542,7 @@ export class ImportService {
                 },
                 requestId,
               );
+          let source:NonNullable<ImportResult["items"][number]["source"]>|undefined;
           let record = row.academic
             ? await academic.create(
                 actor,
@@ -528,7 +560,12 @@ export class ImportService {
             const intake = row.intake;
             const resolved = await resolvePlacementReferences(db,{...intake,courseId:intake.courseId ?? ""},actor,requestId);
             intake.schoolId=resolved.schoolId; intake.courseId=resolved.courseId || null;
-            await db.execute("INSERT INTO scholar_intakes(id,scholar_id,academic_year_id,school_id,course_id,year_level,classification,supplied_details,import_job_id,source_row,actor_id,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))", [randomUUID(), person.id, intake.academicYearId, intake.schoolId, intake.courseId, intake.yearLevel, intake.classification, JSON.stringify(row.cells), id, row.row, actor]);
+            if(row.identityResolution)source=await appendBinding(db,id,row,actor);
+            else {
+            const intakeId=randomUUID();
+            await db.execute("INSERT INTO scholar_intakes(id,scholar_id,academic_year_id,school_id,course_id,year_level,classification,supplied_details,import_job_id,source_row,actor_id,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))", [intakeId, person.id, intake.academicYearId, intake.schoolId, intake.courseId, intake.yearLevel, intake.classification, JSON.stringify(row.cells), id, row.row, actor]);
+            source={kind:"import-root",intakeId};
+            }
             if(row.coursePending && approved) {
               record=await createCoursePending(db,actor,requestId,{scholarId:person.id,academicYearId:intake.academicYearId,schoolId:intake.schoolId,yearLevel:intake.yearLevel,importId:id,sourceRow:row.row,reference:approved.reference,effectiveOn:approved.effectiveOn});
               result.coursePendingCount=(result.coursePendingCount??0)+1;
@@ -540,13 +577,14 @@ export class ImportService {
               await qualification.command(actor, annual.id, "select", randomUUID(), { expectedVersion: qualified.version, ...selectionEvidence }, requestId);
               result.selectedCount = (result.selectedCount ?? 0) + 1;
             } else if (intake.classification === "new") await qualification.command(actor, person.id, "create", randomUUID(), { expectedVersion: 0, academicYearId: intake.academicYearId, effectiveOn: today(), ...evidence }, requestId);
-            if (intake.classification === "continuing") continuing.push({ scholarId: person.id, version: 1, sourceRow: row.row, originalName: `${row.cells.lastName}, ${row.cells.firstName}` });
+            if (intake.classification === "continuing") continuing.push({ scholarId: person.id, version: row.existingVersion??1, sourceRow: row.row, originalName: `${row.cells.lastName}, ${row.cells.firstName}` });
           }
           result.items.push({
             row: row.row,
             id: person.id,
             scholarId: person.scholarId,
             ...(record ? { academicRecordId: record.id } : {}),
+            ...(result.format&&source?{source}:{}),
           });
         }
         if (continuing.length) {
@@ -574,6 +612,7 @@ export class ImportService {
             }
           }
         }
+        await validateConfirmedScope(db,id,staged.rows,result);
         await db.execute(
           "INSERT INTO import_confirmations(job_id,actor_id,command_id,result,confirmed_at) VALUES(?,?,?,?,UTC_TIMESTAMP(6))",
           [id, actor, key, JSON.stringify(result)],
@@ -581,6 +620,7 @@ export class ImportService {
         await this.audit(db, actor, id, "confirm", requestId, {
           rows: result.items.length,
           previewHash: staged.hash,
+          created:result.items.filter(i=>i.source?.kind!=="manual-binding").map(i=>({row:i.row,id:i.id,source:i.source})),reused:result.items.filter(i=>i.source?.kind==="manual-binding").map(i=>({row:i.row,id:i.id,source:i.source})),
         });
         return result;
       },

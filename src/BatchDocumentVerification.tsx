@@ -84,7 +84,7 @@ export default function BatchDocumentVerification({ session, semesters, initialS
     if (mode === "placement" && d.historicalPlacement) return "Confirm against the held COG";
     return d.outcome === "ready" ? "Ready for verification" : d.outcome === "current" ? "Verified against current records" : d.outcome === "not_required" ? "Approved entrant exception - COG not required" : d.issue?.message ?? "Review required";
   }
-  return <FocusedDialog className="batch-document-dialog" title={mode === "placement" ? "Review historical COG placement" : "Verify batch documents"} busy={locked} onClose={onClose}>
+  return <FocusedDialog progress={{operation:mode==="placement"?"Saving reviewed placements":"Verifying selected documents",identity:`${imports.find(i=>i.id===importId)?.fileName??"Import"} / ${importId}`,count:restored?.body.items.length??chosen.length,unit:"documents",pending:saving,uncertain,error,retry:()=>void submit(true)}} className="batch-document-dialog" title={mode === "placement" ? "Review historical COG placement" : "Verify batch documents"} busy={locked} onClose={onClose}>
     <p>Use the papers already held. Receipt dates stay unchanged; verification records a separate decision for each selected document.</p>
     {error && <p role="alert" className="alert alert-danger">{error}</p>}
     {notice && <p role="status" className="alert alert-info">{notice}</p>}

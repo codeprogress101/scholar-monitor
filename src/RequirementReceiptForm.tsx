@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useActionForm } from "./use-action-form";
 import { useRef, useState, type FormEvent } from "react";
 import RoutineEvidence from "./RoutineEvidence";
@@ -189,9 +190,9 @@ export default function RequirementReceiptForm({
               />
             </label></RoutineEvidence>
             <div className="d-flex gap-2 flex-wrap">
-              <button className="btn configuration-primary">
+              <ActionButton pending={saving} className="btn configuration-primary">
                 {saving ? "Recording..." : "Record physical receipt"}
-              </button>
+              </ActionButton>
               <button
                 className="btn btn-outline-secondary"
                 type="button"

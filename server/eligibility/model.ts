@@ -8,8 +8,10 @@ export type EligibilityReason = {
   code: string;
   message: string;
   requirementCode?: string;
+  details?: string[];
 };
 export type EligibilitySources = {
+  omission?: import('../payments/omission-source.js').OmissionSource & {reviewingOwn:boolean};
   archivedGraduate?: boolean;
   finalSemesterGraduation?: { requestId: string; semesterId: string };
   reservedSemester?: boolean;

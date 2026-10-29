@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { emptyFindings, type AcademicFindings } from "../server/continuing/compliance-engine";
 import type { SemesterComplianceView } from "../server/continuing/semester-compliance";
@@ -100,7 +101,7 @@ export default function SemesterCompliance({ scholarId, semesterId, session, can
           </div>
           {data.allocated || data.ended ? <label className="form-label d-block">Reason for this controlled review<input className="form-control" required minLength={5} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></label> : canCorrect && data.history.length > 0 && <details className="my-2"><summary>Correct a recorded finding</summary><label className="form-label d-block">Correction reason (only when changing findings against the same document)<input className="form-control" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></label><p>INC resolution requires corrected, verified COG evidence. Failed or dropped findings remain for formal authorized review.</p></details>}
           <label className="d-block my-2"><input type="checkbox" required checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> {data.ended ? "I reviewed the verified documents. This academic-only review does not authorize late payment." : "I reviewed these findings against the documents shown for this semester."}</label>
-          <button className="btn configuration-primary">{busy ? "Saving..." : data.ended ? "Save academic-only review" : "Save academic review"}</button>
+          <ActionButton pending={busy} className="btn configuration-primary">{busy ? "Saving..." : data.ended ? "Save academic-only review" : "Save academic review"}</ActionButton>
         </fieldset></form>
       </details>}
       <details className="mt-3"><summary>Academic review history ({data.history.length})</summary>{data.history.map((r) => <article className="border-top py-2" key={r.id}>

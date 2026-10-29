@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { SemesterAcademicView } from "../server/continuing/semester-academic";
 import { configurationRequest as request } from "./configuration-api";
@@ -53,7 +54,7 @@ export default function SemesterAcademicDetails({ scholarId, semesterId, session
           <label className="form-label d-block">Program category<select className="form-select" value={category} disabled={data.category !== "unknown"} onChange={(e) => setCategory(e.target.value as SemesterAcademicView["category"])}>
             {Object.entries(categories).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></label>
-          <button className="btn configuration-primary" disabled={category === "unknown"}>{busy ? "Saving..." : "Save semester details"}</button>
+          <ActionButton pending={busy} className="btn configuration-primary" disabled={category === "unknown"}>{busy ? "Saving..." : "Save semester details"}</ActionButton>
         </fieldset>
       </form>)}
       <p className="mt-2">Recording these details does not verify enrollment, grades or payout eligibility.</p>

@@ -4,7 +4,7 @@ export function registerPaymentCorrections(
   app: FastifyInstance,
   service: PaymentCorrectionService,
 ) {
-  for (const action of ["correct", "request", "approve", "reject"] as const)
+  for (const action of ["correct", "request", "approve", "reject", "date-only"] as const)
     app.post<{ Params: { id: string } }>(
       `/api/v1/ovr-batches/:id/payment-corrections/${action}`,
       {
@@ -16,14 +16,16 @@ export function registerPaymentCorrections(
               : "payments.correct",
         },
       },
-      (r) =>
-        service.command(
+      async (r) => {
+        const result=await service.command(
           r.authSession!.user.id,
           r.params.id,
           action,
           r.headers["idempotency-key"],
           r.body,
           r.id,
-        ),
+        );
+        return action==="date-only"?{batchId:result.id,revision:result.revision}:result;
+      },
     );
 }

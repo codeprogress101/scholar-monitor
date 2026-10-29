@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import PlacementPolicyReview from "./PlacementPolicyReview";
 import PlacementInput, {placementValue} from "./PlacementInput";
 import ScholarOfficialChange from "./ScholarOfficialChange";
@@ -367,13 +368,13 @@ export default function AcademicChanges({
               ))}
             </div>
             <div className="d-flex gap-2 mt-3">
-              <button className="btn configuration-primary" type="submit">
+              <ActionButton pending={busy} className="btn configuration-primary" type="submit">
                 {busy
                   ? "Saving..."
                   : form.action === "request"
                     ? "Submit change request"
                     : "Save decision"}
-              </button>
+              </ActionButton>
               <button
                 className="btn btn-outline-secondary"
                 type="button"

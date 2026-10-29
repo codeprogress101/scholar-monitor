@@ -43,10 +43,10 @@ export async function paymentCorrections(
       return true;
     });
 }
-export function effectivePayments(
-  original: PaymentRecord[],
-  corrections: PaymentCorrection[],
-): PaymentRecord[] {
+export function effectivePayments<T extends {id:string}>(
+  original: T[],
+  corrections: readonly {paymentId:string;revision:number;after?:T}[],
+): T[] {
   return original.map((p) => {
     const latest = corrections
       .filter((c) => c.paymentId === p.id && c.after)

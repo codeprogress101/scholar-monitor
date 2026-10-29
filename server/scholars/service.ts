@@ -1,4 +1,7 @@
+import {registryYearAssociation} from "./registry-year.js";
+import {schoolId as placementSchoolId,courseId as placementCourseId} from "./registry-placement.js";
 import { registryEligibility } from "./registry-eligibility.js";
+import {intakeColumns,projectedIntake} from "./annual-intake-source.js";
 import { placementJoinsForYear, placementJoins, placementColumns, registryPlacement, school, yearLevelSort, classification } from "./registry-placement.js";
 import { checkDuplicates } from "./duplicates.js";
 import { graduationFor, graduationRecords } from "../status/graduation.js";
@@ -27,6 +30,7 @@ const joins =
   "FROM scholars s JOIN scholar_identifiers i ON i.scholar_id=s.id JOIN academic_years y ON y.id=s.academic_year_id LEFT JOIN barangays b ON b.id=s.barangay_id";
 function summary(row: RowDataPacket): ScholarSummary {
   return {
+    annualIntake: projectedIntake(row),
     placement: registryPlacement(row),
     id: row.id,
     scholarId: row.human_id,
@@ -51,7 +55,7 @@ export async function detail(
   contextYear?: string,
 ): Promise<ScholarDetail> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${summaryColumns},${placementColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} ${placementJoinsForYear(contextYear)} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? LOCK IN SHARE MODE`,
+    `SELECT ${summaryColumns},${placementColumns},${intakeColumns},s.version,DATE_FORMAT(s.birth_date,'%Y-%m-%d') AS birth_date,y.archived_at,y.locked_at,c.email,c.phone,c.address_line ${joins} ${placementJoinsForYear(contextYear)} JOIN scholar_contacts c ON c.scholar_id=s.id WHERE s.id=? LOCK IN SHARE MODE`,
     [...(contextYear ? [contextYear] : []), id],
   );
   const row = rows[0];
@@ -152,9 +156,10 @@ export class ScholarService {
         const scopeFilter = query.scope === "all" ? "" : ids.length ? ` AND s.id ${query.scope === "current" ? "NOT " : ""}IN (${ids.map(() => "?").join(",")})` : query.scope === "graduated" ? " AND 1=0" : "";
         const search =
           "%" + query.q.replace(/[!%_]/g, (value) => "!" + value) + "%";
-        const contextYear = query.contextAcademicYearId ?? query.scholarshipYearId;
+        const contextYear = query.contextAcademicYearId ?? query.registryYearId ?? query.associatedYearId ?? query.scholarshipYearId;
         const selectedPlacementJoins = placementJoinsForYear(contextYear);
-        const where = `(i.human_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',s.first_name,NULLIF(s.middle_name,''),s.last_name,NULLIF(s.suffix,'')) LIKE ? ESCAPE '!' OR CONCAT(s.last_name,', ',s.first_name) LIKE ? ESCAPE '!')${query.academicYearId ? " AND s.academic_year_id=?" : ""}${query.scholarshipYearId ? " AND EXISTS(SELECT 1 FROM scholarship_records sy WHERE sy.scholar_id=s.id AND sy.academic_year_id=?)" : ""}${query.classification === "all" ? "" : query.classification === "unknown" ? ` AND (${classification}) IS NULL` : ` AND (${classification})=?`}`;
+        const association=query.associatedYearId?" AND (s.academic_year_id=? OR EXISTS(SELECT 1 FROM scholar_intakes iy WHERE iy.scholar_id=s.id AND iy.academic_year_id=?) OR EXISTS(SELECT 1 FROM scholarship_records ry WHERE ry.scholar_id=s.id AND ry.academic_year_id=?))":"";
+        const where = `(i.human_id LIKE ? ESCAPE '!' OR CONCAT_WS(' ',s.first_name,NULLIF(s.middle_name,''),s.last_name,NULLIF(s.suffix,'')) LIKE ? ESCAPE '!' OR CONCAT(s.last_name,', ',s.first_name) LIKE ? ESCAPE '!')${query.academicYearId ? " AND s.academic_year_id=?" : ""}${query.scholarshipYearId ? " AND EXISTS(SELECT 1 FROM scholarship_records sy WHERE sy.scholar_id=s.id AND sy.academic_year_id=?)" : ""}${association}${query.registryYearId?registryYearAssociation:""}${query.schoolId?` AND (${placementSchoolId})=?`:""}${query.courseId?` AND (${placementCourseId})=?`:""}${query.classification === "all" ? "" : query.classification === "unknown" ? ` AND (${classification}) IS NULL` : ` AND (${classification})=?`}`;
         const params = [
           ...(contextYear ? [contextYear] : []),
           search,
@@ -162,6 +167,9 @@ export class ScholarService {
           search,
           ...(query.academicYearId ? [query.academicYearId] : []),
           ...(query.scholarshipYearId ? [query.scholarshipYearId] : []),
+          ...(query.associatedYearId ? [query.associatedYearId,query.associatedYearId,query.associatedYearId] : []),
+          ...(query.registryYearId ? Array(4).fill(query.registryYearId) as string[] : []),
+          ...(query.schoolId ? [query.schoolId] : []),...(query.courseId ? [query.courseId] : []),
           ...(["new", "continuing"].includes(query.classification) ? [query.classification] : []),
         ];
         const [count] = await db.execute<RowDataPacket[]>(
@@ -171,7 +179,7 @@ export class ScholarService {
         const sort = { name: "s.last_name", scholarId: "i.human_id", school, yearLevel: yearLevelSort, classification }[query.sort];
         const direction = query.direction === "desc" ? "DESC" : "ASC";
         const [rows] = await db.execute<RowDataPacket[]>(
-          `SELECT ${summaryColumns},${placementColumns} ${joins} ${selectedPlacementJoins} WHERE ${where}${scopeFilter} ORDER BY (${sort} IS NULL) ASC,${sort} ${direction},s.last_name ${direction},s.first_name ${direction},s.id ASC LIMIT ? OFFSET ?`,
+          `SELECT ${summaryColumns},${placementColumns},${intakeColumns} ${joins} ${selectedPlacementJoins} WHERE ${where}${scopeFilter} ORDER BY (${sort} IS NULL) ASC,${sort} ${direction},s.last_name ${direction},s.first_name ${direction},s.id ASC LIMIT ? OFFSET ?`,
           [...params, ...(query.scope !== "all" ? ids : []), query.limit, query.offset],
         );
         return {

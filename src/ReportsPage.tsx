@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
 import type { Access } from "../server/authorization/policy";
@@ -6,10 +6,15 @@ import type { PayoutCycle } from "../server/payouts/model";
 import {
   REPORTS,
   type ReportKind,
-  type OperationalReport,
+  type ReportPage,
+  type ReportSummary,
 } from "../server/reports/model";
 
 export default function ReportsPage() {
+  const reportHeading = useRef<HTMLHeadingElement>(null);
+  const focusPage = useRef(false);
+  const [accessReload, setAccessReload] = useState(0);
+  const [accessError, setAccessError] = useState(false);
   const [permissions, setPermissions] = useState<string[] | null>(null);
   const [cycles, setCycles] = useState<PayoutCycle[]>([]);
   const [cycleId, setCycleId] = useState(
@@ -18,10 +23,15 @@ export default function ReportsPage() {
       "",
   );
   const [kind, setKind] = useState<ReportKind>("scholars");
+  const [limit, setLimit] = useState(25);
   const [offset, setOffset] = useState(0),
     [reload, setReload] = useState(0);
-  const [data, setData] = useState<OperationalReport | null>(null);
+  const [data, setData] = useState<ReportPage | null>(null);
   const [error, setError] = useState("");
+  const [summary, setSummary] = useState<ReportSummary | null>(null);
+  const [summaryRequest, setSummaryRequest] = useState(0);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
   const failure = (e: unknown) =>
     e instanceof ApiError ? e.message : "Could not load reports. Please retry.";
   useEffect(() => {
@@ -59,23 +69,26 @@ export default function ReportsPage() {
         const open = all.filter(
           (c) => c.state === "open" && !c.periodUnavailable,
         );
-        if (open.length === 1) setCycleId((current) => current || open[0].id);
+        setCycleId(current => {
+          if (current) return all.some(c => c.id === current) ? current : "";
+          return open.length === 1 ? open[0].id : "";
+        });
       }
     })().catch((e) => {
-      if (active) setError(failure(e));
+      if (active) { setAccessError(true); setError(failure(e)); }
     });
     return () => {
       active = false;
       controller.abort();
     };
-  }, []);
+  }, [accessReload]);
   useEffect(() => {
-    if (!cycleId) return;
+    if (!cycleId || !cycles.some(c => c.id === cycleId) || !permissions?.includes(REPORTS[kind].permission)) return;
     const controller = new AbortController();
     let active = true;
     const timer = window.setTimeout(() => controller.abort(), 60000);
-    request<OperationalReport>(
-      `reports/operational?kind=${kind}&cycleId=${cycleId}&offset=${offset}&limit=25`,
+    request<ReportPage>(
+      `reports/operational/page?kind=${kind}&cycleId=${cycleId}&offset=${offset}&limit=${limit}`,
       { signal: controller.signal },
     )
       .then((r) => {
@@ -90,11 +103,26 @@ export default function ReportsPage() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [cycleId, kind, offset, reload]);
+  }, [cycleId, kind, offset, limit, reload, cycles, permissions]);
+  useEffect(() => {
+    if (!summaryRequest || !cycleId || !permissions?.includes(REPORTS[kind].permission)) return;
+    const controller = new AbortController();
+    let active = true;
+    const timer = window.setTimeout(() => controller.abort(), 60000);
+    request<ReportSummary>(`reports/operational/summary?kind=${kind}&cycleId=${cycleId}`, { signal: controller.signal })
+      .then(r => { if (active) setSummary(r); })
+      .catch(e => { if (active) setSummaryError(failure(e)); })
+      .finally(() => { window.clearTimeout(timer); if (active) setSummaryLoading(false); });
+    return () => { active = false; controller.abort(); window.clearTimeout(timer); };
+  }, [summaryRequest, cycleId, kind, permissions]);
+  useEffect(() => { if (data && focusPage.current) { focusPage.current = false; reportHeading.current?.focus(); } }, [data]);
+  const clearSummary = () => { setSummary(null); setSummaryRequest(0); setSummaryError(""); setSummaryLoading(false); };
   const reset = () => {
+    focusPage.current = false;
     setData(null);
     setError("");
     setOffset(0);
+    clearSummary();
   };
   useEffect(() => {
     if (!cycleId || !cycles.some(c => c.id === cycleId) || !permissions?.includes(REPORTS[kind].permission)) return;
@@ -113,11 +141,11 @@ export default function ReportsPage() {
       </header>
       {error && (
         <p className="alert alert-danger" role="alert">
-          {error}
+          {error} <button className="btn btn-outline-secondary" onClick={() => { setError(""); if (accessError) { setAccessError(false); setAccessReload(n => n + 1); } else setReload(n => n + 1); }}>Retry report</button>
         </p>
       )}
       {permissions === null ? (
-        <p>Loading access...</p>
+        !error && <p role="status">Loading access...</p>
       ) : !allowed.length ? (
         <p className="alert alert-info">
           Operational reports require scholarship access. Your account manages
@@ -191,7 +219,7 @@ export default function ReportsPage() {
             !error && <p role="status">Preparing report...</p>
           ) : (
             <article className="card p-3">
-              <h2>
+              <h2 ref={reportHeading} tabIndex={-1}>
                 {REPORTS[data.kind].label} — {data.cycle.code}
               </h2>
               <p>{data.scope}</p>
@@ -199,6 +227,11 @@ export default function ReportsPage() {
                 <strong>{data.total} rows</strong> · Generated{" "}
                 {new Date(data.generatedAt).toLocaleString()}
               </p>
+              <label className="form-label" htmlFor="report-limit">Rows per page</label>
+              <select id="report-limit" className="form-select mb-3" style={{ maxWidth: 140 }} value={limit} onChange={e => { reset(); focusPage.current = true; setLimit(Number(e.target.value)); }}>
+                {[25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <p>{data.countsScope === "page" ? "Status counts below cover this page. Load the whole-report summary when needed." : "Status counts cover the whole report."}</p>
               <div
                 className="d-flex flex-wrap gap-2 mb-3"
                 aria-label="Report counts"
@@ -209,8 +242,17 @@ export default function ReportsPage() {
                   </span>
                 ))}
               </div>
-              {!data.total ? (
-                <p>No matching records in this scope.</p>
+              {data.countsScope === "page" && <div className="mb-3">
+                <button className="btn btn-outline-secondary" disabled={summaryLoading} onClick={() => { setSummaryError(""); setSummaryLoading(true); setSummaryRequest(n => n + 1); }}>Load whole-report summary</button>
+                {summaryLoading && <p role="status">Calculating whole-report summary...</p>}
+                {summaryError && <p role="alert">{summaryError}</p>}
+                {summary && <div aria-label="Whole-report summary"><p>{summary.total} rows. Separate snapshot at {new Date(summary.generatedAt).toLocaleString()}; records may change between reads.</p>
+                  {Object.entries(summary.counts).map(([label, count]) => <span className="badge text-bg-light border me-2" key={label}>{label.replaceAll("_", " ")}: {count}</span>)}
+                  <p className="text-break">Summary fingerprint (aggregate evidence): {summary.sourceHash}</p>
+                </div>}
+              </div>}
+              {!data.items.length ? (
+                <p>{data.total ? "This page has no rows in the current scope. Use Previous or Refresh." : "No matching records in this scope."}</p>
               ) : (
                 <div className="table-responsive">
                   <table className="table" style={{ minWidth: 720 }}>
@@ -249,25 +291,30 @@ export default function ReportsPage() {
                   </table>
                 </div>
               )}
+              <p>Page {Math.floor(data.offset / data.limit) + 1} of {Math.max(1, Math.ceil(data.total / data.limit))}</p>
               <div className="d-flex gap-2">
                 <button
                   className="btn btn-outline-secondary"
                   disabled={!offset}
                   onClick={() => {
+                    focusPage.current = true;
                     setData(null);
                     setError("");
-                    setOffset((n) => Math.max(0, n - 25));
+                    clearSummary();
+                    setOffset((n) => Math.max(0, n - limit));
                   }}
                 >
                   Previous
                 </button>
                 <button
                   className="btn btn-outline-secondary"
-                  disabled={offset + 25 >= data.total}
+                  disabled={offset + limit >= data.total}
                   onClick={() => {
+                    focusPage.current = true;
                     setData(null);
                     setError("");
-                    setOffset((n) => n + 25);
+                    clearSummary();
+                    setOffset((n) => n + limit);
                   }}
                 >
                   Next
@@ -276,11 +323,11 @@ export default function ReportsPage() {
               <details className="mt-3">
                 <summary>Report details</summary>
                 <p className="text-break">
-                  Cycle revision {data.cycle.version}. Content fingerprint:{" "}
+                  Cycle revision {data.cycle.version}. {data.sourceHashBasis === "report-page-v1" ? "Page fingerprint:" : "Content fingerprint:"}{" "}
                   {data.sourceHash}. Refreshing reads current records; this is
                   not an archived report.
                 </p>
-                <p>Counts cover the whole report, not just this page.</p>
+                <p>{data.countsScope === "page" ? "Only this page was evaluated. The optional whole-report summary is a separate current read." : "Counts cover the whole report, not just this page."}</p>
               </details>
             </article>
           )}

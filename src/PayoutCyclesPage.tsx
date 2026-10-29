@@ -10,7 +10,7 @@ import RoutineEvidence from "./RoutineEvidence";
 import OvrDrafts from "./OvrDrafts";
 import { payrollSelection, rememberPayroll } from "./payroll-navigation";
 import EligibilityReport from "./EligibilityReport";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "./auth-api";
 import { ApiError } from "./auth-api";
 import type { Access } from "../server/authorization/policy";
@@ -18,6 +18,7 @@ import type { ConfigRecord, ConfigList } from "../server/configuration/model";
 import type { RequirementVersion } from "../server/requirements/model";
 import type { PayoutCycle } from "../server/payouts/model";
 import { configurationRequest as request } from "./configuration-api";
+const FinancialReports = lazy(() => import("./FinancialReports"));
 const message = (e: unknown) =>
   e instanceof ApiError
     ? e.message
@@ -48,10 +49,13 @@ async function allPayoutCycles(signal: AbortSignal) {
   }
 }
 export default function PayoutCyclesPage({ session }: { session: Session }) {
+  const [workspaceView, setWorkspaceView] = useState(() => new URLSearchParams(window.location.hash.split("?")[1]).get("view"));
   const [scope, setScope] = useState<PayrollPeriodScope>("current");
   const [ovrCycle, updateOvrCycle] = useState<string | null>(() => payrollSelection("cycle"));
-  const setOvrCycle = (id: string | null) => { rememberPayroll(id); updateOvrCycle(id); };
+  const setOvrCycle = (id: string | null) => { if(pendingPrior(session.user.id))return;rememberPayroll(id); updateOvrCycle(id); };
   const [reportCycle, setReportCycle] = useState<string | null>(() => new URLSearchParams(window.location.hash.split("?")[1]).get("view") === "eligibility" ? payrollSelection("cycle") : null);
+  const [draftPage,setDraftPage]=useState(false);
+  const [readFailure,setReadFailure]=useState<string|ApiError>("");
   const [data, setData] = useState<{ items: PayoutCycle[]; total: number }>({
       items: [],
       total: 0,
@@ -78,12 +82,12 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null),
     panel = useRef<HTMLFormElement>(null);
-  const [recovery,setRecovery]=useState(()=>{const c=pendingPrior(session.user.id);return c?.route==="payouts"&&!c.path.endsWith("historical-setup")?c.path:null;});
+  const [recovery,setRecovery]=useState(()=>{const c=pendingPrior(session.user.id);return c?.route==="payouts"&&!c.path.endsWith("historical-setup")&&!c.path.endsWith('historical-append')?c.path:null;});
   useEffect(() => {
-    const followLink = () => {updateOvrCycle(payrollSelection("cycle"));setReportCycle(new URLSearchParams(window.location.hash.split("?")[1]).get("view") === "eligibility" ? payrollSelection("cycle") : null);};
+    const followLink = () => {if(pendingPrior(session.user.id))return;const view=new URLSearchParams(window.location.hash.split("?")[1]).get("view");setWorkspaceView(view);updateOvrCycle(payrollSelection("cycle"));setReportCycle(view === "eligibility" ? payrollSelection("cycle") : null);};
     window.addEventListener("hashchange",followLink);
     return () => window.removeEventListener("hashchange",followLink);
-  },[]);
+  },[session.user.id]);
   const manage = permissions.includes("configuration.manage"),
     operate = permissions.includes("payouts.operate");
   useEffect(() => {
@@ -97,13 +101,14 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
     ])
       .then(([access, list, refs]) => {
         if (active) {
+          setReadFailure("");
           setPermissions(access.permissions.map((p) => p.code));
           setData(list);
           setParents(refs);
         }
       })
       .catch((e) => {
-        if (active) setError(message(e));
+        if (active) setReadFailure(e instanceof ApiError?e:"Payroll periods could not be loaded. Retry the connection; no command was submitted.");
       })
       .finally(() => {
         window.clearTimeout(timeout);
@@ -122,6 +127,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
     }
   }, [editor]);
   function refresh() {
+    if(pendingPrior(session.user.id))return;
     setLoading(true);
     setEditor(null);
     setHistory(null);
@@ -261,38 +267,22 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
   const pageOffset = Math.min(offset, Math.max(0, Math.ceil(periods.length / 25) - 1) * 25);
   const shown = ovrCycle ? data.items.filter(c => c.id === ovrCycle) : periods.slice(pageOffset, pageOffset + 25);
   const scopeLabels: Record<PayrollPeriodScope, string> = { current: "Current periods", past: "Past periods & batches", upcoming: "Upcoming periods", all: "All periods" };
-  return (
-    <section
-      className="configuration-page"
-      style={{ overflowWrap: "anywhere" }}
-    >
-      <div className="d-flex justify-content-between gap-2 flex-wrap">
-        <h1 id="payroll-title" tabIndex={-1}>Payroll</h1>
+  const recordingView = workspaceView === "recording" && Boolean(payrollSelection("batch"));
+  const actionFirst=Boolean(ovrCycle&&!recordingView&&!reportCycle);
+  if(readFailure&&!data.total)return <section className="configuration-page"><h1>Payroll</h1><p role="status">Payroll periods are unavailable; the period count is not confirmed.</p><p role="alert">{typeof readFailure==="string"?readFailure:readFailure.message}</p><button type="button" className="btn btn-outline-secondary" onClick={()=>{setReadFailure("");setLoading(true);setReload(n=>n+1);}}>Retry payroll connection</button></section>;
+  if (workspaceView === "reports" && !payrollSelection("batch")) return <section className="configuration-page"><h1>Payroll</h1>{loading?<p role="status">Checking report access…</p>:permissions.includes("ovr.process")?<Suspense fallback={<p role="status">Loading Reports…</p>}><FinancialReports session={session}/></Suspense>:<p>Financial reports require Staff or Coordinator payment-processing permission.</p>}</section>;
+  const setup = <>
+      <div className="payroll-setup u1-payroll-setup"><details className="u1-payroll-administration" open={Boolean(editor)||undefined}>
+      <summary>Semester setup and administration</summary>
+        {recordingView && <>
         <button
           className="btn btn-outline-secondary"
           disabled={saving}
           onClick={refresh}
         >
-          Refresh
+          {recordingView ? "Refresh payroll setup" : "Refresh"}
         </button>
-      </div>
-      <p>{scope === "past" ? "Open a past period to view its payroll batches." : scope === "current" ? "Review candidates and prepare payroll for the current semester." : "Choose a period to view its payroll batches."}</p>
-      {recovery&&<PayoutCommandRecovery session={session} path={recovery} onResolved={()=>{setRecovery(null);pending.current=null;refresh();requestAnimationFrame(()=>document.getElementById("payroll-title")?.focus());}}/>}
-      {!ovrCycle && <nav className="filter-pills" aria-label="Payroll periods">{(["current", "past", "upcoming", "all"] as const).map(value => {
-        const count = payrollPeriods(data.items, parents, value, day).length;
-        if (value === "upcoming" && !count) return null;
-        return <button type="button" key={value} aria-pressed={scope === value} disabled={loading || saving} onClick={() => { setScope(value); setOffset(0); setEditor(null); setHistory(null); setNotice(""); }}>{scopeLabels[value]}{!loading && ` (${count})`}</button>;
-      })}</nav>}
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="alert alert-success" role="status">
-          {notice}
-        </div>
-      )}
+        </>}
       {manage && (
         <button
           className="btn configuration-primary mb-3"
@@ -497,6 +487,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
           </fieldset>
         </form>
       )}
+      </details>
       {loading ? (
         <p role="status">Loading payout cycles...</p>
       ) : (
@@ -522,7 +513,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
                   ? () => { setOvrCycle(c.id); setReportCycle(c.id); setHistory(null); window.scrollTo(0, 0); }
                   : undefined
               }
-            />{operate&&permissions.includes("payroll.windows.manage")&&["draft","open"].includes(c.state)&&<HistoricalPayrollSetup cycleId={c.id} session={session} onChanged={()=>setReload(n=>n+1)}/>}{ovrCycle === c.id && <PayrollSubmissionWindows cycleId={c.id} session={session} canManage={permissions.includes("payroll.windows.manage")} />}</div>
+            />{operate&&permissions.includes("payroll.windows.manage")&&["draft","open"].includes(c.state)&&<HistoricalPayrollSetup cycleId={c.id} session={session} onChanged={()=>setReload(n=>n+1)}/>}</div>
           ))}
           <div className="d-flex gap-3 align-items-center" hidden={!!ovrCycle || periods.length <= 25}>
             <button
@@ -549,16 +540,59 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
           </div>
         </>
       )}
-      {ovrCycle && <nav className="filter-pills" aria-label="Semester work areas"><button type="button" aria-pressed={!reportCycle} onClick={() => setReportCycle(null)}>Payroll batches</button><button type="button" aria-pressed={!!reportCycle} onClick={() => setReportCycle(ovrCycle)}>Eligibility report</button></nav>}
-      {ovrCycle && !reportCycle && (
-        <><div className="my-2">{data.items.find(c=>c.id===ovrCycle)?.semesterDocuments?.map((s,i)=><div key={s.scopeId}><strong>Uses semester documents{(data.items.find(c=>c.id===ovrCycle)?.semesterDocuments?.length ?? 0)>1 ? ` ? Group ${i+1}` : ""}</strong>{permissions.includes("semesters.configure") && <ContinuingSemesterSetup compact initialSemesterId={data.items.find(c=>c.id===ovrCycle)!.semesterId} batchId={s.cohort} session={session} canConfigure />}</div>)}</div><OvrDrafts
+      </div>
+      {ovrCycle && <details className="my-2"><summary>Eligibility report and semester documents</summary><nav className="filter-pills" aria-label="Semester work areas"><button type="button" aria-pressed={!reportCycle} onClick={() => setReportCycle(null)}>Payroll batches</button><button type="button" aria-pressed={!!reportCycle} onClick={() => setReportCycle(ovrCycle)}>Eligibility report</button></nav><div className="my-2">{data.items.find(c=>c.id===ovrCycle)?.semesterDocuments?.map(s=><div key={s.scopeId}><strong>Uses semester documents</strong>{permissions.includes("semesters.configure") && <ContinuingSemesterSetup compact initialSemesterId={data.items.find(c=>c.id===ovrCycle)!.semesterId} batchId={s.cohort} session={session} canConfigure />}</div>)}</div></details>}
+  </>;
+  return (
+    <section
+      className={`configuration-page u1-payroll-page${recordingView ? " payment-recording-page" : ""}`}
+      style={{ overflowWrap: "anywhere" }}
+    >
+      {!actionFirst&&<div className="d-flex justify-content-between gap-2 flex-wrap">
+        <h1 id="payroll-title" tabIndex={-1}>{recordingView ? "Payment Recording" : "Payroll"}</h1>
+
+        {!recordingView && <>
+        <button
+          className="btn btn-outline-secondary"
+          disabled={saving}
+          onClick={refresh}
+        >
+          {recordingView ? "Refresh payroll setup" : "Refresh"}
+        </button>
+        </>}
+      </div>}
+      {!actionFirst&&!recordingView && <p>{scope === "past" ? "Open a past period to view its payroll batches." : scope === "current" ? "Review candidates and prepare payroll for the current semester." : "Choose a period to view its payroll batches."}</p>}
+      {workspaceView === "recording" && !payrollSelection("batch") && <p className="alert alert-info">Choose a period, then select a processed payroll to record payments.</p>}
+      {recovery&&<PayoutCommandRecovery session={session} path={recovery} onResolved={()=>{setRecovery(null);pending.current=null;refresh();requestAnimationFrame(()=>document.getElementById("payroll-title")?.focus());}}/>}
+      {!ovrCycle && <nav className="filter-pills" aria-label="Payroll periods">{(["current", "past", "upcoming", "all"] as const).map(value => {
+        const count = payrollPeriods(data.items, parents, value, day).length;
+        if (value === "upcoming" && !count) return null;
+        return <button type="button" key={value} aria-pressed={scope === value} disabled={loading || saving} onClick={() => { setScope(value); setOffset(0); setEditor(null); setHistory(null); setNotice(""); }}>{scopeLabels[value]}{!loading && ` (${count})`}</button>;
+      })}</nav>}
+      {readFailure&&<p role="alert">Payroll connection needs review. Previously loaded periods are retained. <button type="button" className="btn btn-outline-secondary" onClick={()=>setReload(n=>n+1)}>Retry payroll connection</button></p>}
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="alert alert-success" role="status">
+          {notice}
+        </div>
+      )}
+      {!recordingView && !ovrCycle && setup}
+      {ovrCycle&&!reportCycle&&<PayrollSubmissionWindows key={ovrCycle} cycleId={ovrCycle} session={session} canManage={permissions.includes("payroll.windows.manage")} actionFirst={actionFirst} compactDraft={draftPage} administration={actionFirst?setup:undefined} context={data.items.filter(c=>c.id===ovrCycle).map(c=><div className="pay-ui-period" key={c.id}><div><strong>{c.yearCode} / {c.semesterCode}</strong><p>{c.name} / {c.state}</p>{c.periodUnavailable&&<p role="status">Period unavailable for changes.</p>}{c.targetDate<day&&c.state==='open'&&<p className="u1-deadline-warning">Planned target {c.targetDate} has passed.</p>}</div><button type="button" className="btn btn-link" disabled={saving} onClick={()=>{setOvrCycle(null);setReportCycle(null);setHistory(null);}}>All payroll periods</button></div>)}>
+        <OvrDrafts
           key={`${ovrCycle}-${reload}`}
           cycleId={ovrCycle}
           session={session}
           permissions={permissions}
+          compactHeading={actionFirst}
+          onDraftViewChange={setDraftPage}
           onUncertain={setRecovery}
-        /></>
-      )}
+        />
+      </PayrollSubmissionWindows>}
+      {!recordingView&&ovrCycle&&reportCycle&&<details className="u1-period-details"><summary>Payroll setup &amp; history</summary>{setup}</details>}
       {reportCycle && (
         <EligibilityReport
           key={`${reportCycle}-${reload}`}
@@ -568,6 +602,7 @@ export default function PayoutCyclesPage({ session }: { session: Session }) {
           permissions={permissions}
         />
       )}
+      {recordingView && setup}
       {history && (
         <section className="card p-3 mt-3" aria-label="Payout cycle history">
           <h2>History: {history[0]?.code}</h2>

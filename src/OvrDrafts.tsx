@@ -1,9 +1,15 @@
+import PayrollProgress from "./PayrollProgress";
+import CommandProgressDialog from "./CommandProgressDialog";
+import {ArrowLeft} from "lucide-react";
 import PayrollReprocessing from "./PayrollReprocessing";
 import PayrollFormLinks from "./PayrollFormLinks";
 import AutomaticPayrollDraft from "./AutomaticPayrollDraft";
-import SavedPayrollTable from "./SavedPayrollTable";
+import PayrollDetailBoundary, { PayrollDisclosure } from "./PayrollDetailBoundary";
+import PayrollPagedDetails from "./PayrollPagedDetails";
+import type { OvrSummary, OvrSections } from "../server/ovr/detail-model";
 import { useActionForm } from "./use-action-form";
 import PayrollCandidates from "./PayrollCandidates";
+import PayrollDraftRoster, {type DraftReview} from "./PayrollDraftRoster";
 import { payrollSelection, rememberPayroll } from "./payroll-navigation";
 import RoutineEvidence from "./RoutineEvidence";
 import {pendingPrior,retainPriorCommand} from "./prior-command";
@@ -11,12 +17,15 @@ import ErrorNotice from "./ErrorNotice";
 import PaymentCorrections from "./PaymentCorrections";
 import OvrAmendments from "./OvrAmendments";
 import OvrProcessingPanel from "./OvrProcessingPanel";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import PaymentRecording from "./PaymentRecording";
+import PayrollReconciliation from "./PayrollReconciliation";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Session } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
-import type { OvrBatch, OvrDetail } from "../server/ovr/model";
+import type { OvrBatch } from "../server/ovr/model";
 import type { PayoutCycle } from "../server/payouts/model";
 import type { EligibilityView } from "../server/eligibility/model";
+const FinancialReports=lazy(()=>import('./FinancialReports'));
 type Candidates = {
   items: Pick<EligibilityView, "current" | "effective">[];
   total: number;
@@ -26,13 +35,19 @@ export default function OvrDrafts({
   session,
   permissions,
   onUncertain,
+  compactHeading=false,
+  onDraftViewChange,
 }: {
   cycleId: string;
   session: Session;
   permissions: string[];
   onUncertain?: (path:string)=>void;
+  compactHeading?:boolean;
+  onDraftViewChange?:(draft:boolean)=>void;
 }) {
   const focusTreasury=useRef(false);
+  const returnBatchFocus=useRef<string|null>(null);
+  const [detailArea,setDetailArea]=useState(()=>new URLSearchParams(location.hash.split("?")[1]).get("recovery")==="deferral"||pendingPrior(session.user.id)?.path.endsWith("/restore")?"changes":"payments");
   const [list, setList] = useState<{
       managed?: boolean;
       cycle: PayoutCycle;
@@ -42,7 +57,7 @@ export default function OvrDrafts({
     [offset, setOffset] = useState(0),
     [reload, setReload] = useState(0),
     [selected, updateSelected] = useState<string | null>(() => payrollSelection("cycle") === cycleId ? payrollSelection("batch") : null),
-    [detail, setDetail] = useState<OvrDetail | null>(null),
+    [detail, setDetail] = useState<(OvrSummary & Partial<OvrSections["candidates"]>) | null>(null),
     [error, setError] = useState<string | ApiError>(""),
     [notice, setNotice] = useState(""),
     [saving, setSaving] = useState(false);
@@ -61,38 +76,51 @@ export default function OvrDrafts({
     [search, setSearch] = useState(""),
     [candidateOffset, setCandidateOffset] = useState(0),
     [candidates, setCandidates] = useState<Candidates | null>(null);
+  const [reviewLoaded, setReviewLoaded] = useState(false);
+  const [draftReview,setDraftReview]=useState<DraftReview|null>(null);
+  const [paymentTab,setPaymentTab]=useState(()=>new URLSearchParams(window.location.hash.split("?")[1]).get("view")==="recording"),[paymentBusy,setPaymentBusy]=useState(false);
+  const [reportsTab,setReportsTab]=useState(()=>new URLSearchParams(window.location.hash.split('?')[1]).get('view')==='reports');
+  const [reconciliationTab,setReconciliationTab]=useState(()=>new URLSearchParams(window.location.hash.split("?")[1]).get("view")==="reconciliation");
   const [issues, setIssues] = useState<
     { code: string; message: string; scholarshipId?: string }[]
   >([]);
   const busy = useRef(false),
     pending = useRef<{ signature: string; key: string } | null>(null);
-  const setSelected = (id: string | null) => { rememberPayroll(cycleId, id); updateSelected(id); };
+  const setSelected = (id: string | null) => { if(pendingPrior(session.user.id))return;rememberPayroll(cycleId, id); setReviewLoaded(false);setDraftReview(null); updateSelected(id); };
   const message = (e: unknown) =>
     e instanceof ApiError
       ? e
       : "Could not confirm the Payroll result. Refresh or retry the same command safely.";
   const actionForm = useActionForm(action);
+  const reviewTrigger=useRef<HTMLButtonElement>(null);
+  function dismissForm(){if(saving||pendingPrior(session.user.id))return;setAction(null);requestAnimationFrame(()=>reviewTrigger.current?.focus());}
+  function openReconciliation(){if(pendingPrior(session.user.id))return;setReportsTab(false);setPaymentTab(false);setReconciliationTab(true);const params=new URLSearchParams(window.location.hash.split("?")[1]);params.set("view","reconciliation");window.location.hash=`payouts?${params}`;}
   useEffect(() => {
     const followLink = () => {
+      if(pendingPrior(session.user.id)){rememberPayroll(cycleId,selected);return;}
       const next = payrollSelection("batch");
-      if(payrollSelection("cycle") === cycleId && next !== selected) {updateSelected(next);setDetail(null);setAction(null);}
+      if(new URLSearchParams(location.hash.split("?")[1]).get("recovery")==="deferral")setDetailArea("changes");
+      setReportsTab(new URLSearchParams(window.location.hash.split('?')[1]).get('view')==='reports');
+      setPaymentTab(new URLSearchParams(window.location.hash.split("?")[1]).get("view")==="recording");
+      setReconciliationTab(new URLSearchParams(window.location.hash.split("?")[1]).get("view")==="reconciliation");
+      if(payrollSelection("cycle") === cycleId && next !== selected) {updateSelected(next);setReviewLoaded(false);setDraftReview(null);setDetail(null);setAction(null);}
     };
     window.addEventListener("hashchange",followLink);
     return () => window.removeEventListener("hashchange",followLink);
-  },[cycleId,selected]);
+  },[cycleId,selected,session.user.id]);
   useEffect(() => {
     const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 300000);
+    const timeout = window.setTimeout(() => c.abort(), 30000);
     request<{ managed?: boolean; cycle: PayoutCycle; items: OvrBatch[]; total: number }>(
-      `payout-cycles/${cycleId}/ovr-batches?offset=${offset}&limit=25`,
+      `payout-cycles/${cycleId}/ovr-batch-summaries?offset=${offset}&limit=25`,
       { signal: c.signal },
     )
       .then((r) => {
         if (active) setList(r);
       })
       .catch((e) => {
-        if (active) setError(message(e));
+        if (active) setError(e instanceof ApiError?e:"Could not load payroll data. Refresh to retry this read; no command was submitted.");
       })
       .finally(() => window.clearTimeout(timeout));
     return () => {
@@ -105,13 +133,13 @@ export default function OvrDrafts({
     if (!selected) return;
     const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 300000);
-    request<OvrDetail>(`ovr-batches/${selected}`, { signal: c.signal })
+    const timeout = window.setTimeout(() => c.abort(), 30000);
+    request<OvrSummary>(`ovr-batches/${selected}/summary`, { signal: c.signal })
       .then((r) => {
-        if (active) setDetail(r);
+        if (active) setDetail(current => current?.batch.id === r.batch.id && current.batch.revision === r.batch.revision ? {...current,...r} : r);
       })
       .catch((e) => {
-        if (active) setError(message(e));
+        if (active) setError(e instanceof ApiError?e:"Could not load payroll data. Refresh to retry this read; no command was submitted.");
       })
       .finally(() => window.clearTimeout(timeout));
     return () => {
@@ -122,15 +150,15 @@ export default function OvrDrafts({
   }, [selected, reload]);
   useEffect(() => {
     if (!selected || action || saving || detail?.batch.state !== "draft") return;
-    const refreshDraft = () => { if (document.visibilityState === "visible") setReload(n => n + 1); };
+    const refreshDraft = () => { if (document.visibilityState === "visible" && !pendingPrior(session.user.id)) {setReviewLoaded(false);setDraftReview(null);setReload(n => n + 1);} };
     window.addEventListener("focus", refreshDraft);
     return () => window.removeEventListener("focus", refreshDraft);
-  }, [selected, action, saving, detail?.batch.state]);
+  }, [selected, action, saving, detail?.batch.state, session.user.id]);
   useEffect(() => {
     if (action !== "add") return;
     const c = new AbortController();
     let active = true;
-    const timeout = window.setTimeout(() => c.abort(), 300000);
+    const timeout = window.setTimeout(() => c.abort(), 30000);
     request<Candidates>(
       `payout-cycles/${cycleId}/eligibility?q=${encodeURIComponent(search)}&offset=${candidateOffset}&limit=25`,
       { signal: c.signal },
@@ -139,7 +167,7 @@ export default function OvrDrafts({
         if (active) setCandidates(r);
       })
       .catch((e) => {
-        if (active) setError(message(e));
+        if (active) setError(e instanceof ApiError?e:"Could not load payroll data. Refresh to retry this read; no command was submitted.");
       })
       .finally(() => window.clearTimeout(timeout));
     return () => {
@@ -150,7 +178,9 @@ export default function OvrDrafts({
   }, [action, cycleId, search, candidateOffset, reload]);
   useEffect(()=>{if(detail && focusTreasury.current){document.getElementById("treasury-search")?.focus();focusTreasury.current=false;}},[detail]);
   function refresh() {
+    if(pendingPrior(session.user.id))return;
     setDetail(null);
+    setReviewLoaded(false);setDraftReview(null);
     setList(null);
     setError("");
     setIssues([]);
@@ -174,6 +204,7 @@ export default function OvrDrafts({
         expectedRevision: action === "create" ? 0 : detail!.batch.revision,
         reason: String(f.get("reason")),
         reference: String(f.get("reference")),
+        ...(draftReview ? {expectedSourceHash:draftReview.sourceHash} : {}),
         ...((detail?.managed ?? detail?.automatic) ? { expectedSourceHash: (detail!.managed ?? detail!.automatic)!.sourceHash } : {}),
         ...(action === "create"
           ? {
@@ -237,14 +268,25 @@ export default function OvrDrafts({
       setSaving(false);
     }
   }
+  useEffect(()=>{
+    if(selected||!returnBatchFocus.current)return;
+    const frame=requestAnimationFrame(()=>{
+      const target=document.querySelector<HTMLButtonElement>(`[data-u11-batch-id="${returnBatchFocus.current}"]`);
+      if(target){target.focus();returnBatchFocus.current=null;}
+    });
+    return ()=>cancelAnimationFrame(frame);
+  },[selected,list]);
+  const draftView=Boolean(selected&&detail?.managedBatch&&!detail.frozen);
+  useEffect(()=>{onDraftViewChange?.(draftView);return()=>onDraftViewChange?.(false);},[draftView,onDraftViewChange]);
+  const recordingView = Boolean(selected && paymentTab && !reportsTab && detail?.frozen);
   return (
     <section
-      className="card p-3 my-3"
+      className={recordingView ? "card payment-recording-batch" : "card p-3 my-3 u11-payroll-batches"}
       aria-label="Payroll draft batches"
       style={{ overflowWrap: "anywhere" }}
     >
       <div className="d-flex justify-content-between flex-wrap gap-2">
-        <h2>{selected ? "Selected payroll" : "Payroll batches"}</h2>
+        {recordingView ? <button type="button" className="btn btn-link recording-back" disabled={saving||paymentBusy} onClick={() => { if(pendingPrior(session.user.id))return;setSelected(""); setDetail(null); setAction(null); }}>Back to Payroll Batches</button> : selected ? <button className="btn btn-link u1-back-link" disabled={saving||paymentBusy} onClick={() => { if(pendingPrior(session.user.id))return;returnBatchFocus.current=selected;setSelected(""); setDetail(null); setAction(null); }}><ArrowLeft size={16} aria-hidden="true"/> Back to batches</button> : !compactHeading&&<h2>Payroll batches</h2>}
         <button
           className="btn btn-outline-secondary"
           disabled={saving}
@@ -253,17 +295,17 @@ export default function OvrDrafts({
             refresh();
           }}
         >
-          Refresh
+          {recordingView ? "Refresh batch" : "Refresh"}
         </button>
       </div>
-      <p className="muted-line">{list?.managed ? "Choose a batch to review candidates and preview payroll." : "Legacy payroll is read-only. View history and original documents, or ask the Coordinator to review conversion to numbered payroll."}</p>
+      {!recordingView && !selected && (!compactHeading||Boolean(list&&!list.managed)) && <p className="muted-line">{list?.managed ? "Choose a batch to review candidates and preview payroll." : "Legacy payroll is read-only. View history and original documents, or ask the Coordinator to review conversion to numbered payroll."}</p>}
       <ErrorNotice error={error} />
       {!!issues.length && (
         <ul aria-label="Payroll validation errors">
           {issues.map((i, n) => (
             <li key={n}>
               {i.scholarshipId
-                ? `${detail?.entries.find((e) => e.scholarshipId === i.scholarshipId)?.evidence.current.sources.scholarship.humanId ?? i.scholarshipId}: `
+                ? `${detail?.entries?.find((e) => e.scholarshipId === i.scholarshipId)?.evidence.current.sources.scholarship.humanId ?? i.scholarshipId}: `
                 : ""}
               {i.message} ({i.code})
             </li>
@@ -272,15 +314,16 @@ export default function OvrDrafts({
       )}
       {notice && <p role="status">{notice}</p>}
       {!list ? (
-        <p>Loading Payroll batches...</p>
+        <p role="status" hidden={!!error}>Loading Payroll batches...</p>
       ) : (
         <>
           {!list.managed && <p role="status">New financial processing requires a numbered payroll. Historical corrections remain controlled and audited.</p>}
-          {!selected && <ul className="batch-list my-3">
+          {!selected && <div className="table-responsive"><table className="table u1-batch-list"><thead><tr><th scope="col">Payroll batch</th><th scope="col">Next action</th><th scope="col">Status</th></tr></thead><tbody>
             {list.items.map((b) => (
-              <li key={b.id}>
+              <tr key={b.id}><td><strong>{b.code}</strong><small className="d-block">{b.name}</small></td><td>
                 <button
                   className="btn btn-link"
+                  data-u11-batch-id={b.id}
                   disabled={saving}
                   onClick={() => {
                     setSelected(b.id);
@@ -288,15 +331,18 @@ export default function OvrDrafts({
                     setAction(null);
                     setError("");
                     setIssues([]);
-                    setReload((n) => n + 1);
                   }}
                 >
                   Open Payroll {b.code}
                 </button>{" "}
-                — {b.name} ({b.state}, revision {b.revision})
-              </li>
+                {list.managed&&["processed","closed"].includes(b.state)&&permissions.includes("ovr.process")&&<button type="button" className="btn btn-outline-primary" disabled={saving||paymentBusy} onClick={()=>{
+                  if(pendingPrior(session.user.id))return;
+                  setSelected(b.id);setDetail(null);setAction(null);setPaymentTab(true);setReconciliationTab(false);setError("");
+                  const params=new URLSearchParams(window.location.hash.split("?")[1]);params.set("view","recording");window.location.hash=`payouts?${params}`;
+                }}>{b.state==="closed"?"View payment recording":"Record payments"}</button>}{" "}
+                </td><td><span className="soft-badge neutral">{b.state}</span></td></tr>
             ))}
-          </ul>}
+          </tbody></table></div>}
           {!list.items.length && <p>No Payroll batches for this cycle.</p>}
           <div className="d-flex gap-2" hidden={!!selected || list.total <= 25}>
             <button
@@ -322,235 +368,86 @@ export default function OvrDrafts({
           </div>
         </>
       )}
-      {selected && <button className="btn btn-outline-secondary back-link" disabled={saving} onClick={() => { setSelected(""); setDetail(null); setAction(null); }}>Back to batches</button>}
-      {selected && !detail && <p>Loading selected batch...</p>}
-      {detail && (
-        <section
-          className="border-top mt-3 pt-3"
-          aria-label="Selected Payroll draft"
-        >
-          <h3>
-            {detail.batch.code} — {detail.batch.name}
-          </h3>
-          <p>
-            {detail.batch.state} · revision {detail.batch.revision} ·{" "}
-            {detail.managed ? `${detail.managed.form.rows.length} included in this draft` : `${detail.automatic?.form.rows.length ?? detail.entries.length} entries`}
-          </p>
-          {(detail.managed || detail.finalization?.snapshot.payrollForm) && <PayrollCandidates detail={detail} session={session} canDefer={permissions.includes("ovr.finalize")} onSaved={refresh} />}
-          {detail.automatic && <AutomaticPayrollDraft detail={detail} />}
-          <PayrollReprocessing detail={detail} session={session} canManage={permissions.includes("ovr.finalize")} onSaved={refresh} />
-          {detail.finalization?.snapshot.legacyPayrollForm && <PayrollFormLinks batchId={detail.batch.id} draft={false} />}
-          {detail.finalization && <SavedPayrollTable detail={detail} />}
-          <details><summary>Source checks</summary>
-          <p
-            hidden={Boolean(detail.automatic || detail.managed || detail.finalization?.snapshot.payrollForm)}
-            className={`alert ${detail.validation.valid ? "alert-success" : "alert-warning"}`}
-          >
-            {detail.validation.valid
-              ? "Current source validation passed."
-              : "Current sources need attention."}{" "}
-            Checked {new Date(detail.validation.checkedAt).toLocaleString()}.
-          </p>
-          {!detail.automatic && !detail.managed && !detail.finalization?.snapshot.payrollForm && !!detail.validation.issues.length && (
-            <ul>
-              {detail.validation.issues.map((i, n) => (
-                <li key={n}>
-                  {i.scholarshipId
-                    ? `${detail.entries.find((e) => e.scholarshipId === i.scholarshipId)?.evidence.current.sources.scholarship.humanId ?? "Entry"}: `
-                    : ""}
-                  {i.message} ({i.code})
-                </li>
-              ))}
-            </ul>
-          )}
-          </details>
-          {detail.canEdit ? (
-            <div className="d-flex gap-2 flex-wrap">
-              <button
-                className="btn configuration-primary"
-                disabled={saving || Boolean(detail.automatic && !detail.automatic.form.rows.length) || Boolean(detail.managed && (!detail.managed.cutoffReached || detail.managed.pendingCount || !detail.managed.form.rows.length))}
-                onClick={() => choose("submit-review")}
-              >
-                Submit Payroll for review
-              </button>
-              <button
-                className="btn btn-outline-primary"
-                disabled={saving}
-                hidden={Boolean(detail.managed || detail.automatic)}
-                onClick={() => choose("add")}
-              >
-                Add Payroll entry
-              </button>
-              <button
-                className="btn btn-outline-primary"
-                disabled={saving}
-                hidden={Boolean(detail.managed || detail.automatic)}
-                onClick={() => choose("validate")}
-              >
-                Record draft validation
-              </button>
-            </div>
-          ) : (
-            <p hidden={Boolean(detail.finalization)}>
-              Membership changes require a Draft batch and an open, available
-              payout cycle.
-            </p>
-          )}
-          {detail.batch.state === "review" && (
-            <section aria-label="Payroll review">
-              <p className="alert alert-warning"><strong>Coordinator action required: review and finalize this payroll.</strong> The Coordinator may finalize their own submitted batch. This approves the batch; it does not record payment.</p>
-              <p>
-                Submitted by {detail.batch.submission?.actorName}. Membership is
-                locked during review.
-              </p>
-              {permissions.includes("ovr.finalize") &&
-                detail.cycle.state === "open" &&
-                !detail.cycle.periodUnavailable && (
-                  <div className="d-flex gap-2 flex-wrap">
-                    <button
-                      className="btn btn-outline-secondary"
-                      disabled={saving}
-                      onClick={() => choose("return-to-draft")}
-                    >
-                      Return Payroll to Draft
-                    </button>
-                    <button
-                      className="btn btn-success"
-                      disabled={
-                        saving
-                      }
-                      onClick={() => choose("finalize")}
-                    >
-                      Finalize Payroll
-                    </button>
-                  </div>
-                )}
-            </section>
-          )}
-          {detail.finalization && <><details><summary>Finalization details</summary>
-          {detail.finalization && (
-            <section
-              className="alert alert-info"
-              aria-label="Finalized Payroll snapshot"
-            >
-              <h4>Original finalized roster</h4>
-              <p>
-                {detail.finalization.snapshot.entries.length} frozen entries,
-                finalized by {detail.finalization.snapshot.finalizedByName} at{" "}
-                {new Date(
-                  detail.finalization.snapshot.finalizedAt,
-                ).toLocaleString()}
-                .
-              </p>
-              <p>
-                The current source check may change; the finalized snapshot
-                remains unchanged.
-              </p>
-              <details>
-                <summary>Frozen roster and evidence</summary>
-                <p>Snapshot hash: {detail.finalization.hash}</p>
-                <ul>
-                  {detail.finalization.snapshot.entries.map((e) => (
-                    <li key={e.scholarshipId}>
-                      {e.evidence.current.sources.scholarship.humanId} -{" "}
-                      {e.evidence.current.sources.scholarship.name}:{" "}
-                      {e.evidence.effective.label}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </section>
-          )}
-          </details>
-          <details open={detail.batch.state !== "closed"}><summary>Payment processing</summary>
-          {detail.finalization && (
-            <OvrProcessingPanel
-              key={`processing-${detail.batch.id}-${detail.batch.revision}`}
-              onTreasurySaved={()=>{focusTreasury.current=true;refresh();}}
-              detail={detail}
-              session={session}
-              permissions={permissions}
-              onSaved={refresh}
-            />
-          )}
-          </details>
-          <details><summary>Amendments and payment corrections</summary>
-          {detail.finalization && !detail.finalization.snapshot.payrollForm && (
-            <OvrAmendments
-              key={`amendments-${detail.batch.id}-${detail.batch.revision}`}
-              detail={detail}
-              session={session}
-              permissions={permissions}
-              onSaved={refresh}
-            />
-          )}
-          {!!detail.payments.length && (
-            <PaymentCorrections
-              key={`payment-corrections-${detail.batch.id}-${detail.batch.revision}`}
-              detail={detail}
-              session={session}
-              permissions={permissions}
-              onSaved={refresh}
-            />
-          )}
-          </details>
-          </>}
-          <details><summary>Entry evidence</summary>
-          {detail.entries.map((entry) => (
-            <article
-              className="border rounded p-3 my-3"
-              key={entry.scholarshipId}
-            >
-              <h4>
-                {entry.evidence.current.sources.scholarship.humanId} —{" "}
-                {entry.evidence.current.sources.scholarship.name}
-              </h4>
-              <p>
-                Added at revision {entry.addedRevision}:{" "}
-                {entry.evidence.effective.label}.
-              </p>
-              <p hidden={Boolean(detail.finalization?.snapshot.payrollForm)}>
-                Current assessment:{" "}
-                {
-                  detail.validation.entries.find(
-                    (r) => r.scholarshipId === entry.scholarshipId,
-                  )?.evidence.effective.label
-                }
-              </p>
-              {detail.canEdit && !detail.managed && !detail.automatic && (
-                <button
-                  className="btn btn-outline-danger"
-                  disabled={saving}
-                  onClick={() => choose("remove", entry.scholarshipId)}
-                >
-                  Remove {entry.evidence.current.sources.scholarship.humanId}{" "}
-                  from draft
-                </button>
-              )}
-            </article>
-          ))}
-          </details>
-          <details>
-            <summary>Payroll draft history</summary>
-            {detail.history.map((h) => (
-              <p key={h.revision}>
-                Revision {h.revision}: {h.action}, {h.actorName},{" "}
-                {new Date(h.recordedAt).toLocaleString()}. {h.reason} (
-                {h.reference})
-                {h.entry && ` — ${h.entry.humanId}: ${h.entry.name}`}
-                {h.validation
-                  ? ` — Recorded validation: ${h.validation.valid ? "passed" : "issues found"}`
-                  : ""}
-              </p>
-            ))}
-          </details>
-        </section>
-      )}
+      
+      {selected && !detail && !error && <p role="status">Loading selected batch summary...</p>}
+      {detail && <section className={recordingView ? "recording-batch-detail" : "u1-batch-detail u11-batch-detail"} aria-label="Selected Payroll draft">
+        {recordingView ? <dl className="recording-context" aria-label="Selected payroll context">
+          <div><dt>Payroll batch</dt><dd><strong>{detail.batch.code}</strong> / {detail.batch.name}</dd></div>
+          <div><dt>Academic year</dt><dd>{detail.cycle.yearCode}</dd></div>
+          <div><dt>Semester</dt><dd>{detail.cycle.semesterCode}</dd></div>
+          <div><dt>Payroll status</dt><dd className="text-capitalize">{detail.batch.state}</dd></div>
+        </dl> : <>{detail.managedBatch&&!detail.frozen?<h1>{detail.batch.code} / {detail.batch.state}</h1>:<h2>{detail.batch.code} / {detail.batch.name}</h2>}
+        {!draftView&&((paymentTab||reconciliationTab||reportsTab)&&detail.frozen?<p>{detail.frozen.count??"Recorded"} scholars in the finalized payroll.</p>:<p>{detail.batch.state} · {detail.frozen ? detail.frozen.count === null ? "Recorded membership needs evidence review" : detail.frozen.count + " recorded scholars" : detail.batch.state === "review" ? detail.savedEntryCount + " submitted scholars" : detail.managedBatch ? "Current payroll draft" : detail.annualScopeCount + " annual records in candidate scope"}</p>)}</>}
+        <PayrollProgress detail={detail} permissions={permissions} review={draftReview}/>
+        {detail.frozen&&reconciliationTab&&<nav className="d-flex flex-wrap gap-2 my-3" aria-label="Payment tasks">
+          <button type="button" className={`btn ${paymentTab?'configuration-primary':'btn-outline-secondary'}`} aria-pressed={paymentTab} disabled={paymentBusy} onClick={()=>{if(pendingPrior(session.user.id))return;const params=new URLSearchParams(window.location.hash.split('?')[1]);params.set('view','recording');window.location.hash=`payouts?${params}`;}}>Record Payments</button>
+          <button type="button" className={`btn ${reconciliationTab?'configuration-primary':'btn-outline-secondary'}`} aria-pressed={reconciliationTab} disabled={paymentBusy} onClick={openReconciliation}>Review Payments</button>
+        </nav>}
+        {detail.frozen&&!reportsTab&&paymentTab&&(permissions.includes("ovr.process")?<PaymentRecording key={detail.batch.id} batchId={detail.batch.id} session={session} onSaved={()=>setReload(n=>n+1)} onBusyChange={setPaymentBusy} onReconcile={openReconciliation}/>:<p>Payment Recording requires Staff or Coordinator payment-processing permission. System Administrator access alone does not grant payment authority.</p>)}
+        {detail.frozen&&!reportsTab&&reconciliationTab&&(permissions.includes("ovr.process")?<PayrollReconciliation key={detail.batch.id} batchId={detail.batch.id} session={session} permissions={permissions} onSaved={()=>setReload(n=>n+1)} onBusyChange={setPaymentBusy}/>:<p>Review Payments requires Staff or Coordinator payment-processing permission.</p>)}
+        {detail.frozen&&reportsTab&&(permissions.includes('ovr.process')?<Suspense fallback={<p role="status">Loading Reports…</p>}><FinancialReports key={detail.batch.id} batchId={detail.batch.id} session={session}/></Suspense>:<p>Financial reports require Staff or Coordinator payment-processing permission.</p>)}
+        {(!paymentTab&&!reconciliationTab&&!reportsTab||!detail.frozen)&&<>
+        {!detail.frozen&&!detail.managedBatch && <p>Candidate eligibility and overall totals load in Complete batch review.</p>}
+
+        {detail.frozen&&<PayrollFormLinks batchId={detail.batch.id} draft={false}/>}
+
+        {!detail.frozen&&detail.managedBatch&&<PayrollDraftRoster key={`${detail.batch.id}:${reload}`} detail={detail} session={session} permissions={permissions} onSaved={()=>{refresh();setNotice("Deferral confirmed. Reloading current payroll counts.");}} onBusyChange={setPaymentBusy} onReview={review=>{if(review.batchRevision!==detail.batch.revision)return;setDraftReview(review);setReviewLoaded(true);}} primaryAction={<>
+          {detail.batch.state==="draft"&&permissions.includes("ovr.prepare")&&<><button type="button" className="btn configuration-primary" ref={reviewTrigger} disabled={!detail.canEdit||saving||paymentBusy||!draftReview||Boolean(draftReview.reviewBlocker)} onClick={()=>choose("submit-review")}>Submit for Coordinator Review</button>{(!detail.canEdit||saving||paymentBusy||!draftReview||draftReview.reviewBlocker)&&<span role="status">{saving||paymentBusy?"Confirm the current payroll command first.":!draftReview?"Load the current roster to confirm review availability.":draftReview.reviewBlocker?.message}</span>}</>}
+          {detail.batch.state==="review"&&detail.actions.finalize&&<><button type="button" className="btn btn-outline-secondary" disabled={saving||paymentBusy} onClick={()=>choose("return-to-draft")}>Return Payroll to Draft</button><button type="button" className="btn configuration-primary" disabled={saving||paymentBusy||!draftReview||Boolean(draftReview.finalizeBlocker)} onClick={()=>choose("finalize")}>Finalize Payroll</button>{(!draftReview||draftReview.finalizeBlocker)&&<span role="status">{draftReview?.finalizeBlocker?.message??"Load the current roster before finalization."}</span>}</>}{detail.batch.state==="review"&&!detail.actions.finalize&&<span>Coordinator access is required to return or finalize this payroll.</span>}
+        </>}/>}
+        {!detail.frozen&&!detail.managedBatch && <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-review"} batchId={detail.batch.id} section="candidates" title="Complete batch review" onLoaded={data => {
+          if (data.batch.revision !== detail.batch.revision) { setError("Payroll changed while loading. Refresh before reviewing or approving it."); return; }
+          setDetail(current => current?.batch.id === data.batch.id ? {...current,...data} : current); setReviewLoaded(true);
+        }}>{data => <>
+          {data.managed && <PayrollCandidates permissions={permissions} detail={data} session={session} canDefer={permissions.includes("ovr.finalize")} onSaved={refresh}/>}
+          {data.automatic && <AutomaticPayrollDraft detail={data}/>}
+          {!data.managed && !data.automatic && <p>No automatic candidate projection is currently available.</p>}
+        </>}</PayrollDetailBoundary>}
+        {((detail.canEdit && permissions.includes("ovr.prepare")) || detail.actions.finalize) && !detail.managedBatch && !reviewLoaded && <button type="button" className="btn configuration-primary" disabled={saving} onClick={() => { const target = document.getElementById("payroll-section-candidates"); if (target instanceof HTMLDetailsElement) {target.open=true;target.scrollIntoView({block:"nearest"});} }}>Load complete review for payroll actions</button>}
+        {detail.canEdit && reviewLoaded && !detail.managedBatch && <div className="d-flex gap-2 flex-wrap">
+          <button className="btn configuration-primary" disabled={saving || Boolean(detail.automatic && !detail.automatic.form.rows.length) || Boolean(detail.managed && (detail.managed.pendingCount || !detail.managed.form.rows.length))} onClick={() => choose("submit-review")}>Submit for Coordinator Review</button>
+          {!detail.managed && !detail.automatic && <><button className="btn btn-outline-primary" disabled={saving} onClick={() => choose("add")}>Add Payroll entry</button><button className="btn btn-outline-primary" disabled={saving} onClick={() => choose("validate")}>Record draft validation</button></>}
+        </div>}
+        {detail.batch.state === "review" && !detail.managedBatch && <section aria-label="Payroll review"><p className="alert alert-warning">Coordinator review and finalization are required. Finalization approves the batch; it does not record payment.</p>
+          {detail.actions.finalize && <div className="d-flex gap-2"><button className="btn btn-outline-secondary" disabled={saving} onClick={() => choose("return-to-draft")}>Return Payroll to Draft</button><button className="btn btn-success" disabled={saving || !reviewLoaded} onClick={() => choose("finalize")}>Finalize Payroll</button></div>}
+        </section>}
+        <nav className="filter-pills u1-batch-tabs" aria-label="Batch details">{[["payments","Payments & Treasury"],["changes","Changes & deferrals"],["history","History & sources"]].map(([value,label])=><button type="button" key={value} className="btn btn-outline-secondary" aria-pressed={detailArea===value} onClick={()=>setDetailArea(value)}>{label}</button>)}</nav>
+        <div hidden={detailArea!=="changes"}>
+        <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-deferrals"} batchId={detail.batch.id} section="reprocessing" defaultOpen={new URLSearchParams(location.hash.split("?")[1]).get("recovery")==="deferral"||pendingPrior(session.user.id)?.path===`ovr-batches/${detail.batch.id}/restore`} title="Deferrals and reprocessing">{data => <PayrollReprocessing onBusyChange={setPaymentBusy} detail={data} managedBatch={detail.managedBatch} session={session} canManage={permissions.includes("ovr.finalize")} onSaved={refresh}/>}</PayrollDetailBoundary>
+          {detail.frozen && <>          <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-amendments"} batchId={detail.batch.id} section="amendments" title="Amendments">{data => data.effectiveFinalization && !data.effectiveFinalization.snapshot.payrollForm ? <OvrAmendments key={data.batch.revision} detail={data} session={session} permissions={permissions} onSaved={refresh}/> : <p>Numbered payroll membership remains frozen; use the authorized source and payment workflows.</p>}</PayrollDetailBoundary></>}
+        </div>
+        {detail.frozen && <>
+        <div hidden={detailArea!=="payments"}>
+          <PayrollDisclosure key={detail.batch.id + "-payments"} title="Payment history"><PayrollPagedDetails permissions={permissions} batchId={detail.batch.id} cycle={detail.cycle} mode="payment-history"/></PayrollDisclosure>
+          <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-processing"} batchId={detail.batch.id} section="processing" defaultOpen={new URLSearchParams(window.location.hash.split("?")[1]).get("task")==="processing"} title="Payment processing and Treasury evidence">{data => <OvrProcessingPanel key={data.batch.revision} detail={data} session={session} permissions={permissions} onTreasurySaved={() => {focusTreasury.current=true;refresh();}} onSaved={refresh} onReconcile={openReconciliation}/>}</PayrollDetailBoundary>
+          <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-corrections"} batchId={detail.batch.id} section="corrections" title="Payment corrections">{data => data.payments.length ? <PaymentCorrections key={data.batch.revision} detail={data} session={session} permissions={permissions} onSaved={refresh}/> : <p>No recorded payment outcomes to correct.</p>}</PayrollDetailBoundary>
+
+          <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-reconciliation"} batchId={detail.batch.id} section="reconciliation" title="Reconciliation">{data => <p>{data.reconciliation.recorded} of {data.reconciliation.required} outcomes recorded / Paid total {data.reconciliation.paidTotal} / Not paid {data.reconciliation.notPaid} / Pending {data.reconciliation.missingScholarshipIds.length}. {data.reconciliation.complete ? "All required outcomes are recorded." : "Reconciliation is incomplete."}</p>}</PayrollDetailBoundary>
+        </div>
+        </>}
+        <div hidden={detailArea!=="history"}>
+        {(detail.batch.submission||detail.frozen)&&<details className="u1-source-provenance"><summary>Submission &amp; finalization evidence</summary>        {detail.batch.submission && <p>Submitted by {detail.batch.submission.actorName} / {new Date(detail.batch.submission.submittedAt).toLocaleString()}.</p>}
+
+        {detail.frozen && <><p>Finalization recorded by {detail.frozen.finalizedByName ?? "an authorized operator"}{detail.frozen.finalizedAt ? " / " + new Date(detail.frozen.finalizedAt).toLocaleString() : ""}. Current source validation loads separately.</p></>}
+</details>}
+        {detail.frozen&&<details><summary>Frozen source identity</summary><code className="text-break">{detail.frozen.hash}</code></details>}
+        <PayrollDetailBoundary refreshToken={reload} key={detail.batch.id + "-validation"} batchId={detail.batch.id} section="validation" title="Current source checks and validation">{data => <>
+          <p>{data.validation.valid ? "Current validation passed." : "Current sources require review."} Checked {new Date(data.validation.checkedAt).toLocaleString()}.</p><ul>{data.validation.issues.map((issue,i) => <li key={i}>{issue.scholarshipId ? (data.entries.find(e => e.scholarshipId === issue.scholarshipId)?.evidence.current.sources.scholarship.humanId ?? issue.scholarshipId) + ": " : ""}{issue.message} ({issue.code})</li>)}</ul>
+        </>}</PayrollDetailBoundary>
+        <PayrollDisclosure key={detail.batch.id + "-history"} title="Payroll history"><PayrollPagedDetails permissions={permissions} batchId={detail.batch.id} cycle={detail.cycle} mode="history"/></PayrollDisclosure>
+        </div>
+        {(!detail.managedBatch||detail.frozen)&&<section className="u1-roster-page" aria-label={detail.frozen ? "Saved payroll roster" : "Candidate pages"}><h3>{detail.frozen ? "Saved payroll roster" : "Candidate pages"}{detail.frozen?.count!==null&&detail.frozen?.count!==undefined&&<span className="u11-roster-total">{detail.frozen.count} scholars</span>}</h3>
+          <PayrollPagedDetails permissions={permissions} batchId={detail.batch.id} cycle={detail.cycle} mode={detail.frozen ? "roster" : "candidates"}/>
+        </section>}
+        </>}
+      </section>}
+      <CommandProgressDialog operation={action==="submit-review"?"Submitting for Coordinator Review":action==="finalize"?"Finalizing Payroll":action==="return-to-draft"?"Returning Payroll to Draft":"Saving payroll draft"} identity={`${detail?.batch.code??"Payroll"} / ${detail?.batch.id??cycleId}`} count={draftReview?.includedCount??detail?.frozen?.count??undefined} pending={saving}/>
       {action && (
         <form ref={actionForm}
           onSubmit={submit}
           className="border-top mt-3 pt-3"
           aria-label="Payroll draft command"
+          onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();dismissForm();}}}
           key={`${action}-${removeId}`}
         >
           <fieldset
@@ -564,7 +461,7 @@ export default function OvrDrafts({
                   : action === "remove"
                     ? "Remove Payroll entry"
                     : action === "submit-review"
-                      ? "Submit Payroll for review"
+                      ? "Submit for Coordinator Review"
                       : action === "return-to-draft"
                         ? "Return Payroll to Draft"
                         : action === "finalize"
@@ -640,7 +537,7 @@ export default function OvrDrafts({
                   </select>
                 </label>
                 {!candidates ? (
-                  <p>Loading candidates...</p>
+                  <p role="status" hidden={!!error}>Loading candidates...</p>
                 ) : (
                   <p>
                     {candidates.total} matching records. Adding always rechecks
@@ -704,7 +601,7 @@ export default function OvrDrafts({
               <button
                 type="button"
                 className="btn btn-outline-secondary"
-                onClick={() => setAction(null)}
+                onClick={dismissForm}
               >
                 Dismiss Payroll form
               </button>

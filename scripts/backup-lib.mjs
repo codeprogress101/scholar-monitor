@@ -1,15 +1,23 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile, stat, unlink, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, stat, statfs, unlink, rename } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import mysql from "mysql2/promise";
 import { localAdmin } from "./migration-lib.mjs";
 
 const MAGIC = Buffer.from("LDSSB001");
-const MAX_SQL = 64 * 1024 * 1024;
+// BACKUP-1: the measured 81.6 MiB UAT dump needs bounded growth headroom.
+// Retain the existing archive, decoded-envelope and per-table row ceilings.
+const MAX_SQL = 128 * 1024 * 1024;
 const MAX_ARCHIVE = 96 * 1024 * 1024;
+const MAX_PAYLOAD = 192 * 1024 * 1024;
+const MAX_ROWS = 100000;
+export const BACKUP_LIMITS = Object.freeze({
+  sqlBytes: MAX_SQL, archiveBytes: MAX_ARCHIVE,
+  payloadBytes: MAX_PAYLOAD, rowsPerTable: MAX_ROWS,
+});
 export const keyPath = join(homedir(), ".ldss-backup", "key.bin");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const identifier = (value) => {
@@ -18,11 +26,18 @@ const identifier = (value) => {
 };
 
 export function seal(payload, key) {
+  if (typeof payload.sql !== "string" || Buffer.byteLength(payload.sql) > MAX_SQL)
+    throw new Error("Backup SQL exceeds its size limit.");
+  const json = JSON.stringify(payload);
+  if (Buffer.byteLength(json) > MAX_PAYLOAD)
+    throw new Error("Backup payload exceeds its size limit.");
   const nonce = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, nonce);
   cipher.setAAD(MAGIC);
-  const encrypted = Buffer.concat([cipher.update(gzipSync(JSON.stringify(payload))), cipher.final()]);
-  return Buffer.concat([MAGIC, nonce, cipher.getAuthTag(), encrypted]);
+  const encrypted = Buffer.concat([cipher.update(gzipSync(json)), cipher.final()]);
+  const archive = Buffer.concat([MAGIC, nonce, cipher.getAuthTag(), encrypted]);
+  if (archive.length > MAX_ARCHIVE) throw new Error("Backup exceeds size limit.");
+  return archive;
 }
 
 export function unseal(bytes, key, expectedDatabase = "ldss_scholar_monitor_dev") {
@@ -34,7 +49,7 @@ export function unseal(bytes, key, expectedDatabase = "ldss_scholar_monitor_dev"
     decipher.setAuthTag(bytes.subarray(20, 36));
     // Authenticate the complete ciphertext before parsing or running any SQL.
     const compressed = Buffer.concat([decipher.update(bytes.subarray(36)), decipher.final()]);
-    const payload = JSON.parse(gunzipSync(compressed, { maxOutputLength: MAX_SQL * 3 }).toString("utf8"));
+    const payload = JSON.parse(gunzipSync(compressed, { maxOutputLength: MAX_PAYLOAD }).toString("utf8"));
     if (payload.version !== 1 || payload.database !== expectedDatabase ||
         typeof payload.sql !== "string" || Buffer.byteLength(payload.sql) > MAX_SQL ||
         hash(payload.sql) !== payload.sqlHash || !payload.inventory?.tables)
@@ -58,6 +73,7 @@ export function run(executable, args, { input, password = "", limit = MAX_SQL } 
     let size = 0;
     let failed = false;
     const fail = () => {
+      if (failed) return;
       failed = true;
       child.kill();
       reject(new Error("Backup database tool failed, timed out or exceeded its size limit; raw SQL and credentials withheld."));
@@ -108,9 +124,9 @@ export async function inventory(db) {
     if (table.engine !== "InnoDB") throw new Error("Backup supports InnoDB tables only.");
     // Logical values, including generated columns and full datetime precision,
     // avoid storage-format differences in MariaDB's CHECKSUM TABLE.
-    const [rows] = await db.query({ sql: `SELECT * FROM ${identifier(table.name)} LIMIT 100001`,
+    const [rows] = await db.query({ sql: `SELECT * FROM ${identifier(table.name)} LIMIT ${MAX_ROWS + 1}`,
       rowsAsArray: true, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true });
-    if (rows.length > 100000) throw new Error("Local recovery tooling supports at most 100000 rows per table.");
+    if (rows.length > MAX_ROWS) throw new Error("Local recovery tooling supports at most 100000 rows per table.");
     table.count = rows.length;
     table.checksum = hash(rows.map((row) => hash(JSON.stringify(row))).sort().join("\n"));
   }
@@ -132,7 +148,17 @@ export async function inventory(db) {
 
 const clientArgs = (user) => ["--no-defaults", "--host=127.0.0.1", `--port=${Number(process.env.DB_PORT ?? 3306)}`, `--user=${user}`, "--default-character-set=utf8mb4"];
 
+async function requireArchiveSpace(directory) {
+  await mkdir(directory, { recursive: true });
+  const space = await statfs(directory, { bigint: true });
+  // Reserve a complete bounded archive before taking source locks. The final
+  // write can still fail (quota/concurrent use); its partial file is removed.
+  if (space.bavail * space.bsize < BigInt(MAX_ARCHIVE))
+    throw new Error("Insufficient backup storage for the bounded archive.");
+}
+
 export async function createBackup(key, context) {
+  await requireArchiveSpace(context?.directory ?? "output/backups");
   const db = context ? await mysql.createConnection(context.connection) : await localAdmin();
   const source = context?.connection.database ?? "ldss_scholar_monitor_dev";
   let locked = false;
@@ -171,7 +197,8 @@ export async function createBackup(key, context) {
       if (error.code !== "EEXIST") await unlink(`${file}.partial`).catch(() => {});
       throw error;
     }
-    return { file, createdAt: payload.createdAt, tables: state.tables.length, bytes: encrypted.length };
+    return { file, createdAt: payload.createdAt, tables: state.tables.length,
+      bytes: encrypted.length, sqlBytes: Buffer.byteLength(sql) };
   } finally {
     if (locked) await db.query("UNLOCK TABLES").catch(() => {});
     await db.end();

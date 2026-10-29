@@ -1,0 +1,8 @@
+# Migration checksums use exact bytes; retain accepted mixed line endings.
+/db/migrations/*.sql -text
+/db/proposed-migrations/*.sql -text
+
+# Provisioning payloads are SHA-256 sealed and must survive Windows checkout.
+/scripts/backup-worker/*.ps1 text eol=lf
+/scripts/backup-worker/*.cs text eol=lf
+/scripts/backup-worker/*.json text eol=lf

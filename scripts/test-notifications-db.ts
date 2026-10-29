@@ -1,3 +1,5 @@
+import {schemaManifest} from '../server/schema-manifest.js';
+import { assertNotificationParity } from "./test-notification-parity.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { NotificationService } from "../server/notifications/service.js";
 import "dotenv/config";
@@ -49,7 +51,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -325,6 +327,8 @@ try {
   assert.equal(second.items.find(n=>n.id===notice.id)?.read,false);
   assert.ok((await restarted.read(secondId,{mode:"pending"})).items.some(n=>n.sourceId===requestId));
   pass("Read state is durable and personal; a newly authorized second Coordinator sees outstanding work");
+  await assertNotificationParity(new AuthorizationService(runtime), [...accounts.values()].map(a=>a.id));
+  pass("R06 complete legacy DTOs, split counts/periods, role/type/period/source filters, 25/50/100 pages and unread parity");
   const key=randomUUID();
   const decision=await decide(requestId,"reject","coordinator",key);
   assert.equal(decision.statusCode,200,decision.body);
@@ -340,6 +344,7 @@ try {
   await admin.query("DROP TRIGGER notification_test_failure");
   assert.equal((await list("coordinator")).total,before);
   pass("Failed workflow transaction creates no success notification");
+  await assertNotificationParity(new AuthorizationService(runtime), [...accounts.values()].map(a=>a.id));
   // A pre-feature request has no captured notification; source discovery must still find it.
   const [triggers] = await admin.query<mysql.RowDataPacket[]>("SHOW CREATE TRIGGER notification_event_capture");
   const capture=String(triggers[0]["SQL Original Statement"]);
@@ -350,6 +355,25 @@ try {
   assert.ok((await list("coordinator","pending")).items.some(n=>n.sourceId===old.json().requestId));
   assert.ok(!(await list("coordinator")).items.some(n=>n.sourceId===old.json().requestId));
   pass("Pre-feature pending request is discovered without replaying historical notices");
+  const snapshotRequest=await send(proposal(1,"dropped"));
+  assert.equal(snapshotRequest.statusCode,200,snapshotRequest.body);
+  let intervened=false;
+  const snapshotPool=new Proxy(runtime, { get(target, property) {
+    if(property!=="getConnection") { const value=Reflect.get(target,property);return typeof value==="function"?value.bind(target):value; }
+    return async()=>{const connection=await target.getConnection();return new Proxy(connection,{get(target,property){
+      if(property!=="query") {const value=Reflect.get(target,property);return typeof value==="function"?value.bind(target):value;}
+      return async(sql:string,...args:unknown[])=>{
+        const result=await (target.query as (sql:string,...args:unknown[])=>Promise<unknown>)(sql,...args);
+        if(!intervened && sql.startsWith("SELECT SUM(count)")) {intervened=true;const result=await decide(snapshotRequest.json().requestId,"reject");assert.equal(result.statusCode,200,result.body);}
+        return result;
+      };
+    }});};
+  }});
+  const snapshotService=new NotificationService(new AuthorizationService(snapshotPool));
+  const stable=await snapshotService.page(accounts.get("coordinator")!.id,{mode:"pending",source:snapshotRequest.json().requestId});
+  assert(intervened);assert.equal(stable.total,1);assert.equal(stable.items.length,1);assert.equal(stable.items[0].state,"pending");
+  assert.equal((await snapshotService.page(accounts.get("coordinator")!.id,{mode:"pending",source:snapshotRequest.json().requestId})).total,0);
+  pass("R06 count, keys and details share one snapshot during concurrent source resolution; next request is fresh");
   const fresh=await send(proposal(1,"on_hold"));
   const winner=await Promise.all([decide(fresh.json().requestId),decide(fresh.json().requestId)]);
   assert.equal(winner.filter(r=>r.statusCode===200).length,1);
@@ -364,8 +388,8 @@ try {
   assert.ok((await list("system_admin")).items.every(n=>n.kind==="account"));
   assert.equal((await list("system_admin","pending")).total,0);
   pass("Revoked and disabled reviewers lose list/read access; Administrator has technical notices only");
-  // Restore fixture standing for the real masterlist workflow below (isolated synthetic record only).
-  await admin.execute("UPDATE scholarship_records SET operational_status='active' WHERE id=?",[record.id]);
+  // Reset this isolated standing fixture for ordinary new-activation review; existing standing now correctly blocks preparation.
+  await admin.execute("UPDATE scholarship_records SET operational_status=NULL WHERE id=?",[record.id]);
   const evidence={reason:"Synthetic notifications workflow",reference:"NOTICE-FIXTURE"};
   const draft=await request("staff","/api/v1/masterlists",{academicYearId:year.id,title:"Notifications review roster",...evidence});
   assert.equal(draft.statusCode,200,draft.body);
@@ -392,6 +416,23 @@ try {
   await transition("submit-verification","coordinator");
   assert.ok((await list("staff")).items.some(n=>n.sourceId===draftId && n.action==="return-draft"));
   pass("Earlier outcome ownership survives a later submission by a different preparer");
+  await assertNotificationParity(new AuthorizationService(runtime), [...accounts.values()].map(a=>a.id));
+  for (const endpoint of ["count", "page", "pending", "periods"]) {
+    assert.equal((await app.inject(`/api/v1/notifications/${endpoint}`)).statusCode,401);
+    const restricted = await request("system_admin", `/api/v1/notifications/${endpoint}?type=document&year=${year.id}`);
+    assert.equal(restricted.statusCode,200,restricted.body);
+    if (endpoint === "page") assert.deepEqual(restricted.json().items,[]);
+  }
+  assert.equal((await request("staff","/api/v1/notifications/page?role=coordinator")).statusCode,422);
+  const concurrentNotice = (await list("coordinator")).items[0];
+  await Promise.all([restarted.mark(accounts.get("coordinator")!.id, concurrentNotice.id, {read:true}), restarted.mark(accounts.get("coordinator")!.id, concurrentNotice.id, {read:true})]);
+  const [readBefore] = await admin.execute<mysql.RowDataPacket[]>("SELECT read_at FROM notification_reads WHERE user_id=? AND event_id=?",[accounts.get("coordinator")!.id,concurrentNotice.id]);
+  await restarted.mark(accounts.get("coordinator")!.id, concurrentNotice.id, {read:true});
+  const [readAfter] = await admin.execute<mysql.RowDataPacket[]>("SELECT read_at FROM notification_reads WHERE user_id=? AND event_id=?",[accounts.get("coordinator")!.id,concurrentNotice.id]);
+  assert.deepEqual(readAfter,readBefore); assert.equal(readAfter.length,1);
+  await Promise.all([restarted.mark(accounts.get("coordinator")!.id, concurrentNotice.id, {read:false}), restarted.mark(accounts.get("coordinator")!.id, concurrentNotice.id, {read:true})]);
+  await assertNotificationParity(new AuthorizationService(runtime), [...accounts.values()].map(a=>a.id));
+  pass("R06 authenticated split endpoints, forged role denial, repeated read timestamp, serialized concurrent read/unread and fresh source-change parity");
   if (process.argv.includes("--browser")) {
     await transition("return-draft");
     await transition("submit-verification","staff");

@@ -1,0 +1,161 @@
+%% Payroll periods, cutoffs and preparation; core tables: payout_cycles, payout_cycle_versions, regular_payout_periods, payout_requirements, payout_eligibility, payroll_cutoff_rule_versions, semester_submission_versions, payroll_submission_windows, payroll_submission_window_versions, payroll_preparation_versions, historical_payout_setups, payroll_deferrals, payroll_draft_deferrals
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% academic_years: Both; BASE TABLE
+  academic_years {
+    char id PK "not null; SQL char(36)"
+  }
+  %% historical_payout_setups: Both; BASE TABLE
+  historical_payout_setups {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char import_job_id FK "not null; SQL char(36)"
+    char batch_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% import_jobs: Both; BASE TABLE
+  import_jobs {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% ovr_batches: Both; BASE TABLE
+  ovr_batches {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% payout_cycle_versions: Both; BASE TABLE
+  payout_cycle_versions {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_cycles: Both; BASE TABLE
+  payout_cycles {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+  }
+  %% payout_eligibility: Both; BASE TABLE
+  payout_eligibility {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_requirements: Both; BASE TABLE
+  payout_requirements {
+    char cycle_version_id PK, FK "not null; SQL char(36)"
+    char definition_version_id PK, FK "not null; SQL char(36)"
+  }
+  %% payroll_cutoff_rule_versions: Both; BASE TABLE
+  payroll_cutoff_rule_versions {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char approved_by FK "not null; SQL char(36)"
+  }
+  %% payroll_deferrals: Both; BASE TABLE
+  payroll_deferrals {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_draft_deferrals: Both; BASE TABLE
+  payroll_draft_deferrals {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_preparation_versions: Both; BASE TABLE
+  payroll_preparation_versions {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_submission_window_versions: Both; BASE TABLE
+  payroll_submission_window_versions {
+    char batch_id PK, FK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int semester_deadline_revision FK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+    int cutoff_rule_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% payroll_submission_windows: Both; BASE TABLE
+  payroll_submission_windows {
+    char batch_id PK, FK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% regular_payout_periods: Both; BASE TABLE
+  regular_payout_periods {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    char semester_id FK, UK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_definition_versions: Both; BASE TABLE
+  requirement_definition_versions {
+    char id PK "not null; SQL char(36)"
+    char definition_id FK "not null; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% semester_submission_versions: Both; BASE TABLE
+  semester_submission_versions {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  regular_payout_periods ||--o{ historical_payout_setups : "historical_payout_setups_ibfk_1"
+  import_jobs ||..o{ historical_payout_setups : "historical_payout_setups_ibfk_2"
+  payroll_submission_windows ||..o| historical_payout_setups : "historical_payout_setups_ibfk_3"
+  users ||..o{ historical_payout_setups : "historical_payout_setups_ibfk_4"
+  semesters ||..o{ payout_cycles : "payout_cycles_ibfk_1"
+  payout_cycles ||..o{ payout_cycle_versions : "payout_cycle_versions_ibfk_1"
+  users ||..o{ payout_cycle_versions : "payout_cycle_versions_ibfk_2"
+  payout_cycles ||..o{ payout_eligibility : "payout_eligibility_ibfk_1"
+  scholarship_records ||..o{ payout_eligibility : "payout_eligibility_ibfk_2"
+  users ||..o{ payout_eligibility : "payout_eligibility_ibfk_3"
+  payout_cycle_versions ||--o{ payout_requirements : "payout_requirements_ibfk_1"
+  requirement_definition_versions ||--o{ payout_requirements : "payout_requirements_ibfk_2"
+  payout_cycles ||--o{ payroll_cutoff_rule_versions : "payroll_cutoff_rule_versions_ibfk_1"
+  users ||..o{ payroll_cutoff_rule_versions : "payroll_cutoff_rule_versions_ibfk_2"
+  payroll_submission_windows ||..o{ payroll_deferrals : "payroll_deferrals_ibfk_1"
+  scholarship_records ||..o{ payroll_deferrals : "payroll_deferrals_ibfk_2"
+  users ||..o{ payroll_deferrals : "payroll_deferrals_ibfk_3"
+  ovr_batches ||..o{ payroll_draft_deferrals : "payroll_draft_deferrals_ibfk_1"
+  scholarship_records ||..o{ payroll_draft_deferrals : "payroll_draft_deferrals_ibfk_2"
+  users ||..o{ payroll_draft_deferrals : "payroll_draft_deferrals_ibfk_3"
+  payout_cycles ||--o{ payroll_preparation_versions : "payroll_preparation_versions_ibfk_1"
+  users ||..o{ payroll_preparation_versions : "payroll_preparation_versions_ibfk_2"
+  ovr_batches ||--o| payroll_submission_windows : "payroll_submission_windows_ibfk_1"
+  regular_payout_periods ||..o{ payroll_submission_windows : "payroll_submission_windows_ibfk_2"
+  users ||..o{ payroll_submission_windows : "payroll_submission_windows_ibfk_3"
+  payroll_cutoff_rule_versions |o..o{ payroll_submission_window_versions : "fk_window_cutoff_rule"
+  payroll_submission_windows ||..o{ payroll_submission_window_versions : "payroll_submission_window_versions_ibfk_1"
+  semester_submission_versions ||..o{ payroll_submission_window_versions : "payroll_submission_window_versions_ibfk_2"
+  users ||..o{ payroll_submission_window_versions : "payroll_submission_window_versions_ibfk_3"
+  payout_cycles ||..o| regular_payout_periods : "regular_payout_periods_ibfk_1"
+  academic_years ||..o{ regular_payout_periods : "regular_payout_periods_ibfk_2"
+  users ||..o{ regular_payout_periods : "regular_payout_periods_ibfk_3"
+  regular_payout_periods ||--o{ semester_submission_versions : "semester_submission_versions_ibfk_1"
+  users ||..o{ semester_submission_versions : "semester_submission_versions_ibfk_2"

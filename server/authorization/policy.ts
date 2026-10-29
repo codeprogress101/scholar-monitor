@@ -1,6 +1,7 @@
 export const ROLE_CODES = ["staff", "coordinator", "system_admin"] as const;
 export type RoleCode = (typeof ROLE_CODES)[number];
 export const PERMISSION_CODES = [
+  "program.duration.prepare", "program.duration.confirm", "graduation.monitoring.record", "graduation.monitoring.review",
   "payroll.windows.manage",
   "continuing.prepare",
   "continuing.approve",
@@ -9,6 +10,7 @@ export const PERMISSION_CODES = [
   "scholars.export",
   "scholars.create",
   "scholars.update",
+  "scholars.intakes.correct",
   "academic.edit",
   "academic.changes.approve",
   "requirements.generate",

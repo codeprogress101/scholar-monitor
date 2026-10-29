@@ -26,6 +26,13 @@ const schema = z
     DB_USER: z.string().min(1).optional(),
     DB_PASSWORD: z.string().optional(),
     BACKUP_STATUS_FILE: z.string().min(1).optional(),
+    // Opt in only after the P04 source-ownership/compatibility rehearsal.
+    INDIVIDUAL_PAYMENTS_ENABLED: z.enum(["true","false"]).optional(),
+    OMITTED_PAYMENTS_ENABLED: z.enum(["true","false"]).optional(),
+    INDIVIDUAL_DOCUMENTS_ENABLED: z.enum(["true","false"]).optional(),
+    INDIVIDUAL_SETTLEMENT_ENABLED: z.enum(["true","false"]).optional(),
+    GRADUATION_MONITORING_WRITES_ENABLED: z.enum(["true","false"]).optional(),
+    HISTORICAL_MULTIBATCH_ENABLED: z.enum(["true","false"]).optional(),
     TRUST_LOOPBACK_PROXY: z.enum(["true", "false"]).default("false").transform(value => value === "true"),
     SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(120).default(30),
     SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(24).default(8),

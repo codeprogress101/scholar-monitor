@@ -1,0 +1,166 @@
+%% Masterlists, activation and amendments; core tables: masterlist_versions, masterlist_entries, masterlist_publications, masterlist_activations, masterlist_workflow_events, masterlist_revisions, masterlist_amendments, masterlist_amendment_decisions, masterlist_amendment_versions, masterlist_addition_events, masterlist_consolidations, masterlist_consolidation_links, eligibility_overrides, eligibility_override_events
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% academic_changes: Both; BASE TABLE
+  academic_changes {
+    char id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% academic_years: Both; BASE TABLE
+  academic_years {
+    char id PK "not null; SQL char(36)"
+  }
+  %% eligibility_override_events: Both; BASE TABLE
+  eligibility_override_events {
+    bigint sequence PK "not null; SQL bigint(20) unsigned"
+    char override_id FK "not null; SQL char(36)"
+    char calculation_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% eligibility_overrides: Both; BASE TABLE
+  eligibility_overrides {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char requester_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_activations: Both; BASE TABLE
+  masterlist_activations {
+    char scholarship_id PK, FK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_addition_events: Both; BASE TABLE
+  masterlist_addition_events {
+    char id PK "not null; SQL char(36)"
+    char draft_id FK "not null; SQL char(36)"
+    char target_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_amendment_decisions: Both; BASE TABLE
+  masterlist_amendment_decisions {
+    char amendment_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_amendment_versions: Both; BASE TABLE
+  masterlist_amendment_versions {
+    char masterlist_id PK, FK "not null; SQL char(36)"
+    char parent_id FK, UK "not null; SQL char(36)"
+    char root_id FK "not null; SQL char(36)"
+    char amendment_id FK, UK "not null; SQL char(36)"
+    char academic_change_id FK "nullable; SQL char(36)"
+  }
+  %% masterlist_amendments: Both; BASE TABLE
+  masterlist_amendments {
+    char id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_consolidation_links: Both; BASE TABLE
+  masterlist_consolidation_links {
+    char source_id PK, FK "not null; SQL char(36)"
+    char successor_id FK, UK "not null; SQL char(36)"
+  }
+  %% masterlist_consolidations: Both; BASE TABLE
+  masterlist_consolidations {
+    char draft_id PK, FK "not null; SQL char(36)"
+    char source_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_entries: Both; BASE TABLE
+  masterlist_entries {
+    char id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_publications: Both; BASE TABLE
+  masterlist_publications {
+    char masterlist_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_revisions: Both; BASE TABLE
+  masterlist_revisions {
+    char masterlist_id PK, FK "not null; SQL char(36)"
+    char parent_id FK, UK "not null; SQL char(36)"
+    char root_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_versions: Both; BASE TABLE
+  masterlist_versions {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_workflow_events: Both; BASE TABLE
+  masterlist_workflow_events {
+    char id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_cycles: Both; BASE TABLE
+  payout_cycles {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+  }
+  %% payout_eligibility: Both; BASE TABLE
+  payout_eligibility {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholars: Both; BASE TABLE
+  scholars {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char barangay_id FK "nullable; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  payout_cycles ||..o{ eligibility_overrides : "eligibility_overrides_ibfk_1"
+  scholarship_records ||..o{ eligibility_overrides : "eligibility_overrides_ibfk_2"
+  users ||..o{ eligibility_overrides : "eligibility_overrides_ibfk_3"
+  eligibility_overrides ||..o{ eligibility_override_events : "eligibility_override_events_ibfk_1"
+  payout_eligibility ||..o{ eligibility_override_events : "eligibility_override_events_ibfk_2"
+  users ||..o{ eligibility_override_events : "eligibility_override_events_ibfk_3"
+  scholarship_records ||--o| masterlist_activations : "masterlist_activations_ibfk_1"
+  masterlist_publications ||..o{ masterlist_activations : "masterlist_activations_ibfk_2"
+  masterlist_versions ||..o{ masterlist_addition_events : "masterlist_addition_events_ibfk_1"
+  masterlist_versions |o..o{ masterlist_addition_events : "masterlist_addition_events_ibfk_2"
+  users ||..o{ masterlist_addition_events : "masterlist_addition_events_ibfk_3"
+  masterlist_publications ||..o{ masterlist_amendments : "masterlist_amendments_ibfk_1"
+  scholars ||..o{ masterlist_amendments : "masterlist_amendments_ibfk_2"
+  users ||..o{ masterlist_amendments : "masterlist_amendments_ibfk_3"
+  masterlist_amendments ||--o| masterlist_amendment_decisions : "masterlist_amendment_decisions_ibfk_1"
+  users ||..o{ masterlist_amendment_decisions : "masterlist_amendment_decisions_ibfk_2"
+  masterlist_publications ||--o| masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_1"
+  masterlist_publications ||..o| masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_2"
+  masterlist_publications ||..o{ masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_3"
+  masterlist_amendments ||..o| masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_4"
+  academic_changes |o..o{ masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_5"
+  masterlist_versions ||--o| masterlist_consolidations : "masterlist_consolidations_ibfk_1"
+  masterlist_versions ||..o{ masterlist_consolidations : "masterlist_consolidations_ibfk_2"
+  masterlist_versions ||--o| masterlist_consolidation_links : "masterlist_consolidation_links_ibfk_1"
+  masterlist_versions ||..o| masterlist_consolidation_links : "masterlist_consolidation_links_ibfk_2"
+  masterlist_versions ||..o{ masterlist_entries : "masterlist_entries_ibfk_1"
+  scholars ||..o{ masterlist_entries : "masterlist_entries_ibfk_2"
+  masterlist_versions ||--o| masterlist_publications : "masterlist_publications_ibfk_1"
+  users ||..o{ masterlist_publications : "masterlist_publications_ibfk_2"
+  masterlist_versions ||--o| masterlist_revisions : "masterlist_revisions_ibfk_1"
+  masterlist_versions ||..o| masterlist_revisions : "masterlist_revisions_ibfk_2"
+  masterlist_versions ||..o{ masterlist_revisions : "masterlist_revisions_ibfk_3"
+  academic_years ||..o{ masterlist_versions : "masterlist_versions_ibfk_1"
+  users ||..o{ masterlist_versions : "masterlist_versions_ibfk_2"
+  masterlist_versions ||..o{ masterlist_workflow_events : "masterlist_workflow_events_ibfk_1"
+  users ||..o{ masterlist_workflow_events : "masterlist_workflow_events_ibfk_2"

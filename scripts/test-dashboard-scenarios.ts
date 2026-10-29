@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import type { RowDataPacket } from "mysql2/promise";
 import type { testReports } from "./test-report-scenarios.js";
 import type { Dashboard } from "../server/dashboard/service.js";
 import type { OperationalReport } from "../server/reports/model.js";
+import { DASHBOARD_HASH_BASIS } from "../server/dashboard/summary.js";
 export async function testDashboard(c: Parameters<typeof testReports>[0]) {
   const path = `/api/v1/dashboard?cycleId=${c.cycleId}`;
   for (const role of ["system_admin", "unassigned"])
@@ -17,6 +19,7 @@ export async function testDashboard(c: Parameters<typeof testReports>[0]) {
       .statusCode,
     404,
   );
+  const [auditBefore] = await c.admin.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM audit_logs");
   const response = await c.request("staff", path);
   assert.equal(response.statusCode, 200, response.body);
   assert.equal(response.headers["cache-control"], "no-store");
@@ -38,7 +41,9 @@ export async function testDashboard(c: Parameters<typeof testReports>[0]) {
     const report = response.json<OperationalReport>();
     assert.equal(card.total, report.total);
     assert.deepEqual(card.counts, report.counts);
-    assert.equal(card.sourceHash, report.sourceHash);
+    assert.equal(card.scope, report.scope);
+    assert.equal(card.sourceHashBasis, DASHBOARD_HASH_BASIS);
+    assert.match(card.sourceHash, /^[a-f0-9]{64}$/);
     assert.equal(
       Object.hasOwn(card, "items"),
       false,
@@ -48,5 +53,7 @@ export async function testDashboard(c: Parameters<typeof testReports>[0]) {
   const coord = await c.request("coordinator", path);
   assert.equal(coord.statusCode, 200, coord.body);
   assert.deepEqual(coord.json<Dashboard>().cards, dashboard.cards);
+  const [auditAfter] = await c.admin.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM audit_logs");
+  assert.deepEqual(auditAfter, auditBefore, "Dashboard reads must not write audit/workflow evidence");
   return dashboard;
 }

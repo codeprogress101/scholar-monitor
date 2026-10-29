@@ -383,6 +383,7 @@ export default function ReceivingRequirements({
                 <p className="status-badge">{i.verificationNeedsReview ? "Verification needs review" : (i.priorApproval?.valid && !i.priorApproval.retainedIndividual ? "Verified - prior batch approval" : REQUIREMENT_STATUS_LABELS[i.status])}</p>
                 {i.originalReused && <p className="small">Existing document reused. Original receipt and decisions retained.</p>}
                 <p className="small">{i.entrantCard ? `${i.entrantCard.issuingSchool} / ${i.entrantCard.schoolYear} / ${i.entrantCard.gradingPeriod}` : i.coverage ? `Coverage: ${i.coverage.semesterName}` : "Coverage needs review"}</p>
+                {i.priorApproval?.valid&&<><p className="alert alert-success">{i.priorApproval.retainedIndividual?'Individual verification retained; prior-batch assessment remains usable.':'Recorded prior-batch attestation remains usable. This does not claim individual verification against a preceding-year academic record.'}</p><p className="small">Reference: {i.priorApproval.reference}. Historical approval date: {i.priorApproval.approvalOn??'Not recorded'}.</p></>}
                 <details><summary>Instructions & receiving history</summary><p>{i.instructions}</p>
                 <ReceiptTimingEvidence evidence={i.receiptEvidence} />
                 <RequirementTimingPanel key={`${i.id}-${i.version}`} instanceId={i.id} session={session} canDecide={can("payroll.windows.manage")} />

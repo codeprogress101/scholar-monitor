@@ -7,13 +7,11 @@ const text = (max: number) =>
     .trim()
     .max(max)
     .regex(/^\P{Cc}*$/u, "Control characters are not allowed.");
-export const today = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+// Reuse the formatter, never the date: each call still reads the live clock.
+const manilaDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+});
+export const today = () => manilaDate.format(new Date());
 export const scholarFieldsSchema = z
   .object({
     firstName: text(100).min(1),
@@ -89,11 +87,14 @@ export const parseScholarQuery = (value: unknown) =>
         academicYearId: z.uuid().optional(),
         scholarshipYearId: z.uuid().optional(),
         contextAcademicYearId: z.uuid().optional(),
+        associatedYearId: z.uuid().optional(),
+        registryYearId: z.uuid().optional(),
+        schoolId: z.uuid().optional(), courseId: z.uuid().optional(),
         classification: z.enum(["all", "new", "continuing", "unknown"]).default("all"),
         offset: z.coerce.number().int().min(0).max(1000000).default(0),
         limit: z.coerce.number().int().min(1).max(100).default(25),
       })
-      .strict(),
+      .strict().refine(q=>!q.registryYearId||(!q.academicYearId&&!q.scholarshipYearId&&!q.associatedYearId&&(!q.contextAcademicYearId||q.contextAcademicYearId===q.registryYearId)),"Use one Registry annual context.").refine(q=>!q.associatedYearId||(!q.academicYearId&&!q.scholarshipYearId&&(!q.contextAcademicYearId||q.contextAcademicYearId===q.associatedYearId)),"Use one annual association context; do not mix different year selectors."),
     value,
   );
 

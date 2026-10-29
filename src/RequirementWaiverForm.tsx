@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useActionForm } from "./use-action-form";
 import { REQUIREMENT_STATUS_LABELS as statusLabel } from "../server/requirements/workflow-model";
 import { useRef, useState, type FormEvent } from "react";
@@ -175,9 +176,9 @@ export default function RequirementWaiverForm({
               />
             </label>
             <div className="d-flex gap-2 flex-wrap">
-              <button className="btn configuration-primary">
+              <ActionButton pending={saving} className="btn configuration-primary">
                 {saving ? "Recording..." : "Record requirement waiver"}
-              </button>
+              </ActionButton>
               <button
                 className="btn btn-outline-secondary"
                 type="button"

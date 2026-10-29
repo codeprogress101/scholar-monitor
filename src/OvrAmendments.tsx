@@ -1,6 +1,7 @@
 import { useActionForm } from "./use-action-form";
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import type { OvrDetail } from "../server/ovr/model";
+import type { OvrSections } from "../server/ovr/detail-model";
+type OvrDetail = OvrSections["amendments"];
 import type { EligibilityView } from "../server/eligibility/model";
 import { ApiError, type Session } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";

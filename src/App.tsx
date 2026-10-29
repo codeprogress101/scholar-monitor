@@ -1,24 +1,25 @@
+import WorkspaceControls, {SidebarAccount} from "./WorkspaceControls";
 import BackupStatus from "./BackupStatus";
-import Notifications, { NotificationBell, useNotifications } from "./Notifications";
+import Notifications, { useNotifications, useNotificationCount } from "./Notifications";
 import { configurationRequest } from "./configuration-api";
 import type { Access } from "../server/authorization/policy";
 import { REPORTS } from "../server/reports/model";
 import AuditPage from "./AuditPage";
 import DashboardPage from "./DashboardPage";
 import PayoutCyclesPage from "./PayoutCyclesPage";
-import ReportsPage from "./ReportsPage";
+import ReportsWorkspace from "./ReportsWorkspace";
+import PayrollWorkspaceNav from "./PayrollWorkspaceNav";
 import RequirementsPage from "./RequirementsPage";
 import MasterlistsPage from "./MasterlistsPage";
 import ScholarWorkspace from "./ScholarWorkspace";
 import { routeChangeTracker } from "./scholar-navigation";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
   BookOpen,
   Check,
   CheckCheck,
-  ChevronRight,
   Circle,
   ClipboardCheck,
   FileCheck2,
@@ -27,7 +28,6 @@ import {
   LayoutGrid,
   ListChecks,
   MapPin,
-  Menu,
   Milestone,
   RefreshCw,
   Server,
@@ -43,6 +43,7 @@ import ConfigurationPage from "./ConfigurationPage";
 import AdmissionReview from "./AdmissionReview";
 import roadmap from "./roadmap.json";
 import type { Session } from "./auth-api";
+const IndividualPayments=lazy(()=>import('./IndividualPayments'));
 
 type Page =
   | "notifications"
@@ -58,6 +59,7 @@ type Page =
   | "continuing"
   | "requirements"
   | "payouts"
+  | "individual-payments"
   | "reports"
   | "dashboard"
   | "audit";
@@ -80,6 +82,7 @@ const navigation = [
     icon: FileCheck2,
   },
   { id: "payouts" as const, label: "Payroll", icon: Wallet },
+  { id: "individual-payments" as const, label: "Individual Payments", icon: Wallet },
   { id: "reports" as const, label: "Reports", icon: ListChecks },
   { id: "audit" as const, label: "Audit events", icon: ShieldCheck },
   { id: "configuration" as const, label: "Configuration", icon: Settings2 },
@@ -134,13 +137,14 @@ export default function App({
   const [access, setAccess] = useState<Access | null>(null);
   useEffect(() => { const controller = new AbortController(); configurationRequest<Access>("me/permissions", { signal: controller.signal }).then(setAccess).catch(() => {}); return () => controller.abort(); }, []);
   const can = (permission: string) => access?.permissions.some(p => p.code === permission) ?? false;
-  const daily = ["dashboard", ...(can("scholars.read") ? ["scholars", "admissions"] : []), ...(can("ovr.prepare") ? ["payouts"] : []), ...(can("masterlists.prepare") ? ["masterlists"] : []), ...(Object.values(REPORTS).some(report => can(report.permission)) ? ["reports"] : [])];
+  const daily = ["dashboard", ...(can("scholars.read") ? ["scholars", "admissions"] : []), ...(can("ovr.prepare") ? ["payouts"] : []), ...(can("ovr.process") ? ["individual-payments"] : []), ...(can("masterlists.prepare") ? ["masterlists"] : []), ...(can('ovr.process')||Object.values(REPORTS).some(report => can(report.permission)) ? ["reports"] : [])];
   const tools = ["access", ...(can("configuration.read") ? ["requirements", "configuration"] : []), ...(can("audit.view_all") || can("audit.view_limited") ? ["audit"] : []), "status", "roadmap", "overview", ...(can("configuration.manage") && !can("ovr.prepare") ? ["payouts"] : [])];
   const [page, setPage] = useState<Page>(initialPage);
   const [locationHash, setLocationHash] = useState(window.location.hash);
   const routeTracker = useRef(routeChangeTracker(window.location.hash));
-  const notificationQuery = page === "dashboard" ? "mode=pending" : page === "notifications" ? (locationHash.split("?")[1] || "mode=updates") : "mode=updates";
-  const notificationFeed = useNotifications(session.user.id, notificationQuery, !signingOut);
+  const notificationQuery = page === "notifications" ? (locationHash.split("?")[1] || "mode=updates") : "mode=updates";
+  const notificationCount = useNotificationCount(session.user.id, !signingOut);
+  const notificationFeed = useNotifications(session.user.id, notificationQuery, !signingOut && page === "notifications");
   useEffect(() => {
     const id = new URLSearchParams(locationHash.split("?")[1]).get("request");
     if (!id) return;
@@ -325,38 +329,12 @@ export default function App({
               Municipality of Daet<small>Camarines Norte, Philippines</small>
             </div>
           </div>
+          <SidebarAccount session={session} access={access} onLogout={onLogout} signingOut={signingOut}/>
         </div>
       </aside>
 
       <div className="workspace-body" inert={menuOpen}>
-        <header className="topbar">
-          <div className="breadcrumb-row">
-            <button
-              className="mobile-toggle icon-button"
-              aria-label="Open navigation"
-              aria-expanded={menuOpen}
-              aria-controls="primary-navigation"
-              onClick={() => setMenuOpen(true)}
-            >
-              <Menu size={23} />
-            </button>
-            <span className="breadcrumb-root">Workspace</span>
-            <ChevronRight size={14} />
-            <span>{navigation.find((item) => item.id === page)?.label}</span>
-          </div>
-          <div className="topbar-right">
-            <NotificationBell feed={notificationFeed} />
-            <span className="signed-in-name">{session.user.fullName}{access && <small className="d-block">{access.roles.map(role => role.label).join(" · ") || "No role assigned"}</small>}</span>
-            <div className="topbar-divider" />
-            <button
-              className="sign-out-button"
-              onClick={onLogout}
-              disabled={signingOut}
-            >
-              {signingOut ? "Signing out..." : "Sign out"}
-            </button>
-          </div>
-        </header>
+        <WorkspaceControls notificationCount={notificationCount} menuOpen={menuOpen} onOpenNavigation={()=>setMenuOpen(true)}/>
 
         <main id="main-content" tabIndex={-1}>
           {page === "access" && <AccessPage session={session} />}
@@ -366,8 +344,11 @@ export default function App({
           {page === "audit" && <AuditPage session={session} />}
           {page === "dashboard" && <DashboardPage />}
           {page === "notifications" && <Notifications feed={notificationFeed} session={session} query={notificationQuery} onQuery={q => { window.location.hash = "notifications?" + q; }} />}
-          {page === "reports" && <ReportsPage key={`reports-${navigationRevision}-${locationHash}`} />}
+          {page === "reports" && <ReportsWorkspace key={`reports-${navigationRevision}-${locationHash}`} session={session} permissions={access?.permissions.map(p=>p.code)??[]} />}
+          {(page === "payouts" || page === "individual-payments") && <PayrollWorkspaceNav hash={locationHash} actor={session.user.id} />}
           {page === "payouts" && <PayoutCyclesPage session={session} />}
+          {page === "individual-payments" && can("ovr.process") && <Suspense fallback={<p role="status">Loading Individual Payments…</p>}><IndividualPayments session={session} permissions={access?.permissions.map(p=>p.code)??[]} /></Suspense>}
+          {page === "individual-payments" && access && !can("ovr.process") && <p className="alert alert-info">Individual Payments requires Staff or Coordinator payment-processing permission. System Administrator access alone does not grant payment authority.</p>}
           {page === "requirements" && <RequirementsPage session={session} />}
           {page === "configuration" && <ConfigurationPage key={`configuration-${navigationRevision}`} session={session} />}
           {page === "overview" && (

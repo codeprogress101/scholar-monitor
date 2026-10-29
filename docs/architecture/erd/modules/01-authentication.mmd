@@ -1,0 +1,46 @@
+%% Accounts, roles and authentication; core tables: users, roles, permissions, user_roles, role_permissions, auth_sessions, password_resets, auth_rate_limits
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% auth_rate_limits: Both; BASE TABLE
+  auth_rate_limits {
+    char bucket_hash PK "not null; SQL char(64)"
+  }
+  %% auth_sessions: Both; BASE TABLE
+  auth_sessions {
+    char token_hash PK "not null; SQL char(64)"
+    char user_id FK "not null; SQL char(36)"
+  }
+  %% password_resets: Both; BASE TABLE
+  password_resets {
+    char token_hash PK "not null; SQL char(64)"
+    char user_id FK "not null; SQL char(36)"
+  }
+  %% permissions: Both; BASE TABLE
+  permissions {
+    varchar code PK "not null; SQL varchar(80)"
+  }
+  %% role_permissions: Both; BASE TABLE
+  role_permissions {
+    varchar role_code PK, FK "not null; SQL varchar(32)"
+    varchar permission_code PK, FK "not null; SQL varchar(80)"
+  }
+  %% roles: Both; BASE TABLE
+  roles {
+    varchar code PK "not null; SQL varchar(32)"
+  }
+  %% user_roles: Both; BASE TABLE
+  user_roles {
+    char id PK "not null; SQL char(36)"
+    char user_id FK "not null; SQL char(36)"
+    varchar role_code FK "not null; SQL varchar(32)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  users ||..o{ auth_sessions : "fk_session_user"
+  users ||..o{ password_resets : "fk_reset_user"
+  roles ||--o{ role_permissions : "role_permissions_ibfk_1"
+  permissions ||--o{ role_permissions : "role_permissions_ibfk_2"
+  users ||..o{ user_roles : "user_roles_ibfk_1"
+  roles ||..o{ user_roles : "user_roles_ibfk_2"

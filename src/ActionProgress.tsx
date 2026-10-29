@@ -1,0 +1,9 @@
+import type {ButtonHTMLAttributes,ReactNode} from "react";
+export type OperationFeedback={operation:string;identity:string;count?:number;unit?:string;pending:boolean;uncertain?:boolean;error?:string;retry?:()=>void;retryLabel?:string};
+export function ActionSpinner(){return <span className="action-spinner" aria-hidden="true"/>;}
+export function ActionButton({pending,activeLabel="Saving...",children,disabled,className="",...props}:ButtonHTMLAttributes<HTMLButtonElement>&{pending:boolean;activeLabel?:string;children:ReactNode}){
+ return <><button {...props} className={`${className} action-feedback-button`} disabled={pending||disabled} aria-busy={pending||undefined}><span className="action-button-content">{pending&&<ActionSpinner/>}{pending?activeLabel:children}</span></button><span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{pending?activeLabel:""}</span></>;
+}
+export function OperationProgress({operation,identity,count,unit="scholars",pending,uncertain,error,retry,retryLabel="Retry Exact Action"}:OperationFeedback){
+ return <section className="operation-progress" aria-label="Action progress"><p className="operation-progress-status" role="status" aria-live="polite" aria-atomic="true" tabIndex={-1}>{pending&&<ActionSpinner/>}<strong>{pending?operation:"Result not confirmed"}</strong></p><p className="operation-identity">{identity}</p>{Number.isSafeInteger(count)&&count!>=0&&<p>{count!.toLocaleString()} reviewed {unit}</p>}<p>{pending?"Waiting for the server result. Keep this workspace open.":"The exact request is retained. Confirm its result before another action."}</p>{error&&<p role="alert" className="alert alert-danger">{error}</p>}{uncertain&&retry&&<ActionButton type="button" className="btn configuration-primary" pending={pending} activeLabel="Checking result..." onClick={retry}>{retryLabel}</ActionButton>}</section>;
+}

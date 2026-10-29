@@ -1,24 +1,30 @@
+import {cutoffPolicy,windowCutoffReached} from "../payouts/cutoff-policy.js";
+import { readCompleteOvrDetail } from "./complete-detail.js";
 import { cachedReads } from "../read-cache.js";
+import { payrollSummary, candidatePage, entryPage, historyPage, readOvrSection, batchMetadata } from "./detail-reads.js";
+import type { OvrSections } from "./detail-model.js";
 import { cohortReads } from "../eligibility/cohort-reads.js";
-import { semesterClaim } from "./reprocessing.js";
-import { treasuryEvidence, historicalReceipts } from "./treasury-state.js";
+import { candidateReads } from "./candidate-reads.js";
 import {encodeStoredJson,decodeStoredJson} from "../stored-json.js";
+import { hydratePaymentEvents } from "../payments/processing-evidence.js";
 import { requireNumberedPayroll } from "./legacy-boundary.js";
 import { assertPayrollRoster, amendFrozenForm } from "./amended-form.js";
 import { claimDeadline, requireClaimOpen, assertNoPaidClaim, draftDeferral, writeDeferral, reprocessingQueue, retryEvidence, assignRetry, queueUnclaimed, UNPAID_REASONS } from "./reprocessing.js";
+import { assertNoIndividualRoute } from "../payments/individual-writes.js";
 import { automaticDraft } from "./automatic-draft.js";
+import {requirePreparationOpen} from '../payouts/preparation.js';
 import { managedCandidates, candidateEntries, allocatePayroll } from "./managed-payroll.js";
-import { managedRelease } from "./managed-release.js";
 import { renderPayrollWord } from "./payroll-word.js";
 import { payrollSignatories, renderPayroll } from "./payroll-form.js";
 import { validationDetails } from "../validation-details.js";
 import { paymentCorrections } from "./payment-correction-state.js";
-import { amendments, effectiveRoster } from "./amendment-state.js";
-import { paymentRecords, reconcilePayments } from "./processing-state.js";
+import { effectiveRoster } from "./amendment-state.js";
+import { paymentRecords } from "./processing-state.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
+import { requireManagedReview } from "./rules.js";
 import { AuthError } from "../auth/service.js";
 import { digest } from "../auth/crypto.js";
 import { parseId, parseKey } from "../configuration/validation.js";
@@ -97,7 +103,7 @@ export async function ovrHistory(
   );
   if (!r.length)
     throw new AuthError(404, "OVR_NOT_FOUND", "Payroll batch not found.");
-  return r.map((v) => decode<OvrBatch>(v.snapshot));
+  return hydratePaymentEvents(r.map((v) => decode<OvrBatch>(v.snapshot)));
 }
 export async function ovrEntries(
   db: PoolConnection,
@@ -201,6 +207,45 @@ export async function validateOvr(
 }
 export class OvrService {
   constructor(private authorization: AuthorizationService) {}
+  private readProjection<T>(actor: string, rawId: unknown, run: (db: PoolConnection, id: string, access: import("../authorization/policy.js").Access) => Promise<T>) {
+    const id = parseId(rawId);
+    return this.authorization.readSnapshot(actor, "ovr.prepare", async (connection, access) => {
+      const db = cachedReads(connection);
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+      return run(db, id, access);
+    });
+  }
+  summary(actor: string, id: unknown) { return this.readProjection(actor, id, (db, id, access) => payrollSummary(db, id, access)); }
+  candidatePage(actor: string, id: unknown, raw: unknown) { return this.readProjection(actor, id, (db, id) => candidatePage(db, id, raw)); }
+  entryPage(actor: string, id: unknown, raw: unknown) { return this.readProjection(actor, id, async (db, id) => { await batchMetadata(db, id); return entryPage(db, id, raw); }); }
+  historyPage(actor: string, id: unknown, raw: unknown) { return this.readProjection(actor, id, async (db, id) => { await batchMetadata(db, id); return historyPage(db, id, raw); }); }
+  paymentPage(actor: string, id: unknown, raw: unknown) {
+    const q = parseRequirementList(raw);
+    return this.readProjection(actor, id, async (db, id) => {
+      await batchMetadata(db, id);
+      const [[count]] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM payment_records WHERE batch_id=?", [id]);
+      const [ids] = await db.execute<RowDataPacket[]>(`SELECT scholarship_id FROM payment_records WHERE batch_id=? ORDER BY batch_revision LIMIT ${q.limit} OFFSET ${q.offset}`, [id]);
+      const selected = ids.map(r => String(r.scholarship_id));
+      const [names] = selected.length ? await db.execute<RowDataPacket[]>(`SELECT r.id,i.human_id,CONCAT_WS(' ',s.first_name,NULLIF(s.middle_name,''),s.last_name,NULLIF(s.suffix,'')) AS name FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id JOIN scholar_identifiers i ON i.scholar_id=s.id WHERE r.id IN (${selected.map(() => "?").join(",")})`, selected) : [[]];
+      return { items: await paymentRecords(db, id, false, selected), identities: names.map(n => ({scholarshipId:String(n.id),humanId:String(n.human_id),name:String(n.name)})), total: Number(count.n), offset: q.offset, limit: q.limit };
+    });
+  }
+  section(actor: string, id: unknown, raw: unknown) {
+    const parsed = z.enum(["candidates", "processing", "corrections", "amendments", "reconciliation", "reprocessing", "validation"]).safeParse(raw);
+    if (!parsed.success) throw new AuthError(422, "VALIDATION_FAILED", "Choose a supported payroll detail section.");
+    return this.readProjection(actor, id, (db, id) => readOvrSection(db, id, parsed.data as keyof OvrSections));
+  }
+  async summaries(actor: string, rawCycle: unknown, rawQuery: unknown) {
+    const cycleId = parseId(rawCycle), q = parseRequirementList(rawQuery);
+    return this.authorization.readSnapshot(actor, "ovr.prepare", async db => {
+      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+      const cycle = await currentPayout(db, cycleId);
+      const [[count]] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM ovr_batches WHERE cycle_id=? AND (LOCATE(?,code)>0 OR LOCATE(?,name)>0)", [cycleId,q.q,q.q]);
+      const [rows] = await db.execute<RowDataPacket[]>(`SELECT id FROM ovr_batches WHERE cycle_id=? AND (LOCATE(?,code)>0 OR LOCATE(?,name)>0) ORDER BY code LIMIT ${q.limit} OFFSET ${q.offset}`, [cycleId,q.q,q.q]);
+      const items = []; for (const row of rows) items.push(await batchMetadata(db, row.id));
+      return { cycle, managed: Boolean((await db.execute<RowDataPacket[]>("SELECT cycle_id FROM regular_payout_periods WHERE cycle_id=?", [cycle.id]))[0].length), items, total: Number(count.n), offset:q.offset, limit:q.limit };
+    });
+  }
   async list(actor: string, rawCycle: unknown, rawQuery: unknown) {
     const cycleId = parseId(rawCycle),
       q = parseRequirementList(rawQuery);
@@ -236,71 +281,14 @@ export class OvrService {
       actor,
       "ovr.prepare",
       async (connection) => {
-        const db=cachedReads(connection);
-        await db.query(
-          "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
-        );
-        const history = await ovrHistory(db, id),
-          batch = history[0],
-          cycle = await currentPayout(db, batch.cycleId),
-          entries = await ovrEntries(db, id);
-        const [frozen] = await db.execute<RowDataPacket[]>(
-          "SELECT snapshot,snapshot_hash FROM ovr_finalizations WHERE batch_id=? LOCK IN SHARE MODE",
-          [id],
-        );
-        const payments = await paymentRecords(db, id);
-        const effectiveFinalization = await effectiveRoster(db, id);
-        const automatic = frozen.length ? null : await automaticDraft(db, batch, cycle);
-        const effectiveEntries =
-          effectiveFinalization?.snapshot.entries ?? entries;
-        const semesterPayments=[];
-        for(const entry of effectiveEntries){const claim=await semesterClaim(db,entry.scholarshipId,cycle.semesterId);semesterPayments.push({scholarshipId:entry.scholarshipId,paidBatchId:claim.paid?.batchId ?? null,paidCycleId:claim.paid?.cycleId ?? null,paymentId:claim.paid?.id ?? null,pendingCorrection:claim.pending.length>0});}
-        const deferrals = [];
-        const [annuals] = await db.execute<RowDataPacket[]>("SELECT r.id,s.first_name,s.last_name FROM scholarship_records r JOIN scholars s ON s.id=r.scholar_id WHERE r.academic_year_id=?", [cycle.academicYearId]);
-        for (const a of annuals) { const d = await draftDeferral(db,id,a.id); if(d?.current) deferrals.push({scholarshipId:String(a.id),name:`${a.last_name}, ${a.first_name}`,reason:d.reason}); }
-        return {
-          semesterPayments,
-          historicalReceipts: await historicalReceipts(db,id),
-          treasuryEvidence: await treasuryEvidence(db,id),
-          claimDeadline: await claimDeadline(db,cycle.semesterId),
-          reprocessing: await reprocessingQueue(db,cycle),
-          deferrals,
-          payments,
-          releases: frozen.length ? await managedRelease(db, id) : null,
-          originalPayments: await paymentRecords(db, id, true),
-          paymentCorrections: await paymentCorrections(db, id),
-          amendments: await amendments(db, id),
-          effectiveFinalization,
-          reconciliation: reconcilePayments(
-            effectiveFinalization?.snapshot ?? null,
-            payments,
-          ),
-          batch,
-          cycle,
-          managed: frozen.length ? null : await managedCandidates(db, batch, cycle),
-          automatic,
-          entries: effectiveEntries,
-          history,
-          finalization: frozen.length
-            ? {
-                snapshot: decode<OvrFinalization>(frozen[0].snapshot),
-                hash: frozen[0].snapshot_hash,
-              }
-            : null,
-          validation: await validateOvr(db, batch, cycle, effectiveEntries),
-          canEdit:
-            Boolean((await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=?",[id]))[0].length) &&
-            batch.state === "draft" &&
-            cycle.state === "open" &&
-            !cycle.periodUnavailable,
-        };
+        return readCompleteOvrDetail(connection,id);
       },
     );
   }
   async form(actor: string, rawId: unknown, requestId: string, draft = false, format: "html" | "docx" = "html", original = false) {
     const id = parseId(rawId);
-    const prepared = await this.authorization.withPermission(actor, "ovr.prepare", async db => {
-      await db.query("SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE");
+    const prepared = await this.authorization.readSnapshot(actor, "ovr.prepare", async connection => {
+      const db = cachedReads(connection);
       const [[frozen]] = await db.execute<RowDataPacket[]>("SELECT snapshot,snapshot_hash FROM ovr_finalizations WHERE batch_id=? LOCK IN SHARE MODE", [id]);
       const effective = await effectiveRoster(db, id);
       const snapshot = original && frozen ? decode<OvrFinalization>(frozen.snapshot) : effective ? amendFrozenForm(effective.snapshot) : null;
@@ -311,8 +299,10 @@ export class OvrService {
       if (snapshot) assertPayrollRoster(form, snapshot);
       form.signatories ??= payrollSignatories;
       if (!form.rows.length) throw new AuthError(409, "EMPTY_PAYROLL", "No eligible candidates are available for this form.");
-      await db.execute("INSERT INTO audit_logs(id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES(?,'payroll.export','ovr_batches',?,?,?,'user',UTC_TIMESTAMP(6),?,'Payroll form generated',?)", [randomUUID(), id, snapshot ? "official" : "draft", actor, requestId, JSON.stringify({ snapshotHash: original ? frozen?.snapshot_hash : effective?.hash ?? null, original, count: form.rows.length, format, layout: "daet-payroll-v2", paymentReleased: false })]);
-      return { form, draft: !snapshot };
+      return { form, draft: !snapshot, audit: { snapshotHash: original ? frozen?.snapshot_hash : effective?.hash ?? null, original, count: form.rows.length, format, layout: "daet-payroll-v2", paymentReleased: false } };
+    });
+    await this.authorization.withPermission(actor, "ovr.prepare", async db => {
+      await db.execute("INSERT INTO audit_logs(id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES(?,'payroll.export','ovr_batches',?,?,?,'user',UTC_TIMESTAMP(6),?,'Payroll form generated',?)", [randomUUID(), id, prepared.draft ? "draft" : "official", actor, requestId, JSON.stringify(prepared.audit)]);
     });
     return format === "docx" ? renderPayrollWord(prepared.form, prepared.draft) : renderPayroll(prepared.form, prepared.draft);
   }
@@ -393,6 +383,7 @@ export class OvrService {
           );
         const cycle = await currentPayout(db, previous?.cycleId ?? target);
         requireOpenPayout(cycle);
+        if(['create','add','restore','submit-review','finalize'].includes(action))await requirePreparationOpen(db,cycle.id);
         if (["submit-review","finalize","add","restore"].includes(action)) await requireClaimOpen(db,cycle.semesterId);
         const [[managed]] = await db.execute<RowDataPacket[]>(
           action === "create" ? "SELECT cycle_id FROM regular_payout_periods WHERE cycle_id=? LOCK IN SHARE MODE" : "SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE",
@@ -412,9 +403,8 @@ export class OvrService {
         if (automatic && action === "finalize" && previous?.automaticSourceHash !== automatic.sourceHash)
           throw new AuthError(409, "PAYROLL_REVIEW_STALE", "Payroll changed since submission. Return to Draft and review it again.");
         if (candidates && ["submit-review", "finalize", "defer"].includes(action) && input.expectedSourceHash !== candidates.sourceHash) throw new AuthError(409, "SOURCE_CHANGED", "Candidates or their evidence changed. Refresh and review the current payroll.");
-        if (candidates && ["submit-review", "finalize"].includes(action)) {
-          if (!candidates.cutoffReached) throw new AuthError(409, "CUTOFF_NOT_REACHED", "Preview is available now. Submit the roster after the whole-day cutoff so timely submissions are not omitted.");
-          if (candidates.pendingCount) throw new AuthError(409, "PENDING_TIMELY_SUBMISSIONS", "Review or explicitly defer every unresolved on-time submission before finalizing.");
+        if (candidates && (action === "submit-review" || action === "finalize")) {
+          requireManagedReview(action, candidates);
         }
         const workflow =
           action === "submit-review" ||
@@ -529,14 +519,21 @@ export class OvrService {
             const current = candidateEntries(candidates, batch.revision);
             if (current.length !== entries.length || current.some(i => !entries.some(e => e.scholarshipId === i.scholarshipId && e.evidence.fingerprint === i.evidence.fingerprint))) throw new AuthError(409, "PAYROLL_REVIEW_STALE", "Candidates changed since submission. Return to Draft and review the current list.");
           }
+          // Share the existing bounded raw-source/index adapter only during the
+          // read-only finalization checks under the unchanged financial guard.
+          // Every decision still runs; no cache survives this command or a write.
+          const validationDb = action === "finalize"
+            ? await candidateReads(db, entries.map(entry => entry.scholarshipId), cycle.semesterId)
+            : db;
           for (const entry of entries) {
-            await assertNoPaidClaim(db,entry.scholarshipId,cycle.semesterId);
+            await assertNoIndividualRoute(validationDb,entry.scholarshipId,cycle.semesterId);
+            await assertNoPaidClaim(validationDb,entry.scholarshipId,cycle.semesterId);
             if (entry.evidence.reprocessing && action === "submit-review") {
               const retry = await retryEvidence(db,previous!,cycle,entry);
               await assignRetry(db,retry,batch.id,actor,"Automatic inclusion submitted for Coordinator review");
             }
           }
-          const validation = await validateOvr(db, batch, cycle, entries);
+          const validation = await validateOvr(validationDb, batch, cycle, entries);
           if (!validation.valid)
             throw new AuthError(
               409,
@@ -546,6 +543,11 @@ export class OvrService {
             );
           batch.validation = validation;
           if (action === "finalize") {
+            if(candidates&&candidates.cutoffPolicy!=="whole_day_v1"){
+              const [[stamp]]=await db.query<RowDataPacket[]>("SELECT DATE_FORMAT(UTC_TIMESTAMP(6),'%Y-%m-%dT%H:%i:%s.%fZ') AS now");
+              if(!windowCutoffReached(candidates.cutoffOn,cutoffPolicy(candidates.cutoffPolicy),String(stamp.now),candidates.cutoffLocalTime??undefined))throw new AuthError(409,"CUTOFF_NOT_REACHED","The recorded cutoff instant has not passed.");
+              batch.recordedAt=String(stamp.now);
+            }
             frozenSnapshot = {
               ...(candidates ? { payrollForm: candidates.form } : {}),
               ...(automatic ? { legacyPayrollForm: automatic.form } : {}),

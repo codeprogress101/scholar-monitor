@@ -1,3 +1,5 @@
+import { projectCandidate, loadCandidateSources } from "./candidate-source.js";
+import { ordinaryNewActivation, activationReferences, excludeActivation, candidateFrom, candidateParams } from "./activation-review.js";
 import { workingYear } from "../configuration/calendar.js";
 import { randomUUID } from "node:crypto";
 import { additionPreview } from "./additions.js";
@@ -32,100 +34,19 @@ export class DraftValidationError extends AuthError {
     super(422, "CANDIDATE_INVALID", issues.map((i) => i.message).join(" "));
   }
 }
-async function candidate(
-  db: PoolConnection,
-  id: string,
-  year: string,
-): Promise<DraftCandidate> {
-  const issues: DraftIssue[] = [];
-  const issue = (code: string, message: string) =>
-    issues.push({ scholarId: id, code, message });
+export async function candidate(db: PoolConnection, id: string, year: string): Promise<DraftCandidate> {
   const [people] = await db.execute<RowDataPacket[]>(
-    "SELECT s.*,i.human_id FROM scholars s LEFT JOIN scholar_identifiers i ON i.scholar_id=s.id WHERE s.id=? FOR UPDATE",
-    [id],
-  );
-  const person = people[0];
-  if (!person)
-    return {
-      scholarId: id,
-      humanId: null,
-      name: "Unknown scholar",
-      snapshot: null,
-      issues: [
-        {
-          scholarId: id,
-          code: "SCHOLAR_NOT_FOUND",
-          message: "Scholar does not exist.",
-        },
-      ],
-    };
-  const name = [
-    person.last_name,
-    person.first_name,
-    person.middle_name,
-    person.suffix,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const graduation = await graduationFor(db, id);
-  if (graduation)
-    issue("PRIOR_GRADUATE", "Graduated scholar. Keep the historical record; do not add to a new masterlist. Any approved final stipend remains on its existing payroll.");
-  if (!/^LDSS-\d{4}-\d{5}$/.test(person.human_id ?? ""))
-    issue("SCHOLAR_ID_REQUIRED", "A valid permanent Scholar ID is required.");
+    "SELECT s.*,i.human_id FROM scholars s LEFT JOIN scholar_identifiers i ON i.scholar_id=s.id WHERE s.id=? FOR UPDATE", [id]);
+  if (!people[0]) return projectCandidate(id, { graduated: false });
+  const graduated = !!await graduationFor(db, id);
   const [annual] = await db.execute<RowDataPacket[]>(
-    "SELECT id,status,version,continuing_participation_id FROM scholarship_records WHERE scholar_id=? AND academic_year_id=? FOR UPDATE",
-    [id, year],
-  );
-  const baseline = await continuingAdmission(db, id);
-  const rollover = await rolloverAdmission(db, id, year);
-  if (!annual.length && !baseline)
-    issue(
-      "SCHOLARSHIP_RECORD_REQUIRED",
-      "A scholarship record for the draft academic year is required.",
-    );
-  else if (annual.length && annual[0].status !== "selected" && !(annual[0].status === "continuing" && (baseline?.id === annual[0].continuing_participation_id || rollover)))
-    issue(
-      "SELECTION_REQUIRED",
-      "Scholar must be Selected for the draft academic year.",
-    );
+    "SELECT id,status,version,continuing_participation_id FROM scholarship_records WHERE scholar_id=? AND academic_year_id=? FOR UPDATE", [id, year]);
+  const baseline = await continuingAdmission(db, id), rollover = await rolloverAdmission(db, id, year);
   const [academic] = await db.execute<RowDataPacket[]>(
-    "SELECT id FROM academic_records WHERE scholar_id=? AND academic_year_id=? FOR UPDATE",
-    [id, year],
-  );
-  const current = academic.length
-    ? await academicCurrent(db, academic[0].id)
-    : null;
-  if (
-    !current ||
-    !current.placement.schoolId ||
-    (!current.placement.courseId && !current.placement.coursePending) ||
-    !current.placement.yearLevel.trim()
-  )
-    issue(
-      "ACADEMIC_RECORD_REQUIRED",
-      "Complete school, course and year level for the draft academic year are required.",
-    );
-  return {
-    scholarId: id,
-    humanId: person.human_id,
-    name,
-    issues,
-    snapshot: issues.length
-      ? null
-      : {
-          scholarId: id,
-          humanId: person.human_id,
-          name,
-          personVersion: person.version,
-          scholarshipId: annual[0]?.id ?? baseline!.id,
-          scholarshipVersion: annual[0]?.version ?? 0,
-          ...(baseline && (!annual.length || annual[0].status === "continuing") ? { continuingAdmission: { participationId: baseline.id as string, eventId: baseline.event_id as string } } : {}),
-          ...(rollover ? { continuingRollover: rollover } : {}),
-          academicRecordId: academic[0].id,
-          academicVersion: current!.version,
-          placement: current!.placement,
-        },
-  };
+    "SELECT id FROM academic_records WHERE scholar_id=? AND academic_year_id=? FOR UPDATE", [id, year]);
+  const current = academic[0] ? await academicCurrent(db, academic[0].id) : null;
+  return projectCandidate(id, { person: people[0], graduated, annual: annual[0], baseline, rollover,
+    academic: current ? { id: academic[0].id, version: current.version, placement: current.placement } : null });
 }
 export async function header(db: PoolConnection, id: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -201,8 +122,12 @@ export async function validate(
     issues.push(...(await additionPreview(db,row,items)).issues);
     return {version:row.version,count:items.length,valid:issues.length===0,issues};
   }
+  const ordinary = await ordinaryNewActivation(db, row);
+  const sources = ordinary ? await loadCandidateSources(db, items.map(e => e.scholarId), row.academic_year_id) : null;
+  const activated = ordinary ? await activationReferences(db, row.academic_year_id, items.map(e => e.scholarId)) : null;
   for (const entry of items) {
-    const source = await candidate(db, entry.scholarId, row.academic_year_id);
+    const source = sources ? excludeActivation(projectCandidate(entry.scholarId, sources.get(entry.scholarId) ?? { graduated: false }), activated?.get(entry.scholarId))
+      : await candidate(db, entry.scholarId, row.academic_year_id);
     issues.push(...source.issues);
     if (
       source.snapshot &&
@@ -288,8 +213,15 @@ export class MasterlistService {
       "masterlists.prepare",
       async (db) => {
         await guard(db);
-        const row = await header(db, id),
-          filter = `%${page.q.replace(/[!%_]/g, "!$&")}%`;
+        const row = await header(db, id);
+        if (await ordinaryNewActivation(db, row)) {
+          const params = candidateParams(page.q, row.academic_year_id);
+          const [rows] = await db.execute<RowDataPacket[]>(`SELECT s.id ${candidateFrom} ORDER BY s.last_name,s.first_name,s.id LIMIT ? OFFSET ?`, [...params, page.limit, page.offset]);
+          const [[count]] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) n ${candidateFrom}`, params);
+          const ids = rows.map(r => String(r.id)), sources = await loadCandidateSources(db, ids, row.academic_year_id), activated = await activationReferences(db, row.academic_year_id, ids);
+          return { items: ids.map(id => excludeActivation(projectCandidate(id, sources.get(id) ?? { graduated: false }), activated.get(id))), total: Number(count.n), offset: page.offset, limit: page.limit };
+        }
+        const filter = `%${page.q.replace(/[!%_]/g, "!$&")}%`;
         const from =
           "FROM scholars s LEFT JOIN scholar_identifiers i ON i.scholar_id=s.id WHERE CONCAT_WS(' ',i.human_id,s.first_name,s.middle_name,s.last_name) LIKE ? ESCAPE '!'";
         const [rows] = await db.execute<RowDataPacket[]>(
@@ -404,6 +336,10 @@ export class MasterlistService {
               [old.id],
             );
           else {
+            if (await ordinaryNewActivation(db, row)) {
+              const conflict = (await activationReferences(db, row.academic_year_id, [input.scholarId])).get(input.scholarId);
+              if (conflict) throw new DraftValidationError(excludeActivation(projectCandidate(input.scholarId, { graduated: false }), conflict).issues.filter(i => i.code !== "SCHOLAR_NOT_FOUND"));
+            }
             await prepareContinuingAnnual(db, input.scholarId, row.academic_year_id, actor, requestId);
             const source = await candidate(
               db,

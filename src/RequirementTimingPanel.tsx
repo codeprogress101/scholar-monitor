@@ -38,7 +38,7 @@ export default function RequirementTimingPanel({ instanceId, session, canDecide 
     {view?.mode === "legacy" && <p>No managed semester timing applies to this record. Existing records are preserved.</p>}
     {view?.mode === "managed" && !view.windows.length && <p>No payroll submission window is configured. Receipt custody does not establish cutoff eligibility.</p>}
     {view?.windows.map(w => <div key={w.batchId} className="border rounded p-2 mb-2">
-      <strong>{w.batchCode} — cutoff {w.cutoffOn}</strong><p>{w.message}</p>
+      <strong>{w.batchCode} — cutoff {w.cutoffOn} ({w.cutoffPolicy === "whole_day_v1" ? "whole Manila day" : `${w.cutoffLocalTime} PHT / UTC+8`})</strong><p>{w.message}</p>
       {canDecide && w.canDecide && <button type="button" className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => { setSelected(w.batchId); setNotice(""); setForm({ decision: "approve", evidenceKind: "receiving_log", evidenceReference: "", reason: "" }); }}>Review late encoding for {w.batchCode}</button>}
       {selected === w.batchId && <form aria-label="Receipt timing decision" onSubmit={e => void save(e)}><fieldset disabled={busy}>
         <label className="form-label d-block">Timing decision<select className="form-select" value={form.decision} onChange={e => setForm({ ...form, decision: e.target.value })}><option value="approve">Approve evidenced on-time receipt</option><option value="reject">Reject on-time receipt claim</option></select></label>

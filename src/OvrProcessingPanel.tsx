@@ -1,43 +1,45 @@
+import CommandProgressDialog from "./CommandProgressDialog";
+import {usePriorCommand} from "./prior-command";
 import LegacyConversion from "./LegacyConversion";
 import TreasuryReconciliation from "./TreasuryReconciliation";
 import { useActionForm } from "./use-action-form";
 import { receivingToday } from "./receiving-selection";
 import RoutineEvidence from "./RoutineEvidence";
-import { useRef, useState, type FormEvent } from "react";
-import type { OvrDetail } from "../server/ovr/model";
-import { ApiError, type Session } from "./auth-api";
-import { configurationRequest as request } from "./configuration-api";
+import { useState, type FormEvent } from "react";
+import type { OvrSections } from "../server/ovr/detail-model";
+type OvrDetail = OvrSections["processing"];
+import { type Session } from "./auth-api";
+
 export default function OvrProcessingPanel({
   detail,
   session,
   permissions,
   onSaved,
+  onReconcile,
   onTreasurySaved,
 }: {
   detail: OvrDetail;
   session: Session;
   permissions: string[];
   onSaved: () => void;
+  onReconcile?: () => void;
   onTreasurySaved?: () => void;
 }) {
   const [action, setAction] = useState(""),
     [holdTarget, setHoldTarget] = useState(""),
-    [error, setError] = useState(""),
-    [saving, setSaving] = useState(false),
     [outcome, setOutcome] = useState("not_paid"),
     [unpaidReason, setUnpaidReason] = useState("did_not_claim");
-  const busy = useRef(false),
-    pending = useRef<{ signature: string; key: string } | null>(null);
   const b = detail.batch,
     r = detail.reconciliation,
     members = detail.effectiveFinalization!.snapshot.entries;
+  const job=usePriorCommand(session,`ovr-batches/${b.id}/${action}`),saving=job.locked,error=job.error;
   const available =
     Boolean(detail.releases) && ["open", "locked"].includes(detail.cycle.state) &&
     !detail.cycle.periodUnavailable &&
     !detail.amendments.some((a) => a.state === "pending");
   const labels: Record<string, string> = {
-    submit: "Submit for administration",
-    "mark-processed": "Mark processed",
+    submit: "Submit Official Payroll",
+    "mark-processed": "Process Payroll",
     payments: "Record payment outcome",
     close: "Close Payroll",
     hold: "Hold payment — Coordinator",
@@ -53,7 +55,7 @@ export default function OvrProcessingPanel({
   const actionForm = useActionForm(action);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (busy.current) return;
+    if (job.locked) return;
     const f = new FormData(e.currentTarget),
       body = {
         expectedRevision: b.revision,
@@ -75,34 +77,13 @@ export default function OvrProcessingPanel({
             }
           : {}),
       };
-    const path = `ovr-batches/${b.id}/${action}`,
-      signature = JSON.stringify({ path, body });
-    if (pending.current?.signature !== signature)
-      pending.current = { signature, key: crypto.randomUUID() };
-    busy.current = true;
-    setSaving(true);
-    setError("");
-    try {
-      await request(path, {
-        body,
-        key: pending.current.key,
-        csrf: session.csrfToken,
-      });
-      pending.current = null;
-      onSaved();
-    } catch (e) {
-      setError(
-        e instanceof ApiError
-          ? e.message
-          : "Could not confirm the result. Retry the same command safely.",
-      );
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
+    if(await job.run(body,"payouts"))onSaved();
   }
+  async function retryProcessing(){if(await job.run({},"payouts",true))onSaved();}
+
   return (
     <section className="border rounded p-3 my-3" aria-label="Payroll processing">
+      <CommandProgressDialog operation={labels[action]??"Confirm payroll operation"} identity={`${b.code} / ${b.id}`} count={holding?1:members.length} pending={job.saving} uncertain={job.uncertain} error={job.error} retry={()=>void retryProcessing()}/>
       <h4>Processing and reconciliation</h4>
       {!detail.releases && permissions.includes("ovr.finalize") && <LegacyConversion id={detail.batch.id} session={session} onSaved={onSaved}/>}
       <TreasuryReconciliation detail={detail} session={session} permissions={permissions} onSaved={onTreasurySaved ?? onSaved}/>
@@ -183,7 +164,7 @@ export default function OvrProcessingPanel({
                   {labels.payments}
                 </button>
               )}
-            {b.state === "processed" && permissions.includes("ovr.close") && (
+            {b.state === "processed" && permissions.includes("ovr.close") && (detail.effectiveFinalization?.snapshot.payrollForm&&onReconcile?<button type="button" className="btn btn-success" disabled={saving} onClick={onReconcile}>Review Payments and Close Payroll</button>:
               <button
                 className="btn btn-success"
                 disabled={saving || !r.complete}

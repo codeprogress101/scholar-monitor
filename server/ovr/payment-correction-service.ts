@@ -4,6 +4,7 @@ import { assertNoPaidClaim, claimDeadline, queueUnclaimed } from "./reprocessing
 import { validationDetails } from "../validation-details.js";
 import { checkManagedPayment, entitlementEvent, linkManagedOutcome } from "./managed-release.js";
 import { randomUUID } from "node:crypto";
+import { originalPaymentCancelsDv } from "../payments/individual-writes.js";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 import { AuthorizationService } from "../authorization/service.js";
@@ -12,6 +13,10 @@ import { digest } from "../auth/crypto.js";
 import { parseId, parseKey } from "../configuration/validation.js";
 import { currentPayout } from "../payouts/service.js";
 import { today } from "../scholars/validation.js";
+import { cachedReads } from "../read-cache.js";
+import { parseReconciliation } from "../payments/reconciliation-model.js";
+import { reconciliationOverview,openCase } from "../payments/reconciliation-reads.js";
+import { resolveCorrectedCase } from "../payments/reconciliation-writes.js";
 import { ovrHistory } from "./service.js";
 import { paymentRecords } from "./processing-state.js";
 import {
@@ -19,6 +24,7 @@ import {
   type PaymentCorrection,
 } from "./payment-correction-state.js";
 import type { OvrBatch } from "./model.js";
+import type { PaymentRecord } from "./processing-model.js";
 const text = (min: number, max: number) =>
   z
     .string()
@@ -52,14 +58,15 @@ const change = z
 const decision = z
   .object({ ...common, correctionId: z.string().uuid() })
   .strict();
+const dateChange=z.object({...common,paymentId:z.uuid(),effectiveOn:z.iso.date().refine(d=>d>="1900-01-01"&&d<=today())}).strict();
 export type PaymentCorrectionAction =
-  "correct" | "request" | "approve" | "reject";
+  "correct" | "request" | "approve" | "reject" | "date-only" | "coordinator-outcome";
 export function parsePaymentCorrection(
-  action: PaymentCorrectionAction,
+  action: Exclude<PaymentCorrectionAction,"coordinator-outcome">,
   raw: unknown,
 ) {
   const p = (
-    action === "correct" || action === "request" ? change : decision
+    action === "date-only" ? dateChange : action === "correct" || action === "request" ? change : decision
   ).safeParse(raw);
   if (!p.success)
     throw new AuthError(
@@ -69,6 +76,15 @@ export function parsePaymentCorrection(
       validationDetails(p.error),
     );
   return p.data;
+}
+/** Financial meaning includes the unpaid classification, not just not_paid. */
+export function correctionChangesOutcome(
+  before: Pick<PaymentRecord, "outcome" | "unpaidReason">,
+  after: Pick<PaymentRecord, "outcome" | "unpaidReason">,
+) {
+  return before.outcome !== after.outcome ||
+    before.outcome === "not_paid" &&
+    (before.unpaidReason ?? null) !== (after.unpaidReason ?? null);
 }
 export class PaymentCorrectionService {
   constructor(private authorization: AuthorizationService) {}
@@ -80,16 +96,23 @@ export class PaymentCorrectionService {
     raw: unknown,
     requestId: string,
   ) {
+    const directCoordinator=action==="coordinator-outcome";
+    const reviewed=directCoordinator?parseReconciliation(raw):null;
+    if(reviewed&&reviewed.action!=="correct")throw new AuthError(422,"VALIDATION_FAILED","Use the reviewed Coordinator payment correction.");
+    const direct=reviewed?.action==="correct"?reviewed:null;
     const id = parseId(rawId),
       key = parseKey(rawKey),
-      input = parsePaymentCorrection(action, raw),
-      hash = digest(JSON.stringify({ id, action: "payment-" + action, input }));
+      parsed = parsePaymentCorrection(directCoordinator?"correct":action as Exclude<PaymentCorrectionAction,"coordinator-outcome">, direct?{expectedRevision:direct.expectedRevision,paymentId:direct.paymentId,reason:direct.reason,reference:"Reviewed payroll reconciliation",outcome:direct.outcome==="paid"?"paid":"not_paid",...(direct.outcome==="unclaimed"?{unpaidReason:"did_not_claim"}:{}),amount:direct.outcome==="paid"?"5000.00":"0.00",effectiveOn:direct.actualPaidOn,remarks:direct.reason}:raw),
+      hash = digest(JSON.stringify({ id, action: "payment-" + action, input:direct??parsed }));
+    const dateOnly=action==="date-only";
+    if(dateOnly||directCoordinator)action="correct";
     return this.authorization.withPermission(
       actor,
-      action === "approve" || action === "reject"
+      directCoordinator || action === "approve" || action === "reject"
         ? "payments.corrections.approve"
         : "payments.correct",
-      async (db) => {
+      async (connection,access) => {
+        const db=dateOnly||directCoordinator?cachedReads(connection):connection;
         await db.query(
           "SELECT id FROM configuration_guard WHERE id=1 FOR UPDATE",
         );
@@ -106,6 +129,12 @@ export class PaymentCorrectionService {
             );
           return decodeStoredJson<OvrBatch>(retry[0].result);
         }
+        let input=parsed;
+        if(dateOnly) {
+          const data=parsed as z.infer<typeof dateChange>,before=(await paymentRecords(db,id)).find(p=>p.id===data.paymentId);
+          if(!before || before.outcome!=="paid")throw new AuthError(409,"PAID_RECORD_REQUIRED","Date correction requires an existing Paid record. It cannot change the outcome or amount.");
+          input={...data,outcome:before.outcome,amount:before.amount,remarks:before.remarks};
+        }
         const [[managedPayroll]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_submission_windows WHERE batch_id=? LOCK IN SHARE MODE", [id]);
         const previous = (await ovrHistory(db, id))[0],
           cycle = await currentPayout(db, previous.cycleId);
@@ -121,18 +150,24 @@ export class PaymentCorrectionService {
             "VERSION_CONFLICT",
             "Payment processing changed. Refresh before continuing.",
           );
+        if(direct){
+          const overview=await reconciliationOverview(db,id);
+          if(direct.sourceHash!==overview.sourceHash||direct.expectedReconciliationRevision!==overview.reconciliationRevision)throw new AuthError(409,"RECONCILIATION_CHANGED","Payment evidence changed. Refresh and review the correction again.");
+          if(direct.caseId){const source=await openCase(db,id,direct.caseId);if(source.transactionId)throw new AuthError(409,'INDIVIDUAL_PAYMENT_REVIEW_REQUIRED','Use Review Individual Payment to correct this settlement. Its original payroll outcome remains separate.');if(source.paymentId&&source.paymentId!==direct.paymentId)throw new AuthError(409,"DISCREPANCY_PAYMENT_CHANGED","The selected discrepancy belongs to another payment.");}
+        }
         const claimWindow = await claimDeadline(db, cycle.semesterId);
+        if(directCoordinator&&(claimWindow.expired||cycle.state==="closed"||cycle.periodUnavailable||!["open","locked"].includes(cycle.state)))throw new AuthError(423,"PAYMENT_CORRECTION_APPROVAL_REQUIRED","Closed or expired financial periods retain the existing documented request and Coordinator approval workflow. This does not reopen the payroll or authorize late collection.");
         const correctingPaid = (action === "correct" || action === "request") && (input as z.infer<typeof change>).outcome === "not_paid" && (await paymentRecords(db,id)).some(p=>p.id === (input as z.infer<typeof change>).paymentId && p.outcome === "paid");
         const closed =
           correctingPaid ||
           claimWindow.expired ||
-          Boolean(managedPayroll) ||
+          (Boolean(managedPayroll) && !dateOnly) ||
           previous.state === "closed" ||
           cycle.state === "closed" ||
           cycle.periodUnavailable;
         if (
           action === "correct" &&
-          (closed || !["open", "locked"].includes(cycle.state))
+          !directCoordinator && (closed || !["open", "locked"].includes(cycle.state))
         )
           throw new AuthError(
             423,
@@ -164,6 +199,10 @@ export class PaymentCorrectionService {
               "PAYMENT_NOT_FOUND",
               "Payment is not part of this Payroll.",
             );
+          const changesOutcome=correctionChangesOutcome(before,data);
+          if(action==="correct"&&changesOutcome&&!access.permissions.some(p=>p.code==="payments.corrections.approve"))throw new AuthError(403,"PERMISSION_DENIED","Only a Coordinator may change an already recorded payment outcome or unpaid classification. Staff may report a discrepancy or correct an allowed payment date.");
+          if(directCoordinator&&!(before.outcome==="paid"&&data.outcome==="not_paid"||before.outcome==="not_paid"&&before.unpaidReason==="did_not_claim"&&data.outcome==="paid"))throw new AuthError(409,"PAYMENT_OUTCOME_REVIEW_REQUIRED","This command only corrects Paid to Unclaimed or Unclaimed to Paid. Resolve Withheld/Review classifications through their existing reviewed workflow.");
+          if(direct?.caseId&&(await openCase(db,id,direct.caseId)).scholarshipId!==before.scholarshipId)throw new AuthError(409,"DISCREPANCY_PAYMENT_CHANGED","The selected discrepancy belongs to another scholar.");
           if (
             all.some((c) => c.paymentId === before.id && c.state === "pending")
           )
@@ -174,7 +213,7 @@ export class PaymentCorrectionService {
             );
           if (
             !previous.processing ||
-            (data.effectiveOn !== null && data.effectiveOn < previous.processing.effectiveOn)
+            (!dateOnly && !directCoordinator && data.effectiveOn !== null && data.effectiveOn < previous.processing.effectiveOn)
           )
             throw new AuthError(
               422,
@@ -185,12 +224,12 @@ export class PaymentCorrectionService {
             ...before,
             revision,
             outcome: data.outcome,
-            priorReceiptConfirmed: data.priorReceiptConfirmed,
-            priorReceiptEvidence: data.priorReceiptEvidence,
+            priorReceiptConfirmed: dateOnly ? before.priorReceiptConfirmed : data.priorReceiptConfirmed,
+            priorReceiptEvidence: dateOnly ? before.priorReceiptEvidence : data.priorReceiptEvidence,
             unpaidReason: data.outcome === "not_paid" ? data.unpaidReason ?? null : null,
             amount: data.amount,
             effectiveOn: data.effectiveOn,
-            reference: data.reference,
+            reference: dateOnly ? before.reference : data.reference,
             remarks: data.remarks,
             actorId: actor,
             actorName,
@@ -270,6 +309,14 @@ export class PaymentCorrectionService {
           };
         }
         const proposedPayment = correction.after ?? correction.proposed;
+        // A narrow direct reversal must not resolve competing release evidence
+        // implicitly. Retain the established reviewed correction workflow for
+        // another Paid attempt or pending historical/financial evidence.
+        if(directCoordinator&&proposedPayment.outcome==="not_paid")await assertNoPaidClaim(db,proposedPayment.scholarshipId,cycle.semesterId,proposedPayment.id);
+        if(dateOnly||directCoordinator&&proposedPayment.outcome==="paid") {
+          const [[period]]=await db.execute<RowDataPacket[]>("SELECT DATE_FORMAT(starts_on,'%Y-%m-%d') AS starts FROM semesters WHERE id=?",[cycle.semesterId]);
+          if(!period?.starts || !proposedPayment.effectiveOn || proposedPayment.effectiveOn<period.starts)throw new AuthError(422,"INVALID_PAYMENT_DATE","Actual payment date must fall within the approved semester. Restricted historical cases retain Coordinator review.");
+        }
         if (action !== "reject" && proposedPayment.outcome === "paid") {
           await assertNoPaidClaim(db, proposedPayment.scholarshipId, cycle.semesterId, proposedPayment.id);
           const deadline = await claimDeadline(db, cycle.semesterId);
@@ -277,6 +324,7 @@ export class PaymentCorrectionService {
           if (deadline.expired && !proposedPayment.effectiveOn && !proposedPayment.priorReceiptEvidence) throw new AuthError(422,"PRIOR_RECEIPT_EVIDENCE_REQUIRED","An unknown exact date requires documentary evidence establishing receipt before expiry.");
           if (!deadline.endsOn || (proposedPayment.effectiveOn !== null && proposedPayment.effectiveOn > deadline.endsOn)) throw new AuthError(409, "CLAIM_PERIOD_ENDED", "A correction can only document a verified payment made within the semester claim period.");
         }
+        if (correction.after?.outcome === "paid") await originalPaymentCancelsDv(db,correction.paymentId,actor,access.permissions.some(p=>p.code==="payments.corrections.approve"),requestId,correction.id);
         if (managedPayroll) {
           const proposed = correction.after ?? correction.proposed;
           const entry = await checkManagedPayment(db, id, proposed.scholarshipId, action === "reject" ? "not_paid" : proposed.outcome, action === "reject" ? "0.00" : proposed.amount);
@@ -323,6 +371,7 @@ export class PaymentCorrectionService {
             actor,
           ],
         );
+        if(direct?.caseId)await resolveCorrectedCase(db,batch,actor,direct.caseId,correction.paymentId,correction.id,input.reason,requestId,key);
         if (correction.after?.outcome === "not_paid" && correction.after.unpaidReason === "did_not_claim" && previous.state === "closed") {
           const roster=await effectiveRoster(db,id);
           if(roster) await queueUnclaimed(db,roster.snapshot,[correction.after],actor);

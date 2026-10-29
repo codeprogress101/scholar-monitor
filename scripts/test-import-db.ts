@@ -1,3 +1,5 @@
+import {bindingScenarios} from "./test-import-bindings.js";
+import {schemaManifest} from '../server/schema-manifest.js';
 import "dotenv/config";
 import { testDocumentBatches } from "./test-document-batch-scenarios.js";
 import {testPriorBatchApproval,testPriorBatchCorrections} from "./test-prior-batch-scenarios.js";
@@ -56,7 +58,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -79,10 +81,10 @@ try {
     close: async () => {},
   };
   app = buildApp(
-    loadConfig({ APP_ENV: "test", PORT: String(browserPort), APP_ORIGIN: origin }),
+    loadConfig({ APP_ENV: "test", PORT: String(browserPort), APP_ORIGIN: origin,INDIVIDUAL_PAYMENTS_ENABLED:process.argv.includes('--individual-payments')||process.argv.includes('--omitted-historical')?'true':'false',OMITTED_PAYMENTS_ENABLED:process.argv.includes('--omitted-historical')?'true':'false',INDIVIDUAL_DOCUMENTS_ENABLED:process.argv.includes('--individual-documents')||process.argv.includes('--individual-settlement')?'true':'false',INDIVIDUAL_SETTLEMENT_ENABLED:process.argv.includes('--individual-settlement')?'true':'false' }),
     { database: db },
   );
-  if(process.argv.includes("--prior-debug"))app.addHook("onError",(r,_reply,error,done)=>{if(r.url.includes("historical-setup")||r.url.includes("ovr-batches"))console.error("Disposable prior-batch diagnostic:",error.code,error.message);done();});
+  if(process.argv.includes("--prior-debug"))app.addHook("onError",(r,_reply,error,done)=>{if(r.url.includes("historical-setup")||r.url.includes("ovr-batches")||r.url.includes("document-batches/prior-approval"))console.error("Disposable prior-batch diagnostic:",error.code,error.message);done();});
   const accounts = new Map<
     string,
     { id: string; cookie: string; csrf: string }
@@ -688,20 +690,21 @@ try {
       const one=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",onePayload));assert.equal(one.ready,true,JSON.stringify(one.rows));
       const saved=await ok<ImportResult>(request("coordinator",`/api/v1/imports/${one.id}/confirm`,{hash:one.hash,confirm:true,coursePendingConfirmed:true,receiptsConfirmed:true}));assert.equal(saved.receivedCount,1);
     }
-    const volumeCount=process.argv.includes("--prior-quick")?3:835,pendingCount=Math.min(380,volumeCount);
+    const bound=process.argv.includes('--bindings')?await bindingScenarios(request,root,simplePayload,day,year.id,semester.id):null;
+    const volumeCount=process.argv.includes("--prior-quick")?3:process.argv.includes("--payment-recording-1200")?1200:835,pendingCount=bound?3:Math.min(380,volumeCount);
     const volumePayload={...await simplePayload(Array.from({length:volumeCount},(_,i)=>[`ReceiptVolume${i}`,randomBytes(12).toString("hex"),"","","SIMPLE-SCHOOL",i===0?1:2,i%2?"Old":"New",i<380?"":"Import course"])),approvedSelection:payload.approvedSelection,receipts:{periodId:semester.id,cor:true,cog:true}};
-    const start=performance.now(),volume=await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",volumePayload));
+    const start=performance.now(),volume=bound?.preview??await ok<ImportPreview>(request("coordinator","/api/v1/imports/stage",volumePayload));
     assert.equal(volume.ready,true,JSON.stringify(volume.rows.filter(r=>r.errors.length||r.warnings.length).slice(0,2)));assert.equal(volume.receiptGroups?.[0].cogCount,volumeCount);assert.equal(volume.receiptGroups?.[0].exemptCount,0);
     const stagedMs=Math.round(performance.now()-start),volumeKey=randomUUID(),volumeBody={hash:volume.hash,confirm:true,coursePendingConfirmed:true,receiptsConfirmed:true},confirmStart=performance.now();
     const savedVolume=await ok<ImportResult>(request("coordinator",`/api/v1/imports/${volume.id}/confirm`,volumeBody,volumeKey));
     const confirmMs=Math.round(performance.now()-confirmStart);assert.equal(savedVolume.selectedCount,volumeCount);assert.equal(savedVolume.coursePendingCount,pendingCount);assert.equal(savedVolume.receivedCount,volumeCount*2);assert.deepEqual(await ok(request("coordinator",`/api/v1/imports/${volume.id}/confirm`,volumeBody,volumeKey)),savedVolume);
-    const [volumePapers]=await root.execute<RowDataPacket[]>("SELECT i.id FROM requirement_instances i JOIN requirement_receipts r ON r.instance_id=i.id JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id JOIN scholars s ON s.id=ss.scholar_id WHERE s.last_name LIKE 'ReceiptVolume%'");assert.equal(volumePapers.length,volumeCount*2);
+    const [volumePapers]=await root.execute<RowDataPacket[]>(`SELECT i.id FROM requirement_instances i JOIN requirement_receipts r ON r.instance_id=i.id JOIN requirement_checklists c ON c.id=i.checklist_id JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id WHERE ss.scholar_id IN (${savedVolume.items.map(()=>'?').join(',')})`,savedVolume.items.map(i=>i.id));assert.equal(volumePapers.length,volumeCount*2);
     const stateDb=await root.getConnection();try{for(const paper of [volumePapers[0],volumePapers.at(-1)!])assert.equal((await requirementState(stateDb,paper.id)).status,"submitted");}finally{stateDb.release();}
     pass(`${volumeCount}-row mixed approved import: ${pendingCount} Course pending, ${volumeCount*2} Submitted receipts, no inferred freshman exception, exact retry; stage=${stagedMs}ms confirm=${confirmMs}ms; COR-only and COG-only passed`);
-    if(!process.argv.includes("--prior-quick"))await testDocumentBatches(request,root,volume.id,semester.id,day);
+    if(!process.argv.includes("--prior-quick"))await testDocumentBatches(request,root,volume.id,semester.id,day,volumeCount);
     if(!process.argv.includes("--prior-browser-ready")){
-      await testPriorBatchApproval(request,root,volume.id,semester.id,day);
-      await testPriorBatchCorrections(request,root,preview.id,semester.id,day);
+      await testPriorBatchApproval(request,root,volume.id,semester.id,day,runtime);
+      if(!process.argv.includes("--payment-recording-large")&&!process.argv.includes('--omitted-historical'))await testPriorBatchCorrections(request,root,preview.id,semester.id,day);
     }else{
       assert.ok(process.argv.includes("--browser"),"Unreviewed browser preparation is only available with the disposable fixture server");
       console.log(`Browser fixture: ${volumeCount} imported scholars intentionally await prior batch approval; lifecycle assertions are reserved for the normal acceptance run.`);
@@ -758,9 +761,18 @@ try {
       ]),
     );
     const fixture = buildApp(
-        loadConfig({ APP_ENV: "test", PORT: String(browserPort), APP_ORIGIN: origin }),
+        loadConfig({ APP_ENV: "test", PORT: String(browserPort), APP_ORIGIN: origin,INDIVIDUAL_PAYMENTS_ENABLED:process.argv.includes('--individual-payments')?'true':'false',INDIVIDUAL_DOCUMENTS_ENABLED:process.argv.includes('--individual-documents')||process.argv.includes('--individual-settlement')?'true':'false',INDIVIDUAL_SETTLEMENT_ENABLED:process.argv.includes('--individual-settlement')?'true':'false' }),
       { database: db, clientRoot: resolve("dist/client") },
     );
+    if(process.argv.includes("--payment-recording-loss")) {
+      let interrupted=false;
+      fixture.addHook("onSend",async(request,reply,payload)=>{
+        if(!interrupted&&request.method==="POST"&&request.url.endsWith("/payment-operations")&&reply.statusCode===200) {
+          interrupted=true;console.log("P02 disposable browser fault: dropped the first completed payment-operation response");reply.hijack();reply.raw.destroy();
+        }
+        return payload;
+      });
+    }
     let stop: () => void = () => {};
     const finished = new Promise<void>((r) => {
       stop = r;

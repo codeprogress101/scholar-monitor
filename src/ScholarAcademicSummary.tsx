@@ -59,7 +59,7 @@ export default function ScholarAcademicSummary({ scholarId, years, refreshKey, o
       : records === null ? <p role="status">Loading academic details...</p>
       : !selectedYear ? <p>Choose an academic year to see the recorded year level.</p>
       : academic ? <><p className="mb-1">{yearLevelLabel(academic.yearLevel)} · {academic.school.name} · {academic.course.name}</p></>
-      : provisional ? <><p>{yearLevelLabel(provisional.yearLevel)} · {provisional.school ?? "School needed"} / {provisional.course ?? "Course needed"}</p><small>Provisional import details. Confirm against the current COR.</small></>
+      : provisional ? <><p>{yearLevelLabel(provisional.yearLevel)} · {provisional.school ?? "School needed"} / {provisional.course ?? "Course needed"}</p><small>Supplied initial details. Confirm against the current COR.</small></>
       : <p className="mt-3">Year level, school and course have not been recorded for this academic year.</p>}
     {selectedYear && placement?.academicYearId === selectedYear && <p className="small mb-1">Scholarship: {placement.scholarshipStanding ?? "Not recorded"}</p>}
     {selectedYear && records !== null && !error && onEdit && <button className="btn btn-outline-secondary mt-2" onClick={() => onEdit(selectedYear)}>{academic ? "View academic record" : provisional ? "Complete academic details" : "Add academic record"}</button>}

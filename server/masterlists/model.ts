@@ -23,6 +23,12 @@ export type DraftCandidate = {
   name: string;
   snapshot: CandidateSnapshot | null;
   issues: DraftIssue[];
+  activationConflict?: {
+    masterlistId: string | null;
+    title: string | null;
+    yearCode: string;
+    effectiveOn: string | null;
+  };
 };
 export type Masterlist = {
   id: string;

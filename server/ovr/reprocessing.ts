@@ -1,4 +1,6 @@
+import { indexedRead } from "../read-cache.js";
 import { claimPeriodEnded } from "./claim-deadline.js";
+import { assertNoIndividualRoute } from "../payments/individual-writes.js";
 import { randomUUID } from "node:crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthError } from "../auth/service.js";
@@ -9,6 +11,9 @@ import type { PayoutCycle } from "../payouts/model.js";
 import { effectiveRoster } from "./amendment-state.js";
 import { paymentRecords } from "./processing-state.js";
 import { paymentCorrections } from "./payment-correction-state.js";
+import type {PaymentCorrection} from './payment-correction-state.js';
+import {individualClaims} from '../payments/settlement-reads.js';
+import type {IndividualSettlement,IndividualCorrection} from '../payments/settlement-model.js';
 import { managedRelease } from "./managed-release.js";
 import type { OvrBatch, OvrEntry, OvrEvidence, OvrFinalization } from "./model.js";
 import type { PayrollRow } from "./payroll-form.js";
@@ -44,19 +49,42 @@ async function semesterBatches(db: PoolConnection, semesterId: string) {
 export async function semesterClaim(db: PoolConnection, scholarshipId: string, semesterId: string) {
   const [identities] = await db.execute<RowDataPacket[]>("SELECT r.id FROM scholarship_records r JOIN scholarship_records origin ON origin.scholar_id=r.scholar_id WHERE origin.id=?",[scholarshipId]);
   const ids = new Set(identities.map(r=>String(r.id)));
-  const attempts = [];
-  const pending = [];
+  const attempts:((PaymentRecord&{batchCode:string})|(IndividualSettlement&{batchCode:string}))[] = [];
+  const pending:(PaymentCorrection|IndividualCorrection)[] = [];
   for (const batchId of await semesterBatches(db, semesterId)) {
-    const [[batch]]=await db.execute<RowDataPacket[]>("SELECT cycle_id,code FROM ovr_batches WHERE id=?",[batchId]);
-    for(const payment of await paymentRecords(db,batchId)) if(ids.has(payment.scholarshipId)) attempts.push({...payment,batchId,cycleId:String(batch.cycle_id),batchCode:String(batch.code)});
-    for(const correction of await paymentCorrections(db,batchId)) if(correction.state === "pending" && ids.has(correction.before.scholarshipId)) pending.push(correction);
+    // Index the unchanged effective batch payment/correction reader once in
+    // this guarded projection. Clone only this person's annual records, while
+    // preserving the original batch/payment order and every paid reservation.
+    type Group={attempts:{order:number;payment:PaymentRecord&{batchCode:string}}[];pending:{order:number;correction:PaymentCorrection}[]};
+    const selected:Group[]=[];
+    for(const annual of ids){
+      const group=await indexedRead(db,`semester-claim-batch:${batchId}`,annual,async()=>{
+        const [[batch]]=await db.execute<RowDataPacket[]>("SELECT cycle_id,code FROM ovr_batches WHERE id=?",[batchId]);
+        const index=new Map<string,Group>();
+        const get=(id:string)=>{let value=index.get(id);if(!value){value={attempts:[],pending:[]};index.set(id,value);}return value;};
+        (await paymentRecords(db,batchId)).forEach((payment,order)=>get(payment.scholarshipId).attempts.push({order,payment:{...payment,batchId,cycleId:String(batch.cycle_id),batchCode:String(batch.code)}}));
+        (await paymentCorrections(db,batchId)).forEach((correction,order)=>{if(correction.state==="pending")get(correction.before.scholarshipId).pending.push({order,correction});});
+        return index;
+      });
+      if(group)selected.push(group);
+    }
+    attempts.push(...selected.flatMap(g=>g.attempts).sort((a,b)=>a.order-b.order).map(p=>p.payment));
+    pending.push(...selected.flatMap(g=>g.pending).sort((a,b)=>a.order-b.order).map(p=>p.correction));
   }
+  const individual=await individualClaims(db,[scholarshipId],semesterId);
+  attempts.push(...(individual.attempts.get(scholarshipId)??[]).map(p=>({...p,batchCode:'Individual '+(p.sourceKindDetail==='unclaimed'?'DV':'OR + DV')})));
+  pending.push(...individual.pending.get(scholarshipId)??[]);
   return {attempts, paid:attempts.find(p=>p.outcome === "paid") ?? null, pending};
 }
 export async function assertNoPaidClaim(db: PoolConnection, scholarshipId: string, semesterId: string, exceptPaymentId?: string, exceptHistoricalRequestId?: string) {
   const [pendingReceipts] = await db.execute<RowDataPacket[]>("SELECT h.id FROM payroll_historical_receipts h JOIN ovr_batches b ON b.id=h.batch_id JOIN payout_cycles c ON c.id=b.cycle_id JOIN scholarship_records r ON r.id=h.scholarship_id JOIN scholarship_records target ON target.scholar_id=r.scholar_id WHERE target.id=? AND c.semester_id=? AND h.state='pending' AND NOT EXISTS(SELECT 1 FROM payroll_historical_receipts next WHERE next.id=h.id AND next.version>h.version)",[scholarshipId,semesterId]);
   if (pendingReceipts.some(r => r.id !== exceptHistoricalRequestId)) throw new AuthError(409,"HISTORICAL_RECEIPT_PENDING","Resolve the pending historical receipt before another payment.");
   const claim=await semesterClaim(db,scholarshipId,semesterId);
+  checkNoPaidClaim(claim,pendingReceipts.map(r=>String(r.id)),exceptPaymentId,exceptHistoricalRequestId);
+}
+/** Same financial guard, reusable with transaction-local bulk-loaded sources. */
+export function checkNoPaidClaim(claim:Awaited<ReturnType<typeof semesterClaim>>,pendingReceiptIds:readonly string[],exceptPaymentId?:string,exceptHistoricalRequestId?:string) {
+  if(pendingReceiptIds.some(id=>id!==exceptHistoricalRequestId))throw new AuthError(409,"HISTORICAL_RECEIPT_PENDING","Resolve the pending historical receipt before another payment.");
   if(claim.attempts.some(p=>p.outcome === "paid" && p.id !== exceptPaymentId)) throw new AuthError(409,"STIPEND_ALREADY_PAID","This scholar's semester stipend is already paid. Review its payment history.");
   if(claim.pending.some(p=>p.paymentId !== exceptPaymentId)) throw new AuthError(409,"PAYMENT_CORRECTION_PENDING","Resolve the semester payment correction before recording another payment.");
 }
@@ -74,9 +102,13 @@ export async function queueUnclaimed(db: PoolConnection, frozen: OvrFinalization
     await db.execute("INSERT INTO payroll_reprocessing(id,payment_id,root_batch_id,source_batch_id,scholarship_id,semester_id,entitlement_id,snapshot,actor_id,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))", [randomUUID(), p.id, prior?.rootBatchId ?? frozen.batchId, frozen.batchId, p.scholarshipId, frozen.cycle.semesterId, allocation?.entitlement_id ?? null, JSON.stringify({entry, row}), actor]);
   }
 }
-export async function reprocessingQueue(db: PoolConnection, cycle: PayoutCycle): Promise<ReprocessingItem[]> {
+export async function reprocessingQueue(db: PoolConnection, cycle: PayoutCycle, scholarshipIds?: readonly string[]): Promise<ReprocessingItem[]> {
+  if (scholarshipIds && !scholarshipIds.length) return [];
   const deadline = await claimDeadline(db, cycle.semesterId);
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT q.*,b.code,b.cycle_id FROM payroll_reprocessing q JOIN ovr_batches b ON b.id=q.source_batch_id WHERE q.semester_id=? ORDER BY q.recorded_at,q.id", [cycle.semesterId]);
+  // R01 supplies only displayed annuals. The default full payroll reader is unchanged.
+  // Retain every queue row for each selected annual, including conflicting roots.
+  const selected = scholarshipIds ? ` AND q.scholarship_id IN (${scholarshipIds.map(()=>"?").join(",")})` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT q.*,b.code,b.cycle_id FROM payroll_reprocessing q JOIN ovr_batches b ON b.id=q.source_batch_id WHERE q.semester_id=?${selected} ORDER BY q.recorded_at,q.id`, [cycle.semesterId,...scholarshipIds ?? []]);
   const [batches] = await db.execute<RowDataPacket[]>("SELECT b.id,b.code,b.cycle_id FROM ovr_batches b JOIN payout_cycles c ON c.id=b.cycle_id WHERE c.semester_id=? ORDER BY b.created_at,b.id", [cycle.semesterId]);
   const drafts: {id: string; code: string}[] = [];
   for (const b of batches) {
@@ -92,6 +124,8 @@ export async function reprocessingQueue(db: PoolConnection, cycle: PayoutCycle):
     const [[event]] = await db.execute<RowDataPacket[]>("SELECT revision,destination_batch_id FROM payroll_reprocessing_events WHERE reprocessing_id=? ORDER BY revision DESC LIMIT 1", [q.id]);
     const [[attempt]] = await db.execute<RowDataPacket[]>("SELECT batch_id FROM payroll_reprocessing_attempts WHERE reprocessing_id=?", [q.id]);
     const reasons: string[] = [];
+    try { await assertNoIndividualRoute(db,q.scholarship_id,cycle.semesterId); }
+    catch(e){if(!(e instanceof AuthError))throw e;reasons.push(e.message);}
     if(rows.some(other=>other.scholarship_id === q.scholarship_id && other.root_batch_id !== q.root_batch_id)) reasons.push("Conflicting original unpaid claims exist for this semester. Resolve their payment history before reprocessing.");
     const sourcePayments = await paymentRecords(db, q.source_batch_id), payment = sourcePayments.find(p => p.id === q.payment_id);
     if (!payment || payment.outcome !== "not_paid" || payment.unpaidReason !== "did_not_claim") reasons.push("The original outcome was corrected or requires classification.");
@@ -138,10 +172,11 @@ export async function reprocessingQueue(db: PoolConnection, cycle: PayoutCycle):
   }
   return result;
 }
-export async function retryCandidates(db: PoolConnection, batch: OvrBatch, cycle: PayoutCycle) {
-  return (await reprocessingQueue(db, cycle)).filter(q => q.status === "assigned" && q.destinationBatchId === batch.id && q.row);
+export async function retryCandidates(db: PoolConnection, batch: OvrBatch, cycle: PayoutCycle, scholarshipIds?: readonly string[]) {
+  return (await reprocessingQueue(db, cycle, scholarshipIds)).filter(q => q.status === "assigned" && q.destinationBatchId === batch.id && q.row);
 }
 export async function assignRetry(db: PoolConnection, item: ReprocessingItem, destination: string, actor: string, reason: string) {
+  await assertNoIndividualRoute(db,item.scholarshipId,item.evidence.current.sources.cycle.semesterId);
   if (!["queued","assigned"].includes(item.status) || !item.destinations.some(d => d.id === destination)) throw new AuthError(409, "REPROCESSING_UNAVAILABLE", "Choose an available draft in the same semester after resolving review findings.");
   await db.execute("INSERT INTO payroll_reprocessing_events(id,reprocessing_id,revision,destination_batch_id,reason,actor_id,recorded_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6))", [randomUUID(), item.id, item.revision+1, destination, reason, actor]);
 }

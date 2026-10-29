@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import RoutineEvidence from "./RoutineEvidence";
 import { academicYears, newRecordYear } from "./academic-year-options";
 import { receivingToday } from "./receiving-selection";
@@ -241,9 +242,7 @@ export default function QualificationPanel({
           Refresh annual records
         </button>
       </div>
-      <p>
-        Validate the previously qualified scholar, then the Coordinator selects them. Masterlist publication and semester compliance follow separately.
-      </p>
+      <details className="u1-context-help"><summary>Validation, selection &amp; publication</summary><p>Validation precedes Coordinator selection. Masterlist publication and semester compliance remain separate.</p></details>
       {error && (
         <div className="alert alert-danger" role="alert">
           {error}
@@ -413,9 +412,9 @@ export default function QualificationPanel({
               </div></RoutineEvidence>
             </div>
             <div className="d-flex gap-2 mt-3">
-              <button className="btn configuration-primary" type="submit">
+              <ActionButton pending={saving} className="btn configuration-primary" type="submit">
                 {saving ? "Saving..." : labels[action]}
-              </button>
+              </ActionButton>
               <button
                 className="btn btn-outline-secondary"
                 type="button"

@@ -1,0 +1,10 @@
+import type {z} from 'zod';
+import type {assessment,eventDetails} from './monitoring-validation.js';
+import type {EvidenceSource,EventView} from './duration-model.js';
+export type Assessment=z.infer<typeof assessment>;
+export type MonitoringEventInput=z.infer<typeof eventDetails>;
+export type Basis={placementHash:string;duration:{id:string;revision:number;hash:string;years:string;finalYear:number|null}|null;contextHash:string|null;calendarHash:string;unresolved:string[]};
+export type ProgramContext={state:'proposed'|'confirmed'|'disputed';revision:number;curriculumCode:string|null;cohortCode:string|null;placementHash:string;source:EvidenceSource};
+export type MonitoringSnapshot={format:'graduation-monitoring/v1';id:string;scholarId:string;academicYearId:string;semesterId:string|null;revision:number;assessment:({revision:number;facts:Assessment;basis:Basis;sourceFingerprint:string})|null;reviewRequired:boolean;reviewFinding?:{revision:number;source:EvidenceSource;finding:string}|null;pending:({revision:number;targetRevision:number;replacement:Assessment})|null;context:ProgramContext|null;followUp:{result:string;method:string|null;nextOn:string|null;source:EvidenceSource;correctsRevision:number|null}|null;lastSource:EvidenceSource;effect:'accepted'|'needs_review';};
+export type MonitoringView=EventView<MonitoringSnapshot>;
+export type ReviewPanel={scholarId:string;academicYearId:string;semesterId:string|null;academicYearVersion:number;semesterVersion:number|null;periodUnavailable:boolean;case:MonitoringView|null;annualContext:ProgramContext|null;basis:Basis;sourceHash:string;writesEnabled:boolean;materialTargetRevision:number|null;};

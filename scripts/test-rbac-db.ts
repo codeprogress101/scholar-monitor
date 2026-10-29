@@ -1,3 +1,4 @@
+import {schemaManifest} from '../server/schema-manifest.js';
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -47,6 +48,7 @@ const password = "A long synthetic testing passphrase!";
 const origin = "http://127.0.0.1:3003";
 // Expected authority is independent of the seeded SQL; assert every permission for every role.
 const staff: PermissionCode[] = [
+  "program.duration.prepare", "graduation.monitoring.record",
   "continuing.prepare",
   "scholars.read",
   "scholars.export",
@@ -71,11 +73,13 @@ const staff: PermissionCode[] = [
 const expected: Record<RoleCode | "unassigned", PermissionCode[]> = {
   staff,
   coordinator: [
+    "program.duration.confirm", "graduation.monitoring.review",
     "continuing.approve",
     "semesters.configure",
     "payroll.windows.manage",
     ...staff.filter((code) => code !== "audit.view_limited"),
     "academic.changes.approve",
+    "scholars.intakes.correct",
     "requirements.waive",
     "payouts.operate",
     "masterlists.approve",
@@ -107,7 +111,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,

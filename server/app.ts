@@ -1,7 +1,11 @@
+import {registerGraduationEvidence} from './graduation/routes.js';
+import {DurationService} from './graduation/duration-service.js';
+import {MonitoringEvidenceService} from './graduation/monitoring-service.js';
 import { DocumentBatchService } from "./requirements/batch-service.js";
 import { registerDocumentBatches } from "./requirements/batch-routes.js";
 import { PriorBatchApprovalService } from "./requirements/prior-approval-service.js";
 import { HistoricalPayoutSetupService } from "./payouts/historical-setup.js";
+import { HistoricalAppendService } from "./payouts/historical-append.js";
 import { SharedSemesterDocumentsService } from "./requirements/shared-semester-documents.js";
 import { EntrantGradingCardService } from "./requirements/entrant-grading-card.js";
 import { LegacyConversionService } from "./ovr/legacy-conversion.js";
@@ -40,6 +44,23 @@ import { OvrAmendmentService } from "./ovr/amendment-service.js";
 import { registerOvrAmendments } from "./ovr/amendment-routes.js";
 import { OvrProcessingService } from "./ovr/processing-service.js";
 import { registerOvrProcessing } from "./ovr/processing-routes.js";
+import { registerPaymentRecording } from "./payments/recording-routes.js";
+import { IndividualPaymentService } from "./payments/individual-service.js";
+import { registerIndividualPayments } from "./payments/individual-routes.js";
+import {OmissionPaymentService} from './payments/omission-service.js';
+import {DeferredRecoveryService} from './payments/deferred-recovery.js';
+import {IndividualDiscoveryService} from './payments/discovery-service.js';
+import {IndividualDocumentService} from './payments/document-service.js';
+import {registerIndividualDocuments} from './payments/document-routes.js';
+import {IndividualSettlementService} from './payments/settlement-service.js';
+import {registerIndividualSettlement} from './payments/settlement-routes.js';
+import {registerOmissionPayments} from './payments/omission-routes.js';
+import {PayrollPreparationService} from './payouts/preparation.js';
+import { PaymentRecordingService } from "./payments/recording-service.js";
+import { PayrollReconciliationService } from "./payments/reconciliation-service.js";
+import { registerPayrollReconciliation } from "./payments/reconciliation-routes.js";
+import {FinancialReportService} from './payments/report-service.js';
+import {registerFinancialReports} from './payments/report-routes.js';
 import { OvrService } from "./ovr/service.js";
 import { registerOvr } from "./ovr/routes.js";
 import { EligibilityOverrideService } from "./eligibility/override-service.js";
@@ -64,6 +85,8 @@ import { MasterlistAmendmentService } from "./masterlists/amendment-service.js";
 import { registerAmendments } from "./masterlists/amendment-routes.js";
 import { MasterlistWorkflowService } from "./masterlists/workflow-service.js";
 import { MasterlistService } from "./masterlists/service.js";
+import { MasterlistConflictRemovalService } from "./masterlists/conflict-removal-service.js";
+import { MasterlistSelectionService } from "./masterlists/selection-service.js";
 import { registerMasterlists } from "./masterlists/routes.js";
 import { MasterlistAdditionService } from "./masterlists/additions.js";
 import { AcademicChangesService } from "./academic/changes-service.js";
@@ -94,6 +117,9 @@ import { ConfigurationService } from "./configuration/service.js";
 import { registerConfiguration } from "./configuration/routes.js";
 import { ScholarService } from "./scholars/service.js";
 import { registerScholars } from "./scholars/routes.js";
+import { registerGraduationMonitoring } from "./scholars/graduation-monitoring-routes.js";
+import { GraduationMonitoringService } from "./scholars/graduation-monitoring.js";
+import { AnnualIntakeService } from "./scholars/annual-intake-service.js";
 
 export function buildApp(
   config: AppConfig,
@@ -136,8 +162,11 @@ export function buildApp(
   app.get("/api/v1/document-batches/prior-approval-preview", {config:{permission:"academic.changes.approve"}}, r=>priorBatches.preview(r.authSession!.user.id,r.query));
   app.post("/api/v1/document-batches/prior-approval", {bodyLimit:512*1024,config:{permission:"academic.changes.approve"}}, r=>priorBatches.record(r.authSession!.user.id,r.headers["idempotency-key"],r.body,r.id));
   const historicalPayouts = new HistoricalPayoutSetupService(new AuthorizationService(database.pool));
+  const historicalAppend = new HistoricalAppendService(new AuthorizationService(database.pool),config.HISTORICAL_MULTIBATCH_ENABLED==='true');
+  app.get<{Params:{id:string};Querystring:{importId?:string}}>("/api/v1/payout-cycles/:id/historical-append-preview",{config:{permission:"payroll.windows.manage"}},r=>historicalAppend.preview(r.authSession!.user.id,r.params.id,r.query.importId));
+  app.post<{Params:{id:string}}>("/api/v1/payout-cycles/:id/historical-append",{bodyLimit:16384,config:{permission:"payroll.windows.manage"}},r=>historicalAppend.record(r.authSession!.user.id,r.params.id,r.headers['idempotency-key'],r.body,r.id));
   app.post<{Params:{id:string}}>("/api/v1/payout-cycles/:id/historical-setup",{config:{permission:"payroll.windows.manage"}},r=>historicalPayouts.record(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
-  registerSubmissionWindows(app, new SubmissionWindowService(new AuthorizationService(database.pool)));
+  registerSubmissionWindows(app, new SubmissionWindowService(new AuthorizationService(database.pool),config.HISTORICAL_MULTIBATCH_ENABLED==='true'));
   registerContinuing(app, new ContinuingService(database.pool));
   registerSemesterSetup(app, new SemesterSetupService(database.pool));
   const sharedDocuments = new SharedSemesterDocumentsService(database.pool);
@@ -206,6 +235,21 @@ export function buildApp(
   const treasury = new TreasuryService(new AuthorizationService(database.pool));
   app.post<{Params:{id:string}}>("/api/v1/ovr-batches/:id/treasury-evidence", {bodyLimit:4096, config:{permission:"ovr.process"}}, r => treasury.record(r.authSession!.user.id,r.params.id,r.headers["idempotency-key"],r.body,r.id));
   for(const action of ["request","approve","reject"] as const) app.post<{Params:{id:string}}>(`/api/v1/ovr-batches/:id/historical-receipts/${action}`, {bodyLimit:8192, config:{permission:action === "request" ? "ovr.process" : "payments.corrections.approve"}}, r => treasury.historical(r.authSession!.user.id,r.params.id,action,r.headers["idempotency-key"],r.body,r.id));
+  registerPaymentRecording(app,new PaymentRecordingService(new AuthorizationService(database.pool)));
+  const individualPayments=new IndividualPaymentService(new AuthorizationService(database.pool),config.INDIVIDUAL_PAYMENTS_ENABLED==="true");
+  registerIndividualPayments(app,individualPayments);
+  const individualDiscovery=new IndividualDiscoveryService(new AuthorizationService(database.pool),config.INDIVIDUAL_PAYMENTS_ENABLED==='true');
+  const deferredRecovery=new DeferredRecoveryService(new AuthorizationService(database.pool),config.INDIVIDUAL_PAYMENTS_ENABLED==='true');
+  app.get('/api/v1/individual-payments/discovery/recovery',{config:{permission:'ovr.process'}},r=>deferredRecovery.review(r.authSession!.user.id,r.query));
+  app.get('/api/v1/individual-payments/discovery/context',{config:{permission:'ovr.process'}},r=>individualDiscovery.context(r.authSession!.user.id));
+  app.get('/api/v1/individual-payments/discovery',{config:{permission:'ovr.process'}},r=>individualDiscovery.page(r.authSession!.user.id,r.query));
+  const omittedEnabled=config.INDIVIDUAL_PAYMENTS_ENABLED==='true'&&config.OMITTED_PAYMENTS_ENABLED==='true';
+  const omissionPayments=new OmissionPaymentService(new AuthorizationService(database.pool),omittedEnabled);
+  registerOmissionPayments(app,omissionPayments,new PayrollPreparationService(new AuthorizationService(database.pool),omittedEnabled));
+  registerIndividualDocuments(app,new IndividualDocumentService(new AuthorizationService(database.pool),{individual:individualPayments,omitted:omissionPayments},config.INDIVIDUAL_PAYMENTS_ENABLED==='true'&&config.INDIVIDUAL_DOCUMENTS_ENABLED==='true'));
+  registerIndividualSettlement(app,new IndividualSettlementService(new AuthorizationService(database.pool),{individual:individualPayments,omitted:omissionPayments},config.INDIVIDUAL_PAYMENTS_ENABLED==='true'&&config.INDIVIDUAL_SETTLEMENT_ENABLED==='true'));
+  registerPayrollReconciliation(app,new PayrollReconciliationService(new AuthorizationService(database.pool)));
+  registerFinancialReports(app,new FinancialReportService(new AuthorizationService(database.pool)));
   registerOvrProcessing(
     app,
     new OvrProcessingService(new AuthorizationService(database.pool)),
@@ -250,7 +294,10 @@ export function buildApp(
   registerScholars(
     app,
     new ScholarService(new AuthorizationService(database.pool)),
+    new AnnualIntakeService(new AuthorizationService(database.pool)),
   );
+  registerGraduationEvidence(app,new DurationService(new AuthorizationService(database.pool),config.GRADUATION_MONITORING_WRITES_ENABLED==='true'),new MonitoringEvidenceService(new AuthorizationService(database.pool),config.GRADUATION_MONITORING_WRITES_ENABLED==='true'));
+  registerGraduationMonitoring(app, new GraduationMonitoringService(new AuthorizationService(database.pool),config.GRADUATION_MONITORING_WRITES_ENABLED==='true'));
   registerQualification(
     app,
     new QualificationService(new AuthorizationService(database.pool)),
@@ -274,6 +321,8 @@ export function buildApp(
     app,
     new MasterlistService(new AuthorizationService(database.pool)),
     new MasterlistWorkflowService(new AuthorizationService(database.pool)),
+    new MasterlistSelectionService(new AuthorizationService(database.pool)),
+    new MasterlistConflictRemovalService(new AuthorizationService(database.pool)),
   );
   registerAcademic(
     app,

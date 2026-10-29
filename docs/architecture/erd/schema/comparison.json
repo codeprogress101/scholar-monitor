@@ -1,0 +1,27 @@
+{
+  "primaryOnly": [
+    "_ldss_annual_uat_owner",
+    "_ldss_uat_owner"
+  ],
+  "uatOnly": [
+    "_ip_uat1_owner"
+  ],
+  "commonObjects": 151,
+  "sectionDifferences": {
+    "columns": [],
+    "indexes": [
+      "scholar_intakes"
+    ],
+    "constraints": [],
+    "keyColumns": [],
+    "rules": [],
+    "checks": [],
+    "views": [],
+    "triggers": []
+  },
+  "versionDifferences": [],
+  "checksumDifferences": [],
+  "timestampDifferenceCount": 67,
+  "migrationFileMismatches": [],
+  "unAppliedMigrationFiles": []
+}

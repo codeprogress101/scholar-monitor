@@ -1,0 +1,16 @@
+async function boundChecks(){const c=await open();const {m,admin,request,ok}=c;const b=m.batches[1],tests=[];try{
+ const [[owned]]:any=await admin.query('SELECT DATABASE() name');assert.match(owned.name,/^ldss_hmulti_test_\d+_[a-f\d]{8}$/);
+ const input={mode:'all_remaining_paid',scholarshipIds:[],outcome:'paid',actualPaidOn:today(),reference:'SYNTHETIC-PREVIEW-NO-RELEASE',reason:'Read-only scoped payment source checks; never commit payment'};
+ const preview=()=>ok(request('staff',`/api/v1/ovr-batches/${b.batchId}/payment-operations/preview`,input));
+ const ready=await preview();assert.equal(ready.count,200);assert.deepEqual(ready.conflicts,[]);tests.push('200-recipient read-only payment preview has zero conflicts');
+ const [[person]]:any=await admin.execute('SELECT version FROM scholars WHERE id=?',[b.scholarIds[0]]);
+ try{await admin.execute('UPDATE scholars SET version=version+1 WHERE id=?',[b.scholarIds[0]]);const stale=await preview();assert.ok(stale.conflicts.length>0);tests.push('Fresh payment preview blocks changed person / stale prior evidence');}finally{await admin.execute('UPDATE scholars SET version=? WHERE id=?',[person.version,b.scholarIds[0]]);}
+ const [[imported]]:any=await admin.execute('SELECT file_hash FROM import_jobs WHERE id=?',[b.importId]);
+ try{await admin.execute('UPDATE import_jobs SET file_hash=? WHERE id=?',['0'.repeat(64),b.importId]);const stale=await preview();assert.equal(stale.conflicts.length,200);tests.push('Fresh payment preview blocks changed confirmed-import hash for the entire pinned scope');}finally{await admin.execute('UPDATE import_jobs SET file_hash=? WHERE id=?',[imported.file_hash,b.importId]);}
+ const after=await preview();assert.equal(after.count,200);assert.deepEqual(after.conflicts,[]);
+ const [[n]]:any=await admin.query('SELECT (SELECT COUNT(*) FROM payment_records) payments,(SELECT COUNT(*) FROM semester_entitlements) entitlements');assert.equal(Number(n.payments),0);assert.equal(Number(n.entitlements),1000);
+ const before=await json(folder+'/first-preservation-before.json'),tables:any={};for(const [name,sql,args] of [
+ ['root','SELECT * FROM historical_payout_setups WHERE batch_id=?',[m.batches[0].batchId]],['frozen','SELECT * FROM ovr_finalizations WHERE batch_id=?',[m.batches[0].batchId]],['allocations','SELECT * FROM payroll_allocations WHERE batch_id=? ORDER BY scholarship_id',[m.batches[0].batchId]],['outcomes','SELECT * FROM payment_records WHERE batch_id=? ORDER BY scholarship_id',[m.batches[0].batchId]],['publication','SELECT * FROM masterlist_publications WHERE masterlist_id=?',[m.batches[0].masterlistId]]
+ ] as any[]){const [rows]=await admin.execute(sql,args);tables[name]=hash(JSON.stringify(rows));}assert.deepEqual(tables,before);tests.push('Batch 1 root, frozen bytes, allocations, outcome ledger and publication unchanged after Batch 2 finalization');
+ await save(folder+'/post-finalization-checks.json',{at:new Date().toISOString(),tests,firstEvidence:tables,payments:0,entitlements:1000,probeScope:'Only new owned synthetic schema. Person version/import hash restored in finally; no approval, financial or frozen evidence writes.'});console.log(JSON.stringify({tests,firstEvidenceUnchanged:true,payments:0,secondPreviewReady:true}));
+}finally{await c.close();}}

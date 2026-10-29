@@ -1,0 +1,122 @@
+%% Payroll batches, frozen rosters and entitlements; core tables: ovr_batches, ovr_batch_events, ovr_entries, ovr_finalizations, ovr_amendments, semester_entitlements, semester_entitlement_events, payroll_allocations
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% ovr_amendments: Both; BASE TABLE
+  ovr_amendments {
+    char id PK "not null; SQL char(36)"
+    int version PK "not null; SQL int(10) unsigned"
+    char batch_id FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% ovr_batch_events: Both; BASE TABLE
+  ovr_batch_events {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% ovr_batches: Both; BASE TABLE
+  ovr_batches {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% ovr_entries: Both; BASE TABLE
+  ovr_entries {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int batch_revision PK, FK "not null; SQL int(10) unsigned"
+    char scholarship_id PK, FK "not null; SQL char(36)"
+  }
+  %% ovr_finalizations: Both; BASE TABLE
+  ovr_finalizations {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char finalized_by FK "not null; SQL char(36)"
+  }
+  %% payout_cycles: Both; BASE TABLE
+  payout_cycles {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+  }
+  %% payroll_allocations: Both; BASE TABLE
+  payroll_allocations {
+    char entitlement_id PK, FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char approved_event_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_semesters: Both; BASE TABLE
+  scholar_semesters {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char participation_id FK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char scope_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% semester_entitlement_events: Both; BASE TABLE
+  semester_entitlement_events {
+    char id PK "not null; SQL char(36)"
+    char entitlement_id FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char review_event_id FK "not null; SQL char(36)"
+    char authority_version_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_entitlements: Both; BASE TABLE
+  semester_entitlements {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_review_events: Both; BASE TABLE
+  semester_review_events {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    int semester_revision FK "not null; SQL int(10) unsigned"
+    char policy_version_id FK "not null; SQL char(36)"
+    char supersedes_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  %% workflow_authority_versions: Both; BASE TABLE
+  workflow_authority_versions {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  ovr_batch_events ||..o| ovr_amendments : "ovr_amendments_ibfk_1"
+  users ||..o{ ovr_amendments : "ovr_amendments_ibfk_2"
+  payout_cycles ||..o{ ovr_batches : "ovr_batches_ibfk_1"
+  users ||..o{ ovr_batches : "ovr_batches_ibfk_2"
+  ovr_batches ||--o{ ovr_batch_events : "ovr_batch_events_ibfk_1"
+  users ||..o{ ovr_batch_events : "ovr_batch_events_ibfk_2"
+  ovr_batch_events ||--o{ ovr_entries : "ovr_entries_ibfk_1"
+  scholarship_records ||--o{ ovr_entries : "ovr_entries_ibfk_2"
+  ovr_batch_events ||..o| ovr_finalizations : "ovr_finalizations_ibfk_1"
+  users ||..o{ ovr_finalizations : "ovr_finalizations_ibfk_2"
+  semester_entitlements ||--o| payroll_allocations : "payroll_allocations_ibfk_1"
+  ovr_finalizations ||..o{ payroll_allocations : "payroll_allocations_ibfk_2"
+  scholarship_records ||..o{ payroll_allocations : "payroll_allocations_ibfk_3"
+  semester_entitlement_events ||..o| payroll_allocations : "payroll_allocations_ibfk_4"
+  users ||..o{ payroll_allocations : "payroll_allocations_ibfk_5"
+  scholar_semesters ||..o{ semester_entitlements : "semester_entitlements_ibfk_1"
+  users ||..o{ semester_entitlements : "semester_entitlements_ibfk_2"
+  semester_entitlements ||..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_1"
+  semester_review_events ||..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_2"
+  workflow_authority_versions |o..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_3"
+  users ||..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_4"

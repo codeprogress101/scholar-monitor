@@ -104,8 +104,8 @@ async function context(
     throw new AuthError(
       409,
       "ACADEMIC_RECORD_REQUIRED",
-      "Record the scholar school and course for this academic year before verification.",
-      { academicYearId },
+      coverage?`Individual verification needs school/course evidence for the document-covered ${coverage.yearCode} / ${coverage.semesterCode}. ${coverage.documentKind==='cog'?'Current receiving-year placement cannot supply this prior-year fact.':'Record the authoritative placement for this receiving year.'}`:"Record the scholar school and course for this academic year before verification.",
+      { academicYearId,...(coverage?{yearCode:coverage.yearCode,semesterCode:coverage.semesterCode}:{}) },
     );
   const academic = await academicCurrent(db, records[0].id);
   if(academic.placement.coursePending && !coverage) throw new AuthError(409,'HISTORICAL_PLACEMENT_REVIEW_REQUIRED','Record explicit covered-semester placement before using a course-pending exception for verification.',{academicYearId});

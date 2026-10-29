@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import PlacementInput, {placementValue} from "./PlacementInput";
 import type { ScholarDetail } from "../server/scholars/model";
 import { useActionForm } from "./use-action-form";
@@ -158,11 +159,7 @@ export default function AcademicPanel({
           Refresh academic history
         </button>
       </div>
-      <p>
-        One school, course and year-level record per academic year. Earlier
-        years remain unchanged. Placement changes and corrections are requested
-        below and require Coordinator approval.
-      </p>
+      <details className="u1-context-help"><summary>Academic record rules</summary><p>One placement per year. Earlier years remain unchanged; placement corrections require Coordinator approval.</p></details>
       {error && (
         <p className="alert alert-danger" role="alert">
           {error}
@@ -255,9 +252,9 @@ export default function AcademicPanel({
               as history.
             </p>
             <div className="d-flex gap-2">
-              <button type="submit" className="btn configuration-primary">
+              <ActionButton pending={saving} type="submit" className="btn configuration-primary">
                 {saving ? "Saving..." : "Save academic record"}
-              </button>
+              </ActionButton>
               <button
                 type="button"
                 className="btn btn-outline-secondary"

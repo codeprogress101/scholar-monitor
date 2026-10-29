@@ -219,5 +219,53 @@ export const schemaManifest = [
   {
     "version": "20261020020000_f45_prior_batch_approval.sql",
     "checksum": "4983d3cfdcab10c10550b49ce6613445230df2cbbe4225d5e032b6808c583e7e"
-  }
+  },
+  {
+    "version": "20261022010000_f46_payroll_reconciliation.sql",
+    "checksum": "20e278f00df46e05de1c5c0e383a25b4e44aac0ffba5c88c87fccbc46ec6de14"
+  },
+  {
+    "version": "20261022020000_f47_single_closure_snapshot.sql",
+    "checksum": "8a480bb112a05104da7069f6675bdfe4352598eb2c006345b15f5420da938743"
+  },
+  {
+    "version": "20261022030000_f48_individual_unclaimed.sql",
+    "checksum": "bb26ce8f2f41d7f8bc6405868a1dc1794200e5b02df6d27ef085e99facc43000"
+  },
+  {
+    "version": "20261022040000_f49_omitted_scholars.sql",
+    "checksum": "b36e639da326997f126d38db0b4ee383a30a1ad652e5abcd8e8fb49f2c90a792"
+  },
+  {
+    "version": "20261022050000_f50_omission_approval_owner.sql",
+    "checksum": "bcd0becbe816d7b81d4f8c36c12d94b96dd9d0488ea0d3b73903c0448c48b4cd"
+  },
+  {
+    "version": "20261022060000_f51_individual_documents.sql",
+    "checksum": "f231f4883f918432958bbad93609b414401be622cede50547bf0e5e38d6adf0a"
+  },
+  {
+    "version": "20261022070000_f52_individual_settlement.sql",
+    "checksum": "bb42fd6da7266884df26ae4b299c184737acd7423e80bf2007fd23cac9c3351e"
+  },
+  {
+    "version": "20261024010000_f53_annual_intake_registration.sql",
+    "checksum": "75b9b7a2bd7ab94c5fcc8c82dbedb5fc0193319434603e245843be75c4fa3861"
+  },
+  {
+    "version": "20261024020000_f54_graduation_monitoring.sql",
+    "checksum": "31f507ee9ca5358ec6a64bb667ba6ef4055abb8d83bd486a67b7bdd23a0d8d66"
+  },
+  {
+    "version": "20261025010000_f55_import_intake_bindings.sql",
+    "checksum": "2208ea4522899c666ac6f2c475c1098a86a34a496a593d1bbbb0297b7c0e5f1e"
+  },
+  {
+    "version": "20261025020000_f56_intake_supplied_text.sql",
+    "checksum": "d130f15172bf6f02cc4ec0ff6da5922564ebd671870f16534782fe0504fa350e"
+  },
+{
+  "version": "20261027010000_f57_payroll_cutoff_policy.sql",
+  "checksum": "b818ddafd1a38b91b421b6df0bcef9d1b8f7453b97635502afa8dd460946b71e"
+}
 ] as const;

@@ -9,10 +9,13 @@ export async function paymentRecords(
   db: PoolConnection,
   id: string,
   original = false,
+  scholarshipIds?: readonly string[],
 ): Promise<PaymentRecord[]> {
+  if (scholarshipIds && !scholarshipIds.length) return [];
+  const selected = scholarshipIds ? ` AND p.scholarship_id IN (${scholarshipIds.map(() => "?").join(",")})` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT p.*,t.evidence_revision,DATE_FORMAT(t.confirmed_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS confirmed,DATE_FORMAT(effective_on,'%Y-%m-%d') AS day,DATE_FORMAT(recorded_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS recorded FROM payment_records p LEFT JOIN payroll_treasury_confirmations t ON t.payment_id=p.id WHERE p.batch_id=? ORDER BY batch_revision LOCK IN SHARE MODE",
-    [id],
+    `SELECT p.*,t.evidence_revision,DATE_FORMAT(t.confirmed_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS confirmed,DATE_FORMAT(effective_on,'%Y-%m-%d') AS day,DATE_FORMAT(recorded_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS recorded FROM payment_records p LEFT JOIN payroll_treasury_confirmations t ON t.payment_id=p.id WHERE p.batch_id=?${selected} ORDER BY batch_revision LOCK IN SHARE MODE`,
+    [id, ...scholarshipIds ?? []],
   );
   const records: PaymentRecord[] = rows.map((r) => ({
     treasuryEvidenceRevision: r.evidence_revision ?? undefined,
@@ -33,8 +36,16 @@ export async function paymentRecords(
     recordedAt: r.recorded,
   }));
   const result = original ? records : effectivePayments(records, await paymentCorrections(db, id));
+  const classifications=new Map<string,RowDataPacket>();
+  // Same latest-revision precedence and same transaction; bounded reads replace
+  // one unused/duplicated classification query per payment. No retained cache.
+  if(!original)for(let offset=0;offset<result.length;offset+=200){
+    const ids=result.slice(offset,offset+200).map(p=>p.id);
+    const [rows]=await db.execute<RowDataPacket[]>(`SELECT c.payment_id,c.unpaid_reason,c.recorded_at FROM payroll_unpaid_classifications c WHERE c.payment_id IN (${ids.map(()=>"?").join(",")}) AND NOT EXISTS(SELECT 1 FROM payroll_unpaid_classifications n WHERE n.payment_id=c.payment_id AND n.revision>c.revision)`,ids);
+    for(const row of rows)classifications.set(row.payment_id,row);
+  }
   for (const p of result) {
-    const [[classified]] = await db.execute<RowDataPacket[]>("SELECT unpaid_reason,recorded_at FROM payroll_unpaid_classifications WHERE payment_id=? ORDER BY revision DESC LIMIT 1", [p.id]);
+    const classified=classifications.get(p.id);
     const classificationIsLatest = !original && classified && new Date(classified.recorded_at).getTime() >= new Date(p.recordedAt).getTime();
     p.unpaidReason = p.outcome === "not_paid" ? (classificationIsLatest ? classified.unpaid_reason : p.unpaidReason ?? null) : null;
   }

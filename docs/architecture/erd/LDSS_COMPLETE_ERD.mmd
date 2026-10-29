@@ -1,0 +1,1367 @@
+%% Union of primary and IP-UAT: 154 objects
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% _ip_uat1_owner: 5181 only; BASE TABLE
+  _ip_uat1_owner {
+    int id PK "not null; SQL int(11)"
+  }
+  %% _ldss_annual_uat_owner: Primary only; BASE TABLE
+  _ldss_annual_uat_owner {
+    int id PK "not null; SQL int(11)"
+  }
+  %% _ldss_uat_owner: Primary only; BASE TABLE
+  _ldss_uat_owner {
+    char id PK "not null; SQL char(36)"
+  }
+  %% academic_change_commands: Both; BASE TABLE
+  academic_change_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+    char request_id FK "not null; SQL char(36)"
+  }
+  %% academic_change_decisions: Both; BASE TABLE
+  academic_change_decisions {
+    char request_id PK, FK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% academic_changes: Both; BASE TABLE
+  academic_changes {
+    char id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% academic_commands: Both; BASE TABLE
+  academic_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char request_id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+  }
+  %% academic_records: Both; BASE TABLE
+  academic_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char course_pending_exception_id FK "nullable; SQL char(36)"
+  }
+  %% academic_years: Both; BASE TABLE
+  academic_years {
+    char id PK "not null; SQL char(36)"
+  }
+  %% annual_intake_commands: Both; BASE TABLE
+  annual_intake_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+    char intake_id FK "not null; SQL char(36)"
+  }
+  %% audit_event_view: Both; VIEW
+  audit_event_view
+  %% audit_logs: Both; BASE TABLE
+  audit_logs {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "nullable; SQL char(36)"
+  }
+  %% auth_rate_limits: Both; BASE TABLE
+  auth_rate_limits {
+    char bucket_hash PK "not null; SQL char(64)"
+  }
+  %% auth_sessions: Both; BASE TABLE
+  auth_sessions {
+    char token_hash PK "not null; SQL char(64)"
+    char user_id FK "not null; SQL char(36)"
+  }
+  %% barangays: Both; BASE TABLE
+  barangays {
+    char id PK "not null; SQL char(36)"
+  }
+  %% configuration_commands: Both; BASE TABLE
+  configuration_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char request_id PK "not null; SQL char(36)"
+  }
+  %% configuration_guard: Both; BASE TABLE
+  configuration_guard {
+    tinyint id PK "not null; SQL tinyint(4)"
+  }
+  %% continuing_roster_batches: Both; BASE TABLE
+  continuing_roster_batches {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% continuing_roster_decisions: Both; BASE TABLE
+  continuing_roster_decisions {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% continuing_roster_entries: Both; BASE TABLE
+  continuing_roster_entries {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% course_pending_events: Both; BASE TABLE
+  course_pending_events {
+    char exception_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(11)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% course_pending_exceptions: Both; BASE TABLE
+  course_pending_exceptions {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char import_job_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% courses: Both; BASE TABLE
+  courses {
+    char id PK "not null; SQL char(36)"
+  }
+  %% eligibility_override_commands: Both; BASE TABLE
+  eligibility_override_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% eligibility_override_events: Both; BASE TABLE
+  eligibility_override_events {
+    bigint sequence PK "not null; SQL bigint(20) unsigned"
+    char override_id FK "not null; SQL char(36)"
+    char calculation_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% eligibility_overrides: Both; BASE TABLE
+  eligibility_overrides {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char requester_id FK "not null; SQL char(36)"
+  }
+  %% entitlement_payment_routes: Both; BASE TABLE
+  entitlement_payment_routes {
+    char entitlement_id PK, FK "not null; SQL char(36)"
+    char transaction_id FK, UK "nullable; SQL char(36)"
+    char event_transaction_id FK "not null; SQL char(36)"
+    int event_revision FK "not null; SQL int(10) unsigned"
+  }
+  %% entitlement_release_links: Both; BASE TABLE
+  entitlement_release_links {
+    char entitlement_id PK, FK "not null; SQL char(36)"
+    char payment_id FK, UK "not null; SQL char(36)"
+    char approved_event_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% entrant_grading_card_reviews: Both; BASE TABLE
+  entrant_grading_card_reviews {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% export_audit_metadata: Both; VIEW
+  export_audit_metadata
+  %% graduation_commands: Both; BASE TABLE
+  graduation_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+    char duration_reference_id FK "nullable; SQL char(36)"
+    char monitoring_case_id FK "nullable; SQL char(36)"
+  }
+  %% graduation_confirmations: Both; BASE TABLE
+  graduation_confirmations {
+    char request_id PK, FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% graduation_monitoring_cases: Both; BASE TABLE
+  graduation_monitoring_cases {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% graduation_monitoring_events: Both; BASE TABLE
+  graduation_monitoring_events {
+    char case_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int previous_revision FK "nullable; SQL int(10) unsigned"
+    int assessment_revision FK "nullable; SQL int(10) unsigned"
+    int pending_review_revision FK "nullable; SQL int(10) unsigned"
+    int program_context_revision FK "nullable; SQL int(10) unsigned"
+    char duration_reference_id FK "nullable; SQL char(36)"
+    int duration_revision FK "nullable; SQL int(10) unsigned"
+    int corrects_revision FK "nullable; SQL int(10) unsigned"
+    int reviews_revision FK "nullable; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% graduation_record_corrections: Both; BASE TABLE
+  graduation_record_corrections {
+    char request_id PK, FK "not null; SQL char(36)"
+    char graduated_before_year_id FK "not null; SQL char(36)"
+  }
+  %% historical_payout_setups: Both; BASE TABLE
+  historical_payout_setups {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char import_job_id FK "not null; SQL char(36)"
+    char batch_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% import_confirmations: Both; BASE TABLE
+  import_confirmations {
+    char job_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% import_intake_bindings: Both; BASE TABLE
+  import_intake_bindings {
+    char id PK "not null; SQL char(36)"
+    char import_job_id FK "not null; SQL char(36)"
+    char intake_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% import_jobs: Both; BASE TABLE
+  import_jobs {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_document_contents: Both; BASE TABLE
+  individual_document_contents {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    enum document_kind PK, FK "not null; SQL enum('OR','DV')"
+    int revision FK "not null; SQL int(10) unsigned"
+    char document_hash FK "not null; SQL char(64)"
+  }
+  %% individual_document_versions: Both; BASE TABLE
+  individual_document_versions {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    enum document_kind PK "not null; SQL enum('OR','DV')"
+    int revision PK "not null; SQL int(10) unsigned"
+    enum source_kind FK "not null; SQL enum('unclaimed','omitted')"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_payment_events: Both; BASE TABLE
+  individual_payment_events {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_payment_transactions: Both; BASE TABLE
+  individual_payment_transactions {
+    char id PK "not null; SQL char(36)"
+    char entitlement_id FK "not null; SQL char(36)"
+    char source_payment_id FK "nullable; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char request_transaction_id FK "nullable; SQL char(36)"
+    char replacement_of FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char omission_id FK "nullable; SQL char(36)"
+    int approval_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% masterlist_activations: Both; BASE TABLE
+  masterlist_activations {
+    char scholarship_id PK, FK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_addition_events: Both; BASE TABLE
+  masterlist_addition_events {
+    char id PK "not null; SQL char(36)"
+    char draft_id FK "not null; SQL char(36)"
+    char target_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_amendment_commands: Both; BASE TABLE
+  masterlist_amendment_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+    char amendment_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_amendment_decisions: Both; BASE TABLE
+  masterlist_amendment_decisions {
+    char amendment_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_amendment_versions: Both; BASE TABLE
+  masterlist_amendment_versions {
+    char masterlist_id PK, FK "not null; SQL char(36)"
+    char parent_id FK, UK "not null; SQL char(36)"
+    char root_id FK "not null; SQL char(36)"
+    char amendment_id FK, UK "not null; SQL char(36)"
+    char academic_change_id FK "nullable; SQL char(36)"
+  }
+  %% masterlist_amendments: Both; BASE TABLE
+  masterlist_amendments {
+    char id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_commands: Both; BASE TABLE
+  masterlist_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_consolidation_links: Both; BASE TABLE
+  masterlist_consolidation_links {
+    char source_id PK, FK "not null; SQL char(36)"
+    char successor_id FK, UK "not null; SQL char(36)"
+  }
+  %% masterlist_consolidations: Both; BASE TABLE
+  masterlist_consolidations {
+    char draft_id PK, FK "not null; SQL char(36)"
+    char source_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_entries: Both; BASE TABLE
+  masterlist_entries {
+    char id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_publications: Both; BASE TABLE
+  masterlist_publications {
+    char masterlist_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_revisions: Both; BASE TABLE
+  masterlist_revisions {
+    char masterlist_id PK, FK "not null; SQL char(36)"
+    char parent_id FK, UK "not null; SQL char(36)"
+    char root_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_versions: Both; BASE TABLE
+  masterlist_versions {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% masterlist_workflow_events: Both; BASE TABLE
+  masterlist_workflow_events {
+    char id PK "not null; SQL char(36)"
+    char masterlist_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% notification_events: Both; BASE TABLE
+  notification_events {
+    char id PK, FK "not null; SQL char(36)"
+  }
+  %% notification_reads: Both; BASE TABLE
+  notification_reads {
+    char user_id PK, FK "not null; SQL char(36)"
+    char event_id PK, FK "not null; SQL char(36)"
+  }
+  %% ovr_amendments: Both; BASE TABLE
+  ovr_amendments {
+    char id PK "not null; SQL char(36)"
+    int version PK "not null; SQL int(10) unsigned"
+    char batch_id FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% ovr_batch_events: Both; BASE TABLE
+  ovr_batch_events {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% ovr_batches: Both; BASE TABLE
+  ovr_batches {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% ovr_commands: Both; BASE TABLE
+  ovr_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% ovr_entries: Both; BASE TABLE
+  ovr_entries {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int batch_revision PK, FK "not null; SQL int(10) unsigned"
+    char scholarship_id PK, FK "not null; SQL char(36)"
+  }
+  %% ovr_finalizations: Both; BASE TABLE
+  ovr_finalizations {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char finalized_by FK "not null; SQL char(36)"
+  }
+  %% participation_events: Both; BASE TABLE
+  participation_events {
+    char id PK "not null; SQL char(36)"
+    char participation_id FK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char corrects_event_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% participations: Both; BASE TABLE
+  participations {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK, UK "not null; SQL char(36)"
+    char roster_entry_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% password_resets: Both; BASE TABLE
+  password_resets {
+    char token_hash PK "not null; SQL char(64)"
+    char user_id FK "not null; SQL char(36)"
+  }
+  %% payment_corrections: Both; BASE TABLE
+  payment_corrections {
+    char id PK "not null; SQL char(36)"
+    int version PK "not null; SQL int(10) unsigned"
+    char payment_id FK "not null; SQL char(36)"
+    char batch_id FK "nullable; SQL char(36)"
+    int batch_revision FK "nullable; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+    char individual_transaction_id FK "nullable; SQL char(36)"
+    int individual_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% payment_records: Both; BASE TABLE
+  payment_records {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "nullable; SQL char(36)"
+    int batch_revision FK "nullable; SQL int(10) unsigned"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char individual_transaction_id FK, UK "nullable; SQL char(36)"
+    int individual_revision FK "nullable; SQL int(10) unsigned"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char scholar_id FK "nullable; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+  }
+  %% payout_cycle_commands: Both; BASE TABLE
+  payout_cycle_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% payout_cycle_versions: Both; BASE TABLE
+  payout_cycle_versions {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_cycles: Both; BASE TABLE
+  payout_cycles {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+  }
+  %% payout_eligibility: Both; BASE TABLE
+  payout_eligibility {
+    char id PK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payout_eligibility_commands: Both; BASE TABLE
+  payout_eligibility_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% payout_requirements: Both; BASE TABLE
+  payout_requirements {
+    char cycle_version_id PK, FK "not null; SQL char(36)"
+    char definition_version_id PK, FK "not null; SQL char(36)"
+  }
+  %% payroll_allocations: Both; BASE TABLE
+  payroll_allocations {
+    char entitlement_id PK, FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char approved_event_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_closure_members: Both; BASE TABLE
+  payroll_closure_members {
+    char closure_id PK, FK "not null; SQL char(36)"
+    int position PK "not null; SQL int(10) unsigned"
+    char scholarship_id FK "not null; SQL char(36)"
+    char payment_id FK "not null; SQL char(36)"
+  }
+  %% payroll_cutoff_rule_versions: Both; BASE TABLE
+  payroll_cutoff_rule_versions {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char approved_by FK "not null; SQL char(36)"
+  }
+  %% payroll_deferrals: Both; BASE TABLE
+  payroll_deferrals {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_draft_deferrals: Both; BASE TABLE
+  payroll_draft_deferrals {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_historical_receipts: Both; BASE TABLE
+  payroll_historical_receipts {
+    char id PK "not null; SQL char(36)"
+    int version PK "not null; SQL int(10) unsigned"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_legacy_conversions: Both; BASE TABLE
+  payroll_legacy_conversions {
+    char id PK "not null; SQL char(36)"
+    char source_batch_id FK, UK "not null; SQL char(36)"
+    char destination_batch_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_omission_events: Both; BASE TABLE
+  payroll_omission_events {
+    char omission_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char destination_batch_id FK "nullable; SQL char(36)"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char authorized_entitlement_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_omissions: Both; BASE TABLE
+  payroll_omissions {
+    char id PK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_preparation_versions: Both; BASE TABLE
+  payroll_preparation_versions {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reconciliation_events: Both; BASE TABLE
+  payroll_reconciliation_events {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char case_id FK "nullable; SQL char(36)"
+    char scholarship_id FK "nullable; SQL char(36)"
+    char payment_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reprocessing: Both; BASE TABLE
+  payroll_reprocessing {
+    char id PK "not null; SQL char(36)"
+    char payment_id FK, UK "not null; SQL char(36)"
+    char root_batch_id FK "not null; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reprocessing_attempts: Both; BASE TABLE
+  payroll_reprocessing_attempts {
+    char reprocessing_id PK, FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_reprocessing_events: Both; BASE TABLE
+  payroll_reprocessing_events {
+    char id PK "not null; SQL char(36)"
+    char reprocessing_id FK "not null; SQL char(36)"
+    char destination_batch_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_submission_window_versions: Both; BASE TABLE
+  payroll_submission_window_versions {
+    char batch_id PK, FK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int semester_deadline_revision FK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+    int cutoff_rule_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% payroll_submission_windows: Both; BASE TABLE
+  payroll_submission_windows {
+    char batch_id PK, FK "not null; SQL char(36)"
+    char cycle_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_treasury_confirmations: Both; BASE TABLE
+  payroll_treasury_confirmations {
+    char payment_id PK, FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    int evidence_revision FK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_treasury_evidence: Both; BASE TABLE
+  payroll_treasury_evidence {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_unpaid_classifications: Both; BASE TABLE
+  payroll_unpaid_classifications {
+    char id PK "not null; SQL char(36)"
+    char payment_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% permissions: Both; BASE TABLE
+  permissions {
+    varchar code PK "not null; SQL varchar(80)"
+  }
+  %% placement_policy_reviews: Both; BASE TABLE
+  placement_policy_reviews {
+    char id PK "not null; SQL char(36)"
+    char academic_record_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% prior_batch_approvals: Both; BASE TABLE
+  prior_batch_approvals {
+    char id PK "not null; SQL char(36)"
+    char import_job_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% prior_batch_documents: Both; BASE TABLE
+  prior_batch_documents {
+    char approval_id PK, FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char instance_id PK, FK "not null; SQL char(36)"
+  }
+  %% prior_batch_members: Both; BASE TABLE
+  prior_batch_members {
+    char approval_id PK, FK "not null; SQL char(36)"
+    char scholar_semester_id PK, FK "not null; SQL char(36)"
+    char review_event_id FK "not null; SQL char(36)"
+  }
+  %% prior_batch_waiver_corrections: Both; BASE TABLE
+  prior_batch_waiver_corrections {
+    char approval_id PK, FK "not null; SQL char(36)"
+    char waiver_id PK, FK, UK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+  }
+  %% program_duration_events: Both; BASE TABLE
+  program_duration_events {
+    char reference_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int previous_revision FK "nullable; SQL int(10) unsigned"
+    char applies_from_year_id FK "not null; SQL char(36)"
+    char applies_through_year_id FK "nullable; SQL char(36)"
+    char review_academic_year_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% program_duration_references: Both; BASE TABLE
+  program_duration_references {
+    char id PK "not null; SQL char(36)"
+    char school_id FK "not null; SQL char(36)"
+    char course_id FK "not null; SQL char(36)"
+    char created_by FK "not null; SQL char(36)"
+  }
+  %% qualification_commands: Both; BASE TABLE
+  qualification_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char request_id PK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+  }
+  %% qualification_events: Both; BASE TABLE
+  qualification_events {
+    char id PK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% regular_payout_periods: Both; BASE TABLE
+  regular_payout_periods {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    char semester_id FK, UK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_checklists: Both; BASE TABLE
+  requirement_checklists {
+    char id PK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char payout_cycle_id FK "nullable; SQL char(36)"
+    char payout_version_id FK "nullable; SQL char(36)"
+    char scholar_semester_id FK "nullable; SQL char(36)"
+  }
+  %% requirement_coverage: Both; BASE TABLE
+  requirement_coverage {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char requirement_instance_id FK "not null; SQL char(36)"
+    char coverage_semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_definition_commands: Both; BASE TABLE
+  requirement_definition_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% requirement_definition_versions: Both; BASE TABLE
+  requirement_definition_versions {
+    char id PK "not null; SQL char(36)"
+    char definition_id FK "not null; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_definitions: Both; BASE TABLE
+  requirement_definitions {
+    char id PK "not null; SQL char(36)"
+  }
+  %% requirement_document_evidence: Both; BASE TABLE
+  requirement_document_evidence {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char receipt_id FK, UK "nullable; SQL char(36)"
+    char workflow_event_id FK, UK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char entrant_review_id FK "nullable; SQL char(36)"
+  }
+  %% requirement_generation_commands: Both; BASE TABLE
+  requirement_generation_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% requirement_instances: Both; BASE TABLE
+  requirement_instances {
+    char id PK "not null; SQL char(36)"
+    char checklist_id FK "not null; SQL char(36)"
+    char definition_version_id FK "not null; SQL char(36)"
+  }
+  %% requirement_receipt_commands: Both; BASE TABLE
+  requirement_receipt_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% requirement_receipts: Both; BASE TABLE
+  requirement_receipts {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_timing_decisions: Both; BASE TABLE
+  requirement_timing_decisions {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char batch_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_waiver_commands: Both; BASE TABLE
+  requirement_waiver_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% requirement_waivers: Both; BASE TABLE
+  requirement_waivers {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK, UK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% requirement_workflow_commands: Both; BASE TABLE
+  requirement_workflow_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% requirement_workflow_events: Both; BASE TABLE
+  requirement_workflow_events {
+    char id PK "not null; SQL char(36)"
+    char instance_id FK "not null; SQL char(36)"
+    char correction_of FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% role_change_commands: Both; BASE TABLE
+  role_change_commands {
+    char request_id PK "not null; SQL char(36)"
+    char user_id FK "not null; SQL char(36)"
+  }
+  %% role_permissions: Both; BASE TABLE
+  role_permissions {
+    varchar role_code PK, FK "not null; SQL varchar(32)"
+    varchar permission_code PK, FK "not null; SQL varchar(80)"
+  }
+  %% roles: Both; BASE TABLE
+  roles {
+    varchar code PK "not null; SQL varchar(32)"
+  }
+  %% schema_migrations: Both; BASE TABLE
+  schema_migrations {
+    varchar version PK "not null; SQL varchar(80)"
+  }
+  %% scholar_commands: Both; BASE TABLE
+  scholar_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char request_id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+  }
+  %% scholar_contacts: Both; BASE TABLE
+  scholar_contacts {
+    char scholar_id PK, FK "not null; SQL char(36)"
+  }
+  %% scholar_id_sequences: Both; BASE TABLE
+  scholar_id_sequences {
+    smallint entry_year PK "not null; SQL smallint(5) unsigned"
+  }
+  %% scholar_identifiers: Both; BASE TABLE
+  scholar_identifiers {
+    char scholar_id PK, FK "not null; SQL char(36)"
+  }
+  %% scholar_intake_revisions: Both; BASE TABLE
+  scholar_intake_revisions {
+    char intake_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char school_id FK "nullable; SQL char(36)"
+    char course_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_intake_text_events: Both; BASE TABLE
+  scholar_intake_text_events {
+    char intake_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    int previous_revision FK "nullable; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_intakes: Both; BASE TABLE
+  scholar_intakes {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char school_id FK "nullable; SQL char(36)"
+    char course_id FK "nullable; SQL char(36)"
+    char import_job_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_profile_audit: Both; VIEW
+  scholar_profile_audit
+  %% scholar_semester_revisions: Both; BASE TABLE
+  scholar_semester_revisions {
+    char scholar_semester_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char academic_record_id FK "nullable; SQL char(36)"
+    char academic_change_id FK "nullable; SQL char(36)"
+    char predecessor_semester_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholar_semesters: Both; BASE TABLE
+  scholar_semesters {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char participation_id FK "not null; SQL char(36)"
+    char scholarship_record_id FK "nullable; SQL char(36)"
+    char scope_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% scholars: Both; BASE TABLE
+  scholars {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char barangay_id FK "nullable; SQL char(36)"
+  }
+  %% scholarship_records: Both; BASE TABLE
+  scholarship_records {
+    char id PK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+    char continuing_participation_id FK "nullable; SQL char(36)"
+    char continuing_from_scholarship_id FK "nullable; SQL char(36)"
+  }
+  %% schools: Both; BASE TABLE
+  schools {
+    char id PK "not null; SQL char(36)"
+  }
+  %% semester_document_reconciliations: Both; BASE TABLE
+  semester_document_reconciliations {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char legacy_instance_id FK "not null; SQL char(36)"
+    char source_instance_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_entitlement_events: Both; BASE TABLE
+  semester_entitlement_events {
+    char id PK "not null; SQL char(36)"
+    char entitlement_id FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char review_event_id FK "not null; SQL char(36)"
+    char authority_version_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_entitlements: Both; BASE TABLE
+  semester_entitlements {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_review_events: Both; BASE TABLE
+  semester_review_events {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    int semester_revision FK "not null; SQL int(10) unsigned"
+    char policy_version_id FK "not null; SQL char(36)"
+    char supersedes_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_submission_versions: Both; BASE TABLE
+  semester_submission_versions {
+    char cycle_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% status_change_commands: Both; BASE TABLE
+  status_change_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+    char request_id FK "not null; SQL char(36)"
+  }
+  %% status_change_decisions: Both; BASE TABLE
+  status_change_decisions {
+    char request_id PK, FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% status_change_requests: Both; BASE TABLE
+  status_change_requests {
+    char id PK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char corrects_request_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% system_settings: Both; BASE TABLE
+  system_settings {
+    char id PK "not null; SQL char(36)"
+  }
+  %% user_roles: Both; BASE TABLE
+  user_roles {
+    char id PK "not null; SQL char(36)"
+    char user_id FK "not null; SQL char(36)"
+    varchar role_code FK "not null; SQL varchar(32)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  %% workflow_authority_versions: Both; BASE TABLE
+  workflow_authority_versions {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% workflow_commands: Both; BASE TABLE
+  workflow_commands {
+    char actor_id PK, FK "not null; SQL char(36)"
+    char command_id PK "not null; SQL char(36)"
+  }
+  %% workflow_policy_versions: Both; BASE TABLE
+  workflow_policy_versions {
+    char id PK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% workflow_scope_versions: Both; BASE TABLE
+  workflow_scope_versions {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char policy_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  academic_records ||..o{ academic_changes : "academic_changes_ibfk_1"
+  schools ||..o{ academic_changes : "academic_changes_ibfk_2"
+  courses ||..o{ academic_changes : "academic_changes_ibfk_3"
+  users ||..o{ academic_changes : "academic_changes_ibfk_4"
+  users ||--o{ academic_change_commands : "academic_change_commands_ibfk_1"
+  academic_changes ||..o{ academic_change_commands : "academic_change_commands_ibfk_2"
+  academic_changes ||--o| academic_change_decisions : "academic_change_decisions_ibfk_1"
+  academic_records ||..o{ academic_change_decisions : "academic_change_decisions_ibfk_2"
+  users ||..o{ academic_change_decisions : "academic_change_decisions_ibfk_3"
+  users ||--o{ academic_commands : "academic_commands_ibfk_1"
+  academic_records ||..o{ academic_commands : "academic_commands_ibfk_2"
+  scholars ||..o{ academic_records : "academic_records_ibfk_1"
+  academic_years ||..o{ academic_records : "academic_records_ibfk_2"
+  schools ||..o{ academic_records : "academic_records_ibfk_3"
+  courses |o..o{ academic_records : "academic_records_ibfk_4"
+  users ||..o{ academic_records : "academic_records_ibfk_5"
+  course_pending_exceptions |o..o{ academic_records : "academic_records_ibfk_6"
+  users ||--o{ annual_intake_commands : "annual_intake_commands_ibfk_1"
+  scholar_intakes ||..o{ annual_intake_commands : "annual_intake_commands_ibfk_2"
+  users |o..o{ audit_logs : "fk_audit_actor"
+  users ||..o{ auth_sessions : "fk_session_user"
+  users ||--o{ configuration_commands : "configuration_commands_ibfk_1"
+  users ||..o{ continuing_roster_batches : "continuing_roster_batches_ibfk_1"
+  continuing_roster_batches ||..o{ continuing_roster_decisions : "continuing_roster_decisions_ibfk_1"
+  workflow_authority_versions ||..o{ continuing_roster_decisions : "continuing_roster_decisions_ibfk_2"
+  users ||..o{ continuing_roster_decisions : "continuing_roster_decisions_ibfk_3"
+  continuing_roster_batches ||..o{ continuing_roster_entries : "continuing_roster_entries_ibfk_1"
+  scholars ||..o{ continuing_roster_entries : "continuing_roster_entries_ibfk_2"
+  users ||..o{ continuing_roster_entries : "continuing_roster_entries_ibfk_3"
+  course_pending_exceptions ||--o{ course_pending_events : "course_pending_events_ibfk_1"
+  users ||..o{ course_pending_events : "course_pending_events_ibfk_2"
+  scholars ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_1"
+  academic_years ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_2"
+  import_jobs ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_3"
+  users ||..o{ course_pending_exceptions : "course_pending_exceptions_ibfk_4"
+  payout_cycles ||..o{ eligibility_overrides : "eligibility_overrides_ibfk_1"
+  scholarship_records ||..o{ eligibility_overrides : "eligibility_overrides_ibfk_2"
+  users ||..o{ eligibility_overrides : "eligibility_overrides_ibfk_3"
+  users ||--o{ eligibility_override_commands : "eligibility_override_commands_ibfk_1"
+  eligibility_overrides ||..o{ eligibility_override_events : "eligibility_override_events_ibfk_1"
+  payout_eligibility ||..o{ eligibility_override_events : "eligibility_override_events_ibfk_2"
+  users ||..o{ eligibility_override_events : "eligibility_override_events_ibfk_3"
+  semester_entitlements ||--o| entitlement_payment_routes : "entitlement_payment_routes_ibfk_1"
+  individual_payment_transactions |o..o| entitlement_payment_routes : "entitlement_payment_routes_ibfk_2"
+  individual_payment_transactions ||..o| entitlement_payment_routes : "entitlement_payment_routes_ibfk_3"
+  individual_payment_events ||..o{ entitlement_payment_routes : "entitlement_payment_routes_ibfk_4"
+  semester_entitlements ||--o| entitlement_release_links : "entitlement_release_links_ibfk_1"
+  payment_records ||..o| entitlement_release_links : "entitlement_release_links_ibfk_2"
+  semester_entitlement_events ||..o| entitlement_release_links : "entitlement_release_links_ibfk_3"
+  users ||..o{ entitlement_release_links : "entitlement_release_links_ibfk_4"
+  requirement_instances ||..o{ entrant_grading_card_reviews : "entrant_grading_card_reviews_ibfk_1"
+  users ||..o{ entrant_grading_card_reviews : "entrant_grading_card_reviews_ibfk_2"
+  users ||--o{ graduation_commands : "graduation_commands_ibfk_1"
+  program_duration_references |o..o{ graduation_commands : "graduation_commands_ibfk_2"
+  graduation_monitoring_cases |o..o{ graduation_commands : "graduation_commands_ibfk_3"
+  status_change_decisions ||--o| graduation_confirmations : "graduation_confirmations_ibfk_1"
+  scholarship_records ||..o{ graduation_confirmations : "graduation_confirmations_ibfk_2"
+  semesters ||..o{ graduation_confirmations : "graduation_confirmations_ibfk_3"
+  users ||..o{ graduation_confirmations : "graduation_confirmations_ibfk_4"
+  scholars ||..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_1"
+  academic_years ||..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_2"
+  semesters |o..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_3"
+  users ||..o{ graduation_monitoring_cases : "graduation_monitoring_cases_ibfk_4"
+  graduation_monitoring_cases ||--o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_1"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_2"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_3"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_4"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_5"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_6"
+  graduation_monitoring_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_7"
+  program_duration_events |o..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_8"
+  users ||..o{ graduation_monitoring_events : "graduation_monitoring_events_ibfk_9"
+  graduation_confirmations ||--o| graduation_record_corrections : "graduation_record_corrections_ibfk_1"
+  academic_years ||..o{ graduation_record_corrections : "graduation_record_corrections_ibfk_2"
+  regular_payout_periods ||--o{ historical_payout_setups : "historical_payout_setups_ibfk_1"
+  import_jobs ||..o{ historical_payout_setups : "historical_payout_setups_ibfk_2"
+  payroll_submission_windows ||..o| historical_payout_setups : "historical_payout_setups_ibfk_3"
+  users ||..o{ historical_payout_setups : "historical_payout_setups_ibfk_4"
+  import_jobs ||--o| import_confirmations : "import_confirmations_ibfk_1"
+  users ||..o{ import_confirmations : "import_confirmations_ibfk_2"
+  import_jobs ||..o{ import_intake_bindings : "import_intake_bindings_ibfk_1"
+  scholar_intakes ||..o{ import_intake_bindings : "import_intake_bindings_ibfk_2"
+  users ||..o{ import_intake_bindings : "import_intake_bindings_ibfk_3"
+  users ||..o{ import_jobs : "import_jobs_ibfk_1"
+  individual_document_versions ||..o| individual_document_contents : "individual_document_contents_ibfk_1"
+  individual_payment_transactions ||..o{ individual_document_versions : "individual_document_versions_ibfk_1"
+  users ||..o{ individual_document_versions : "individual_document_versions_ibfk_2"
+  individual_payment_transactions ||--o{ individual_payment_events : "individual_payment_events_ibfk_1"
+  users ||..o{ individual_payment_events : "individual_payment_events_ibfk_2"
+  payroll_omission_events |o..o{ individual_payment_transactions : "fk_individual_omission_approval"
+  payroll_omissions |o..o{ individual_payment_transactions : "fk_individual_omission_origin"
+  semester_entitlements ||..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_1"
+  payment_records |o..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_2"
+  ovr_finalizations ||..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_3"
+  individual_payment_transactions |o..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_4"
+  individual_payment_transactions |o..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_5"
+  users ||..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_6"
+  scholarship_records ||--o| masterlist_activations : "masterlist_activations_ibfk_1"
+  masterlist_publications ||..o{ masterlist_activations : "masterlist_activations_ibfk_2"
+  masterlist_versions ||..o{ masterlist_addition_events : "masterlist_addition_events_ibfk_1"
+  masterlist_versions |o..o{ masterlist_addition_events : "masterlist_addition_events_ibfk_2"
+  users ||..o{ masterlist_addition_events : "masterlist_addition_events_ibfk_3"
+  masterlist_publications ||..o{ masterlist_amendments : "masterlist_amendments_ibfk_1"
+  scholars ||..o{ masterlist_amendments : "masterlist_amendments_ibfk_2"
+  users ||..o{ masterlist_amendments : "masterlist_amendments_ibfk_3"
+  users ||--o{ masterlist_amendment_commands : "masterlist_amendment_commands_ibfk_1"
+  masterlist_amendments ||..o{ masterlist_amendment_commands : "masterlist_amendment_commands_ibfk_2"
+  masterlist_amendments ||--o| masterlist_amendment_decisions : "masterlist_amendment_decisions_ibfk_1"
+  users ||..o{ masterlist_amendment_decisions : "masterlist_amendment_decisions_ibfk_2"
+  masterlist_publications ||--o| masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_1"
+  masterlist_publications ||..o| masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_2"
+  masterlist_publications ||..o{ masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_3"
+  masterlist_amendments ||..o| masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_4"
+  academic_changes |o..o{ masterlist_amendment_versions : "masterlist_amendment_versions_ibfk_5"
+  users ||--o{ masterlist_commands : "masterlist_commands_ibfk_1"
+  masterlist_versions ||..o{ masterlist_commands : "masterlist_commands_ibfk_2"
+  masterlist_versions ||--o| masterlist_consolidations : "masterlist_consolidations_ibfk_1"
+  masterlist_versions ||..o{ masterlist_consolidations : "masterlist_consolidations_ibfk_2"
+  masterlist_versions ||--o| masterlist_consolidation_links : "masterlist_consolidation_links_ibfk_1"
+  masterlist_versions ||..o| masterlist_consolidation_links : "masterlist_consolidation_links_ibfk_2"
+  masterlist_versions ||..o{ masterlist_entries : "masterlist_entries_ibfk_1"
+  scholars ||..o{ masterlist_entries : "masterlist_entries_ibfk_2"
+  masterlist_versions ||--o| masterlist_publications : "masterlist_publications_ibfk_1"
+  users ||..o{ masterlist_publications : "masterlist_publications_ibfk_2"
+  masterlist_versions ||--o| masterlist_revisions : "masterlist_revisions_ibfk_1"
+  masterlist_versions ||..o| masterlist_revisions : "masterlist_revisions_ibfk_2"
+  masterlist_versions ||..o{ masterlist_revisions : "masterlist_revisions_ibfk_3"
+  academic_years ||..o{ masterlist_versions : "masterlist_versions_ibfk_1"
+  users ||..o{ masterlist_versions : "masterlist_versions_ibfk_2"
+  masterlist_versions ||..o{ masterlist_workflow_events : "masterlist_workflow_events_ibfk_1"
+  users ||..o{ masterlist_workflow_events : "masterlist_workflow_events_ibfk_2"
+  audit_logs ||--o| notification_events : "notification_events_ibfk_1"
+  users ||--o{ notification_reads : "notification_reads_ibfk_1"
+  notification_events ||--o{ notification_reads : "notification_reads_ibfk_2"
+  ovr_batch_events ||..o| ovr_amendments : "ovr_amendments_ibfk_1"
+  users ||..o{ ovr_amendments : "ovr_amendments_ibfk_2"
+  payout_cycles ||..o{ ovr_batches : "ovr_batches_ibfk_1"
+  users ||..o{ ovr_batches : "ovr_batches_ibfk_2"
+  ovr_batches ||--o{ ovr_batch_events : "ovr_batch_events_ibfk_1"
+  users ||..o{ ovr_batch_events : "ovr_batch_events_ibfk_2"
+  users ||--o{ ovr_commands : "ovr_commands_ibfk_1"
+  ovr_batch_events ||--o{ ovr_entries : "ovr_entries_ibfk_1"
+  scholarship_records ||--o{ ovr_entries : "ovr_entries_ibfk_2"
+  ovr_batch_events ||..o| ovr_finalizations : "ovr_finalizations_ibfk_1"
+  users ||..o{ ovr_finalizations : "ovr_finalizations_ibfk_2"
+  scholars ||..o| participations : "participations_ibfk_1"
+  continuing_roster_entries |o..o| participations : "participations_ibfk_2"
+  users ||..o{ participations : "participations_ibfk_3"
+  participations ||..o{ participation_events : "participation_events_ibfk_1"
+  workflow_authority_versions ||..o{ participation_events : "participation_events_ibfk_2"
+  participation_events |o..o{ participation_events : "participation_events_ibfk_3"
+  users ||..o{ participation_events : "participation_events_ibfk_4"
+  users ||..o{ password_resets : "fk_reset_user"
+  individual_payment_events |o..o| payment_corrections : "fk_correction_individual_event"
+  payment_records |o..o{ payment_corrections : "fk_correction_individual_payment"
+  payment_records |o..o{ payment_corrections : "fk_correction_payroll_owner"
+  payment_records ||..o{ payment_corrections : "payment_corrections_ibfk_1"
+  ovr_batch_events |o..o| payment_corrections : "payment_corrections_ibfk_2"
+  users ||..o{ payment_corrections : "payment_corrections_ibfk_3"
+  scholarship_records |o..o{ payment_records : "fk_payment_annual_identity"
+  payout_cycles |o..o{ payment_records : "fk_payment_cycle_semester"
+  semester_entitlements |o..o{ payment_records : "fk_payment_entitlement_identity"
+  individual_payment_events |o..o| payment_records : "fk_payment_individual_event"
+  individual_payment_transactions |o..o| payment_records : "fk_payment_individual_owner"
+  ovr_finalizations |o..o{ payment_records : "payment_records_ibfk_1"
+  ovr_batch_events |o..o| payment_records : "payment_records_ibfk_2"
+  payout_cycles ||..o{ payment_records : "payment_records_ibfk_3"
+  scholarship_records ||..o{ payment_records : "payment_records_ibfk_4"
+  users ||..o{ payment_records : "payment_records_ibfk_5"
+  semesters ||..o{ payout_cycles : "payout_cycles_ibfk_1"
+  users ||--o{ payout_cycle_commands : "payout_cycle_commands_ibfk_1"
+  payout_cycles ||..o{ payout_cycle_versions : "payout_cycle_versions_ibfk_1"
+  users ||..o{ payout_cycle_versions : "payout_cycle_versions_ibfk_2"
+  payout_cycles ||..o{ payout_eligibility : "payout_eligibility_ibfk_1"
+  scholarship_records ||..o{ payout_eligibility : "payout_eligibility_ibfk_2"
+  users ||..o{ payout_eligibility : "payout_eligibility_ibfk_3"
+  users ||--o{ payout_eligibility_commands : "payout_eligibility_commands_ibfk_1"
+  payout_cycle_versions ||--o{ payout_requirements : "payout_requirements_ibfk_1"
+  requirement_definition_versions ||--o{ payout_requirements : "payout_requirements_ibfk_2"
+  semester_entitlements ||--o| payroll_allocations : "payroll_allocations_ibfk_1"
+  ovr_finalizations ||..o{ payroll_allocations : "payroll_allocations_ibfk_2"
+  scholarship_records ||..o{ payroll_allocations : "payroll_allocations_ibfk_3"
+  semester_entitlement_events ||..o| payroll_allocations : "payroll_allocations_ibfk_4"
+  users ||..o{ payroll_allocations : "payroll_allocations_ibfk_5"
+  payroll_reconciliation_events ||--o{ payroll_closure_members : "payroll_closure_members_ibfk_1"
+  scholarship_records ||..o{ payroll_closure_members : "payroll_closure_members_ibfk_2"
+  payment_records ||..o{ payroll_closure_members : "payroll_closure_members_ibfk_3"
+  payout_cycles ||--o{ payroll_cutoff_rule_versions : "payroll_cutoff_rule_versions_ibfk_1"
+  users ||..o{ payroll_cutoff_rule_versions : "payroll_cutoff_rule_versions_ibfk_2"
+  payroll_submission_windows ||..o{ payroll_deferrals : "payroll_deferrals_ibfk_1"
+  scholarship_records ||..o{ payroll_deferrals : "payroll_deferrals_ibfk_2"
+  users ||..o{ payroll_deferrals : "payroll_deferrals_ibfk_3"
+  ovr_batches ||..o{ payroll_draft_deferrals : "payroll_draft_deferrals_ibfk_1"
+  scholarship_records ||..o{ payroll_draft_deferrals : "payroll_draft_deferrals_ibfk_2"
+  users ||..o{ payroll_draft_deferrals : "payroll_draft_deferrals_ibfk_3"
+  ovr_batches ||..o{ payroll_historical_receipts : "payroll_historical_receipts_ibfk_1"
+  scholarship_records ||..o{ payroll_historical_receipts : "payroll_historical_receipts_ibfk_2"
+  users ||..o{ payroll_historical_receipts : "payroll_historical_receipts_ibfk_3"
+  ovr_batches ||..o| payroll_legacy_conversions : "payroll_legacy_conversions_ibfk_1"
+  ovr_batches ||..o{ payroll_legacy_conversions : "payroll_legacy_conversions_ibfk_2"
+  users ||..o{ payroll_legacy_conversions : "payroll_legacy_conversions_ibfk_3"
+  scholarship_records ||..o{ payroll_omissions : "payroll_omissions_ibfk_1"
+  scholar_semesters ||..o| payroll_omissions : "payroll_omissions_ibfk_2"
+  scholars ||..o{ payroll_omissions : "payroll_omissions_ibfk_3"
+  semesters ||..o{ payroll_omissions : "payroll_omissions_ibfk_4"
+  ovr_finalizations ||..o{ payroll_omissions : "payroll_omissions_ibfk_5"
+  users ||..o{ payroll_omissions : "payroll_omissions_ibfk_6"
+  semester_entitlements |o..o{ payroll_omission_events : "fk_omission_authorized_owner"
+  payroll_omissions ||..o{ payroll_omission_events : "payroll_omission_events_ibfk_1"
+  payroll_submission_windows |o..o{ payroll_omission_events : "payroll_omission_events_ibfk_2"
+  semester_entitlements |o..o{ payroll_omission_events : "payroll_omission_events_ibfk_3"
+  semester_entitlements |o..o{ payroll_omission_events : "payroll_omission_events_ibfk_4"
+  users ||..o{ payroll_omission_events : "payroll_omission_events_ibfk_5"
+  payout_cycles ||--o{ payroll_preparation_versions : "payroll_preparation_versions_ibfk_1"
+  users ||..o{ payroll_preparation_versions : "payroll_preparation_versions_ibfk_2"
+  ovr_batch_events ||..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_1"
+  payroll_reconciliation_events |o..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_2"
+  scholarship_records |o..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_3"
+  payment_records |o..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_4"
+  users ||..o{ payroll_reconciliation_events : "payroll_reconciliation_events_ibfk_5"
+  payment_records ||..o| payroll_reprocessing : "payroll_reprocessing_ibfk_1"
+  ovr_finalizations ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_2"
+  ovr_finalizations ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_3"
+  scholarship_records ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_4"
+  semesters ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_5"
+  semester_entitlements |o..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_6"
+  users ||..o{ payroll_reprocessing : "payroll_reprocessing_ibfk_7"
+  payroll_reprocessing ||--o| payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_1"
+  ovr_finalizations ||..o{ payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_2"
+  scholarship_records ||..o{ payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_3"
+  users ||..o{ payroll_reprocessing_attempts : "payroll_reprocessing_attempts_ibfk_4"
+  payroll_reprocessing ||..o{ payroll_reprocessing_events : "payroll_reprocessing_events_ibfk_1"
+  ovr_batches |o..o{ payroll_reprocessing_events : "payroll_reprocessing_events_ibfk_2"
+  users ||..o{ payroll_reprocessing_events : "payroll_reprocessing_events_ibfk_3"
+  ovr_batches ||--o| payroll_submission_windows : "payroll_submission_windows_ibfk_1"
+  regular_payout_periods ||..o{ payroll_submission_windows : "payroll_submission_windows_ibfk_2"
+  users ||..o{ payroll_submission_windows : "payroll_submission_windows_ibfk_3"
+  payroll_cutoff_rule_versions |o..o{ payroll_submission_window_versions : "fk_window_cutoff_rule"
+  payroll_submission_windows ||..o{ payroll_submission_window_versions : "payroll_submission_window_versions_ibfk_1"
+  semester_submission_versions ||..o{ payroll_submission_window_versions : "payroll_submission_window_versions_ibfk_2"
+  users ||..o{ payroll_submission_window_versions : "payroll_submission_window_versions_ibfk_3"
+  payment_records ||--o| payroll_treasury_confirmations : "payroll_treasury_confirmations_ibfk_1"
+  payroll_treasury_evidence ||..o{ payroll_treasury_confirmations : "payroll_treasury_confirmations_ibfk_2"
+  users ||..o{ payroll_treasury_confirmations : "payroll_treasury_confirmations_ibfk_3"
+  ovr_batches ||--o{ payroll_treasury_evidence : "payroll_treasury_evidence_ibfk_1"
+  users ||..o{ payroll_treasury_evidence : "payroll_treasury_evidence_ibfk_2"
+  payment_records ||..o{ payroll_unpaid_classifications : "payroll_unpaid_classifications_ibfk_1"
+  users ||..o{ payroll_unpaid_classifications : "payroll_unpaid_classifications_ibfk_2"
+  academic_records ||..o{ placement_policy_reviews : "placement_policy_reviews_ibfk_1"
+  users ||..o{ placement_policy_reviews : "placement_policy_reviews_ibfk_2"
+  import_jobs ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_1"
+  semesters ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_2"
+  workflow_authority_versions ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_3"
+  users ||..o{ prior_batch_approvals : "prior_batch_approvals_ibfk_4"
+  prior_batch_members ||..o{ prior_batch_documents : "prior_batch_documents_ibfk_1"
+  requirement_instances ||--o{ prior_batch_documents : "prior_batch_documents_ibfk_2"
+  prior_batch_approvals ||--o{ prior_batch_members : "prior_batch_members_ibfk_1"
+  scholar_semesters ||--o{ prior_batch_members : "prior_batch_members_ibfk_2"
+  semester_review_events ||..o{ prior_batch_members : "prior_batch_members_ibfk_3"
+  prior_batch_documents ||..o{ prior_batch_waiver_corrections : "prior_batch_waiver_corrections_ibfk_1"
+  requirement_waivers ||--o| prior_batch_waiver_corrections : "prior_batch_waiver_corrections_ibfk_2"
+  program_duration_references ||--o{ program_duration_events : "program_duration_events_ibfk_1"
+  program_duration_events |o..o{ program_duration_events : "program_duration_events_ibfk_2"
+  academic_years ||..o{ program_duration_events : "program_duration_events_ibfk_3"
+  academic_years |o..o{ program_duration_events : "program_duration_events_ibfk_4"
+  academic_years ||..o{ program_duration_events : "program_duration_events_ibfk_5"
+  users ||..o{ program_duration_events : "program_duration_events_ibfk_6"
+  schools ||..o{ program_duration_references : "program_duration_references_ibfk_1"
+  courses ||..o{ program_duration_references : "program_duration_references_ibfk_2"
+  users ||..o{ program_duration_references : "program_duration_references_ibfk_3"
+  users ||--o{ qualification_commands : "qualification_commands_ibfk_1"
+  scholarship_records ||..o{ qualification_commands : "qualification_commands_ibfk_2"
+  scholarship_records ||..o{ qualification_events : "qualification_events_ibfk_1"
+  users ||..o{ qualification_events : "qualification_events_ibfk_2"
+  payout_cycles ||..o| regular_payout_periods : "regular_payout_periods_ibfk_1"
+  academic_years ||..o{ regular_payout_periods : "regular_payout_periods_ibfk_2"
+  users ||..o{ regular_payout_periods : "regular_payout_periods_ibfk_3"
+  scholar_semesters |o..o{ requirement_checklists : "fk_requirement_semester_owner"
+  scholarship_records |o..o{ requirement_checklists : "requirement_checklists_ibfk_1"
+  semesters ||..o{ requirement_checklists : "requirement_checklists_ibfk_2"
+  users ||..o{ requirement_checklists : "requirement_checklists_ibfk_3"
+  payout_cycles |o..o{ requirement_checklists : "requirement_checklists_ibfk_4"
+  payout_cycle_versions |o..o{ requirement_checklists : "requirement_checklists_ibfk_5"
+  scholar_semesters ||..o{ requirement_coverage : "requirement_coverage_ibfk_1"
+  requirement_instances ||..o{ requirement_coverage : "requirement_coverage_ibfk_2"
+  semesters |o..o{ requirement_coverage : "requirement_coverage_ibfk_3"
+  users ||..o{ requirement_coverage : "requirement_coverage_ibfk_4"
+  users ||--o{ requirement_definition_commands : "requirement_definition_commands_ibfk_1"
+  requirement_definitions ||..o{ requirement_definition_versions : "requirement_definition_versions_ibfk_1"
+  semesters |o..o{ requirement_definition_versions : "requirement_definition_versions_ibfk_2"
+  users ||..o{ requirement_definition_versions : "requirement_definition_versions_ibfk_3"
+  entrant_grading_card_reviews |o..o{ requirement_document_evidence : "fk_document_entrant_review"
+  requirement_instances ||..o{ requirement_document_evidence : "requirement_document_evidence_ibfk_1"
+  requirement_receipts |o..o| requirement_document_evidence : "requirement_document_evidence_ibfk_2"
+  requirement_workflow_events |o..o| requirement_document_evidence : "requirement_document_evidence_ibfk_3"
+  users ||..o{ requirement_document_evidence : "requirement_document_evidence_ibfk_4"
+  users ||--o{ requirement_generation_commands : "requirement_generation_commands_ibfk_1"
+  requirement_checklists ||..o{ requirement_instances : "requirement_instances_ibfk_1"
+  requirement_definition_versions ||..o{ requirement_instances : "requirement_instances_ibfk_2"
+  requirement_instances ||..o| requirement_receipts : "requirement_receipts_ibfk_1"
+  users ||..o{ requirement_receipts : "requirement_receipts_ibfk_2"
+  users ||--o{ requirement_receipt_commands : "requirement_receipt_commands_ibfk_1"
+  requirement_instances ||..o{ requirement_timing_decisions : "requirement_timing_decisions_ibfk_1"
+  payroll_submission_windows ||..o{ requirement_timing_decisions : "requirement_timing_decisions_ibfk_2"
+  users ||..o{ requirement_timing_decisions : "requirement_timing_decisions_ibfk_3"
+  requirement_instances ||..o| requirement_waivers : "requirement_waivers_ibfk_1"
+  users ||..o{ requirement_waivers : "requirement_waivers_ibfk_2"
+  users ||--o{ requirement_waiver_commands : "requirement_waiver_commands_ibfk_1"
+  users ||--o{ requirement_workflow_commands : "requirement_workflow_commands_ibfk_1"
+  requirement_instances ||..o{ requirement_workflow_events : "requirement_workflow_events_ibfk_1"
+  requirement_workflow_events |o..o{ requirement_workflow_events : "requirement_workflow_events_ibfk_2"
+  users ||..o{ requirement_workflow_events : "requirement_workflow_events_ibfk_3"
+  users ||..o{ role_change_commands : "role_change_commands_ibfk_1"
+  roles ||--o{ role_permissions : "role_permissions_ibfk_1"
+  permissions ||--o{ role_permissions : "role_permissions_ibfk_2"
+  academic_years ||..o{ scholars : "scholars_ibfk_1"
+  barangays |o..o{ scholars : "scholars_ibfk_2"
+  participations |o..o{ scholarship_records : "fk_annual_continuing"
+  scholarship_records |o..o{ scholarship_records : "fk_annual_predecessor"
+  scholars ||..o{ scholarship_records : "scholarship_records_ibfk_1"
+  academic_years ||..o{ scholarship_records : "scholarship_records_ibfk_2"
+  users ||--o{ scholar_commands : "scholar_commands_ibfk_1"
+  scholars ||..o{ scholar_commands : "scholar_commands_ibfk_2"
+  scholars ||--o| scholar_contacts : "scholar_contacts_ibfk_1"
+  scholars ||--o| scholar_identifiers : "scholar_identifiers_ibfk_1"
+  scholars ||..o{ scholar_intakes : "scholar_intakes_ibfk_1"
+  academic_years ||..o{ scholar_intakes : "scholar_intakes_ibfk_2"
+  schools |o..o{ scholar_intakes : "scholar_intakes_ibfk_3"
+  courses |o..o{ scholar_intakes : "scholar_intakes_ibfk_4"
+  import_jobs |o..o{ scholar_intakes : "scholar_intakes_ibfk_5"
+  users ||..o{ scholar_intakes : "scholar_intakes_ibfk_6"
+  scholar_intakes ||--o{ scholar_intake_revisions : "scholar_intake_revisions_ibfk_1"
+  schools |o..o{ scholar_intake_revisions : "scholar_intake_revisions_ibfk_2"
+  courses |o..o{ scholar_intake_revisions : "scholar_intake_revisions_ibfk_3"
+  users ||..o{ scholar_intake_revisions : "scholar_intake_revisions_ibfk_4"
+  scholar_intakes ||--o{ scholar_intake_text_events : "scholar_intake_text_events_ibfk_1"
+  scholar_intake_text_events |o..o{ scholar_intake_text_events : "scholar_intake_text_events_ibfk_2"
+  users ||..o{ scholar_intake_text_events : "scholar_intake_text_events_ibfk_3"
+  participations ||..o{ scholar_semesters : "scholar_semesters_ibfk_1"
+  semesters ||..o{ scholar_semesters : "scholar_semesters_ibfk_2"
+  workflow_scope_versions ||..o{ scholar_semesters : "scholar_semesters_ibfk_3"
+  scholarship_records |o..o{ scholar_semesters : "scholar_semesters_ibfk_4"
+  users ||..o{ scholar_semesters : "scholar_semesters_ibfk_5"
+  scholar_semesters ||--o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_1"
+  academic_records |o..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_2"
+  academic_changes |o..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_3"
+  semesters |o..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_4"
+  users ||..o{ scholar_semester_revisions : "scholar_semester_revisions_ibfk_5"
+  academic_years ||..o{ semesters : "semesters_ibfk_1"
+  scholar_semesters ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_1"
+  requirement_instances ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_2"
+  requirement_instances ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_3"
+  users ||..o{ semester_document_reconciliations : "semester_document_reconciliations_ibfk_4"
+  scholar_semesters ||..o{ semester_entitlements : "semester_entitlements_ibfk_1"
+  users ||..o{ semester_entitlements : "semester_entitlements_ibfk_2"
+  semester_entitlements ||..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_1"
+  semester_review_events ||..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_2"
+  workflow_authority_versions |o..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_3"
+  users ||..o{ semester_entitlement_events : "semester_entitlement_events_ibfk_4"
+  scholar_semester_revisions ||..o{ semester_review_events : "semester_review_events_ibfk_1"
+  workflow_policy_versions ||..o{ semester_review_events : "semester_review_events_ibfk_2"
+  semester_review_events |o..o{ semester_review_events : "semester_review_events_ibfk_3"
+  users ||..o{ semester_review_events : "semester_review_events_ibfk_4"
+  regular_payout_periods ||--o{ semester_submission_versions : "semester_submission_versions_ibfk_1"
+  users ||..o{ semester_submission_versions : "semester_submission_versions_ibfk_2"
+  users ||--o{ status_change_commands : "status_change_commands_ibfk_1"
+  status_change_requests ||..o{ status_change_commands : "status_change_commands_ibfk_2"
+  status_change_requests ||--o| status_change_decisions : "status_change_decisions_ibfk_1"
+  users ||..o{ status_change_decisions : "status_change_decisions_ibfk_2"
+  scholarship_records ||..o{ status_change_requests : "status_change_requests_ibfk_1"
+  users ||..o{ status_change_requests : "status_change_requests_ibfk_2"
+  status_change_requests |o..o{ status_change_requests : "status_change_requests_ibfk_3"
+  users ||..o{ user_roles : "user_roles_ibfk_1"
+  roles ||..o{ user_roles : "user_roles_ibfk_2"
+  users ||..o{ workflow_authority_versions : "workflow_authority_versions_ibfk_1"
+  users ||--o{ workflow_commands : "workflow_commands_ibfk_1"
+  workflow_authority_versions ||..o{ workflow_policy_versions : "workflow_policy_versions_ibfk_1"
+  users ||..o{ workflow_policy_versions : "workflow_policy_versions_ibfk_2"
+  semesters ||..o{ workflow_scope_versions : "workflow_scope_versions_ibfk_1"
+  workflow_policy_versions ||..o{ workflow_scope_versions : "workflow_scope_versions_ibfk_2"
+  users ||..o{ workflow_scope_versions : "workflow_scope_versions_ibfk_3"

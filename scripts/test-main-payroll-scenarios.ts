@@ -8,6 +8,7 @@ import { testReports } from "./test-report-scenarios.js";
 import { testLegacyContainment } from "./test-legacy-containment-scenarios.js";
 import { digest } from "../server/auth/crypto.js";
 import {assertNoPaidClaim} from "../server/ovr/reprocessing.js";
+import {paymentRecords} from "../server/ovr/processing-state.js";
 import JSZip from "jszip";
 import { graduate, testManagedRelease } from "./test-managed-release-scenarios.js";
 import assert from "node:assert/strict";
@@ -74,6 +75,9 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
   const [[continuingAnnual]] = await admin.execute<RowDataPacket[]>("SELECT id,status FROM scholarship_records WHERE scholar_id=? AND academic_year_id=?", [people[2].id, year.id]);
   people[2].annual = continuingAnnual.id; assert.equal(continuingAnnual.status, "continuing");
   assert.equal((await admin.execute<RowDataPacket[]>("SELECT id FROM qualification_events WHERE scholarship_id=?", [continuingAnnual.id]))[0].length, 0);
+  // Prepare this competing draft before official activation; graduation must still remove its saved membership.
+  const renewalDraft = (await ok(request("coordinator", "/api/v1/masterlists", {academicYearId:year.id,title:"Synthetic renewal draft for graduate removal"}))).json();
+  await ok(request("coordinator", `/api/v1/masterlists/${renewalDraft.id}/entries`, {action:"add",expectedVersion:renewalDraft.version,scholarId:people[2].id,awardNumber:null}));
   const list = async (id: string) => (await ok(request("staff", `/api/v1/scholars/${id}/semester-requirements`))).json<{items:RequirementChecklist[]}>().items[0];
   // Empty old-format rows are preserved, but cannot return as live obligations after allocation.
   const emptyAnnualChecklist=randomUUID(), emptyAnnualIds=[randomUUID(),randomUUID()];
@@ -186,8 +190,6 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
   assert.equal((await request("staff",`/api/v1/ovr-batches/${batch1}/defer`,defer)).statusCode,403);
   await ok(request("coordinator",`/api/v1/ovr-batches/${batch1}/defer`,defer));
   console.log("PASS Main payroll A/B/F: separate enrollment/COG receipt and Staff verification, current compliance, automatic eligibility, missing COG, on-time receipt verified after cutoff, explicit Coordinator deferral");
-  const renewalDraft = (await ok(request("coordinator", "/api/v1/masterlists", {academicYearId:year.id,title:"Synthetic renewal draft for graduate removal"}))).json();
-  await ok(request("coordinator", `/api/v1/masterlists/${renewalDraft.id}/entries`, {action:"add",expectedVersion:renewalDraft.version,scholarId:people[2].id,awardNumber:null}));
   await graduate(request, people[2].annual, semester.id, admin);
   const [[removedGraduate]] = await admin.execute<RowDataPacket[]>("SELECT e.removed_at,m.version FROM masterlist_entries e JOIN masterlist_versions m ON m.id=e.masterlist_id WHERE e.masterlist_id=? AND e.scholar_id=?",[renewalDraft.id,people[2].id]);
   assert.ok(removedGraduate.removed_at); assert.equal(removedGraduate.version,3);
@@ -259,6 +261,7 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
   const [[payments]]=await admin.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM payment_records WHERE cycle_id=?",[cycle.id]);assert.equal(payments.n,0);
   for(const table of ["payroll_allocations","payroll_deferrals","semester_entitlements","semester_entitlement_events"]) for(const action of ["UPDATE","DELETE"]) await assert.rejects(runtime.query(action === "UPDATE" ? `UPDATE ${table} SET actor_id=actor_id WHERE 1=0` : `DELETE FROM ${table} WHERE 1=0`),(e:{code?:string})=>e.code==="ER_TABLEACCESS_DENIED_ERROR");
   console.log("PASS Main payroll D/E/G: later completion appears only in Batch 002, same-semester documents reused, unique ordinary allocation, other-semester evidence isolated, export creates no payment, append-only grants");
+  if(process.argv.includes('--omitted-payments')){await (await import('./test-omission-payments.js')).testOmissionPayments({request,admin,runtime,source:batch1,destination:batch2,cycle,semester:semester.id,people});return;}
   if(process.argv.includes("--legacy-containment"))await testLegacyContainment({request,admin,batch:batch1,destination:batch2});
   else await testManagedRelease({ request, admin, runtime, batch: batch1, laterBatch: batch2, semester: semester.id, people });
   await assertUnusedAnnualProtected(true);
@@ -270,10 +273,14 @@ export async function testMainPayroll({ admin, runtime, request }: { admin: Conn
   if(process.argv.includes("--reports"))await testReports(modernContext);
   const scopeConnection=await runtime.getConnection();
   try {
-    const [[paidIdentity]]=await admin.execute<RowDataPacket[]>("SELECT scholarship_id FROM payment_records WHERE cycle_id=? AND outcome='paid' LIMIT 1",[cycle.id]);
+    // The original Paid row can have an authorized later correction. Assert
+    // duplicate prevention against the current canonical Paid outcome instead.
+    const [batchRows]=await admin.execute<RowDataPacket[]>("SELECT id FROM ovr_batches WHERE cycle_id=? ORDER BY id",[cycle.id]);
+    let paidIdentity:string|undefined;
+    for(const b of batchRows){paidIdentity??=(await paymentRecords(scopeConnection,String(b.id))).find(p=>p.outcome==="paid")?.scholarshipId;}
     assert.ok(paidIdentity);
-    await assert.rejects(assertNoPaidClaim(scopeConnection,paidIdentity.scholarship_id,semester.id),(e:{code?:string})=>e.code === "STIPEND_ALREADY_PAID");
-    await assertNoPaidClaim(scopeConnection,paidIdentity.scholarship_id,terms[0].id);
+    await assert.rejects(assertNoPaidClaim(scopeConnection,paidIdentity,semester.id),(e:{code?:string})=>e.code === "STIPEND_ALREADY_PAID");
+    await assertNoPaidClaim(scopeConnection,paidIdentity,terms[0].id);
     console.log("PASS paid claim scope: another semester retains an independent entitlement; own eligibility remains required");
   } finally {scopeConnection.release();}
   if(process.argv.includes("--snapshot-performance"))await testSnapshot({admin,runtime,request,cycleId:cycle.id,annualId:people[0].annual,batch:batch1});

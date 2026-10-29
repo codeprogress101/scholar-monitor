@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "counts": {
+    "primaryTables": 150,
+    "uatTables": 149,
+    "views": 3,
+    "unionTables": 151,
+    "unionObjects": 154,
+    "foreignKeys": 381,
+    "modules": 13,
+    "primaryColumns": 1250,
+    "uatColumns": 1246
+  },
+  "allObjectsInCompleteDiagram": true,
+  "allForeignKeysInInventoryAndChildModule": true,
+  "allReferencesExist": true,
+  "compositeMappingsPreserved": true,
+  "foreignKeySetsEqual": true,
+  "nonUniqueParentTargets": [],
+  "inferredRelationshipsSeparate": 3,
+  "comparison": {
+    "columns": [],
+    "indexes": [
+      "scholar_intakes"
+    ],
+    "constraints": [],
+    "keyColumns": [],
+    "rules": [],
+    "checks": [],
+    "views": [],
+    "triggers": []
+  },
+  "migrationFileMismatches": 0,
+  "generatedAt": "2026-10-29T02:53:56.397Z"
+}

@@ -1,0 +1,13 @@
+import 'dotenv/config';
+import {randomBytes} from 'node:crypto';
+import {writeFile} from 'node:fs/promises';
+import {owned,folder,save} from './uat-environment.mjs';
+import {createBackup,restoreBackup} from './backup-lib.mjs';
+const {db,metadata}=await owned('F');await db.end();
+const key=randomBytes(32),directory=folder+'/private/recovery',connection={host:'127.0.0.1',port:Number(process.env.DB_PORT??3306),user:'root',password:process.env.LDSS_SETUP_ADMIN_PASSWORD??'',database:metadata.database};
+const args=['--no-defaults','--host=127.0.0.1',`--port=${connection.port}`,'--user=root','--default-character-set=utf8mb4'];
+const backup=await createBackup(key,{connection,args,directory});
+await writeFile(folder+'/private/recovery-key.bin',key,{flag:'wx'});
+const restored=await restoreBackup(backup.file,key,{context:{sourceDatabase:metadata.database,admin:connection,directory}});
+await save(folder+'/recovery-check.json',{syntheticOnly:true,sourceDatabase:metadata.database,sourceSchemaOnlyReadLocks:true,originalSourceNotRestoredOver:true,backup:{encrypted:true,bytes:backup.bytes,tables:backup.tables},restore:restored,limitsUnchanged:{rawSqlMiB:64,archiveMiB:96},offHostOrWitnessedOfficeAcceptance:false});
+console.log(JSON.stringify({sourceDatabase:metadata.database,backupBytes:backup.bytes,tables:backup.tables,verifiedRestoreSeconds:restored.elapsedSeconds,temporaryRestoreRetained:false}));

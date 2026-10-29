@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
-import type { OvrDetail } from "../server/ovr/model";
+import type { OvrSections } from "../server/ovr/detail-model";
+type OvrDetail = OvrSections["processing"];
 import { ApiError, type Session } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
 import { receivingToday } from "./receiving-selection";
@@ -19,6 +20,7 @@ export default function TreasuryReconciliation({detail,session,permissions,onSav
   }).slice(0,25) : [];
   const semesterClaim=(id:string)=>detail.semesterPayments?.find(p=>p.scholarshipId===id);
   const status = (id: string) => {
+    if(semesterClaim(id)?.paidTransactionId)return "Paid through individual settlement";
     if(semesterClaim(id)?.paidBatchId)return semesterClaim(id)?.paidBatchId===detail.batch.id ? "Paid" : "Paid this semester in another batch";
     if(semesterClaim(id)?.pendingCorrection)return "Needs review - pending semester payment correction";
     const p = detail.payments.find(p => p.scholarshipId === id);
@@ -76,7 +78,7 @@ export default function TreasuryReconciliation({detail,session,permissions,onSav
     {selectedMember && <form key={selected} onSubmit={confirm}><fieldset disabled={saving || uncertain}>
       <p><strong>{selectedMember.evidence.current.sources.scholarship.humanId} — {selectedMember.evidence.current.sources.scholarship.name}</strong></p>
       <p>{detail.cycle.yearCode} / {detail.cycle.semesterCode} / {detail.cycle.name} — ₱5,000 — {status(selected)}</p>
-      {semesterClaim(selected)?.paidBatchId && semesterClaim(selected)?.paidBatchId!==detail.batch.id ? <p>This semester stipend is already paid. <a href={`#payouts?${new URLSearchParams({cycle:semesterClaim(selected)!.paidCycleId!,batch:semesterClaim(selected)!.paidBatchId!})}`}>View payment</a></p> : detail.payments.some(p => p.scholarshipId === selected) ? <p>An outcome already exists. Use the controlled correction workflow.</p> : detail.claimDeadline?.expired ?
+      {semesterClaim(selected)?.paidTransactionId ? <p>This entitlement was paid through individual settlement. <a href={`#individual-payments?transaction=${semesterClaim(selected)!.paidTransactionId}`}>Review Payment</a></p> : semesterClaim(selected)?.paidBatchId && semesterClaim(selected)?.paidBatchId!==detail.batch.id ? <p>This semester stipend is already paid. <a href={`#payouts?${new URLSearchParams({cycle:semesterClaim(selected)!.paidCycleId!,batch:semesterClaim(selected)!.paidBatchId!})}`}>View payment</a></p> : detail.payments.some(p => p.scholarshipId === selected) ? <p>An outcome already exists. Use the controlled correction workflow.</p> : detail.claimDeadline?.expired ?
         <><p>Claim period ended. Submit evidence of actual receipt before expiry for Coordinator approval. This cannot authorize late collection.</p>
           <label className="d-block">Actual payment date, if documented<input type="date" name="actualDate" max={detail.claimDeadline.endsOn ?? undefined}/></label>
           <label className="d-block">Documentary evidence establishing receipt before expiry<textarea name="beforeDeadlineEvidence" required minLength={20} maxLength={1000}/></label>

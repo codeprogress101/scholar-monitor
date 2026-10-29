@@ -2,13 +2,22 @@ import { MasterlistWorkflowService } from "./workflow-service.js";
 import { MASTERLIST_ACTIONS } from "./workflow-model.js";
 import { workflowPermission } from "./workflow-validation.js";
 import { AuthError } from "../auth/service.js";
+import type { MasterlistConflictRemovalService } from "./conflict-removal-service.js";
+import type { MasterlistSelectionService } from "./selection-service.js";
 import type { FastifyInstance } from "fastify";
 import { DraftValidationError, type MasterlistService } from "./service.js";
 export function registerMasterlists(
   app: FastifyInstance,
   service: MasterlistService,
   workflow: MasterlistWorkflowService,
+  selection: MasterlistSelectionService,
+  removal: MasterlistConflictRemovalService,
 ) {
+  app.get<{ Params: { id: string } }>("/api/v1/masterlists/:id/conflict-removal-review", { config: { permission: "masterlists.prepare" } }, r => removal.review(r.authSession!.user.id, r.params.id, r.query));
+  app.post<{ Params: { id: string } }>("/api/v1/masterlists/:id/remove-conflicts", { bodyLimit: 16384, config: { permission: "masterlists.prepare" } }, r => removal.remove(r.authSession!.user.id, r.params.id, r.headers["idempotency-key"], r.body, r.id));
+  app.get<{ Params: { id: string } }>("/api/v1/masterlists/:id/selection-review", { config: { permission: "masterlists.prepare" } }, r => selection.review(r.authSession!.user.id, r.params.id, r.query));
+  app.get<{ Params: { id: string } }>("/api/v1/masterlists/:id/activation-conflicts", { config: { permission: "masterlists.prepare" } }, r => selection.conflicts(r.authSession!.user.id, r.params.id, r.query));
+  app.post<{ Params: { id: string } }>("/api/v1/masterlists/:id/add-scope", { bodyLimit: 8192, config: { permission: "masterlists.prepare" } }, r => selection.add(r.authSession!.user.id, r.params.id, r.headers["idempotency-key"], r.body, r.id));
   app.get<{ Params: { id: string } }>(
     "/api/v1/masterlists/:id/workflow",
     { config: { permission: "masterlists.prepare" } },

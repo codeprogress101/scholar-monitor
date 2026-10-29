@@ -1,3 +1,4 @@
+import {validateConfirmedScope} from "../imports/confirmed-scope.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
@@ -35,6 +36,7 @@ export async function loadPriorBatch(db:PoolConnection,input:{importId:string;se
  const [[row]]=await db.execute<RowDataPacket[]>("SELECT c.result,j.preview FROM import_confirmations c JOIN import_jobs j ON j.id=c.job_id WHERE c.job_id=?",[input.importId]);
  if(!row)throw new AuthError(404,"IMPORT_NOT_CONFIRMED","Choose a confirmed Already-approved import.");
  const rows=decodeImportRows<ImportPreviewRow>(row.preview), result=decodePrior<ImportResult>(row.result);
+ await validateConfirmedScope(db,input.importId,rows,result);
  if(!result.selectedCount || !rows.length || rows.some(r=>!r.approvedSelection))throw new AuthError(409,"APPROVED_IMPORT_REQUIRED","Prior batch approval is restricted to confirmed Already-approved imports.");
  const ids=[...new Set(result.items.map(i=>i.id))].sort();
  if(!ids.length||ids.length>1500)throw new AuthError(409,"BATCH_SCOPE_REVIEW_REQUIRED","Review the confirmed import membership.");

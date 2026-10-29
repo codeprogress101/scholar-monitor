@@ -2,10 +2,8 @@ import { sharedDocumentReview } from "../requirements/shared-semester-documents.
 import { savedVerificationContext } from "../requirements/workflow-service.js";
 import { verificationMatches } from "../requirements/workflow-model.js";
 import { readChecklists } from "../requirements/instances-service.js";
-import { managedCandidates } from "../ovr/managed-payroll.js";
-import { automaticDraft } from "../ovr/automatic-draft.js";
+import { registryDrafts, type RegistryAnnual } from "./registry-drafts.js";
 import { semesterClaim, reprocessingQueue, claimDeadline } from "../ovr/reprocessing.js";
-import { draftDeferral } from "../ovr/reprocessing.js";
 import { academicCurrent } from "../academic/changes-service.js";
 import { payrollYear } from "../ovr/payroll-form.js";
 import { z } from "zod";
@@ -13,18 +11,20 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { AuthError } from "../auth/service.js";
 
 import { currentPayout } from "../payouts/service.js";
-import { eligibilityView } from "../eligibility/service.js";
 import { ovrEligibilityIssues } from "../ovr/rules.js";
 import { effectiveRoster } from "../ovr/amendment-state.js";
 import { ovrHistory } from "../ovr/service.js";
 import { cachedReads } from "../read-cache.js";
+import {primeIndividualClaims} from '../payments/settlement-reads.js';
+import type {EligibilityReason} from '../eligibility/model.js';
+import {historicalBatch} from '../payouts/historical-context.js';
 
 export type RequirementSummary = { status: "complete" | "missing" | "review" | "unavailable"; label: string; total: number; satisfied: number };
 export type RegistryEligibility = {
  semesters?: {id:string;name:string;academicYearId:string}[]; semesterId?:string|null;
  periods: { id: string; name: string; semesterId: string; academicYearId: string }[];
  periodId: string | null;
- items: { scholarId: string; requirements?: RequirementSummary; payout?: {status:string; eligible:boolean; reasons?:{code:string;message:string}[]}; eligible: boolean; reasons: { code: string; message: string }[]; payment: string | null; inclusion: string | null; academicEligible?: boolean; academicBasis?: "current" | "payroll_approval"; links?: {label:string;href:string}[] }[];
+ items: { scholarId: string; requirements?: RequirementSummary; payout?: {status:string; eligible:boolean; reasons?:EligibilityReason[];publishedActive?:boolean;context?:{semester:string;year:string;batchId:string|null;batchCode:string|null}}; eligible: boolean; reasons: EligibilityReason[]; payment: string | null; inclusion: string | null; academicEligible?: boolean; academicBasis?: "current" | "payroll_approval"; links?: {label:string;href:string}[] }[];
 };
 export async function registryEligibility(connection: PoolConnection, raw: unknown): Promise<RegistryEligibility> {
  const parsed = z.object({ ids: z.string().max(3700).transform(s => s ? s.split(",") : []).pipe(z.array(z.uuid()).max(100)), periodId: z.uuid().optional(), semesterId: z.uuid().optional(), academicYearId: z.uuid().optional() }).strict().safeParse(raw);
@@ -42,9 +42,23 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
  const period = parsed.data.periodId ? result.periods.find(p => p.id === parsed.data.periodId) : result.periods.length === 1 ? result.periods[0] : null;
  const semesterId=period?.semesterId ?? parsed.data.semesterId ?? (result.semesters.length===1 ? result.semesters[0].id : null);
  result.semesterId=semesterId;
+ const ids=[...new Set(parsed.data.ids)];
+ if (period) result.periodId=period.id;
+ if (!ids.length) return result;
+ const annuals: RegistryAnnual[]=[];
+ let regularPeriod: RowDataPacket | undefined;
+ if (period) {
+  const [rows]=await db.execute<RowDataPacket[]>(`SELECT r.id,r.scholar_id,a.id AS academic_id FROM scholarship_records r LEFT JOIN academic_records a ON a.scholar_id=r.scholar_id AND a.academic_year_id=r.academic_year_id WHERE r.academic_year_id=? AND r.scholar_id IN (${ids.map(()=>"?").join(",")})`,[period.academicYearId,...ids]);
+  annuals.push(...rows.map(r=>({id:String(r.id),scholar_id:String(r.scholar_id),academic_id:r.academic_id ?? null})));
+  [[regularPeriod]]=await db.execute<RowDataPacket[]>("SELECT cycle_id FROM regular_payout_periods WHERE cycle_id=?",[period.id]);
+ }
+ const annualByScholar=new Map(annuals.map(a=>[a.scholar_id,a]));
  const summaries=new Map<string,RequirementSummary>();
- if(semesterId && result.semesters.some(s=>s.id===semesterId) && parsed.data.ids.length) {
-  const ids=[...new Set(parsed.data.ids)];
+ // Regular payroll already resolves its authoritative document sources below.
+ // Keep standalone summaries for no-period and missing-annual records.
+ const summaryIds=ids.filter(id=>!regularPeriod || !annualByScholar.has(id));
+ if(semesterId && result.semesters.some(s=>s.id===semesterId) && summaryIds.length) {
+  const ids=summaryIds;
   const [rows]=await db.execute<RowDataPacket[]>(`SELECT c.*,COALESCE(sr.scholar_id,ss.scholar_id) AS owner_id,s.academic_year_id,s.locked_at,s.archived_at,y.locked_at AS year_locked,y.archived_at AS year_archived,DATE_FORMAT(c.policy_date,'%Y-%m-%d') AS policy_on FROM requirement_checklists c LEFT JOIN scholarship_records sr ON sr.id=c.scholarship_record_id LEFT JOIN scholar_semesters ss ON ss.id=c.scholar_semester_id JOIN semesters s ON s.id=c.semester_id JOIN academic_years y ON y.id=s.academic_year_id WHERE c.semester_id=? AND COALESCE(sr.scholar_id,ss.scholar_id) IN (${ids.map(()=>"?").join(",")}) AND (c.payout_cycle_id IS NULL OR c.payout_cycle_id=?)`,[semesterId,...ids,period?.id ?? null]);
   for(const id of ids) {
    const saved=(await readChecklists(db,rows.filter(r=>r.owner_id===id))).items;
@@ -69,19 +83,22 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
  }
  result.periodId = period.id;
  const cycle = await currentPayout(db, period.id);
- const [[regularPeriod]] = await db.execute<RowDataPacket[]>("SELECT cycle_id FROM regular_payout_periods WHERE cycle_id=?", [period.id]);
  const [batchRows] = await db.execute<RowDataPacket[]>("SELECT id FROM ovr_batches WHERE cycle_id=? ORDER BY created_at DESC,id", [period.id]);
  const batches = [];
  for (const row of batchRows) batches.push((await ovrHistory(db, row.id))[0]);
  const drafts = batches.filter(b=>b.state === "draft");
- const projections = await Promise.all(drafts.map(async batch=>({batch, projection:await managedCandidates(db,batch,cycle) ?? await automaticDraft(db,batch,cycle)})));
- const queues=await reprocessingQueue(db,cycle), deadline=await claimDeadline(db,cycle.semesterId);
- const included = new Set<string>();
- for(const batch of batches) for(const entry of (await effectiveRoster(db,batch.id))?.snapshot.entries ?? []) included.add(entry.scholarshipId);
+ const assessmentDrafts=[];
+ for(const draft of drafts)if(!regularPeriod||!await historicalBatch(db,cycle.id,draft.id))assessmentDrafts.push(draft);
+ await primeIndividualClaims(db,annuals.map(a=>a.id),cycle.semesterId);
+ const queues=await reprocessingQueue(db,cycle,annuals.map(a=>a.id)), deadline=await claimDeadline(db,cycle.semesterId);
+ const projections=registryDrafts(db,cycle,annuals,drafts,queues,deadline.expired);
+ await projections.read();
+ const included = new Map<string,typeof batches[number]>();
+ for(const batch of batches) for(const entry of (await effectiveRoster(db,batch.id))?.snapshot.entries ?? []) included.set(entry.scholarshipId,batch);
  for (const scholarId of [...new Set(parsed.data.ids)]) {
-  const [[annual]] = await db.execute<RowDataPacket[]>("SELECT id FROM scholarship_records WHERE scholar_id=? AND academic_year_id=?", [scholarId, period.academicYearId]);
+  const annual = annualByScholar.get(scholarId);
   if (!annual) { result.items.push({ scholarId, requirements:summaries.get(scholarId), payout:{status:"Scholarship review needed",eligible:false}, eligible: false, reasons: [{ code: "SCHOLARSHIP_RECORD_REQUIRED", message: "Current annual scholarship record or continuing review is needed." }], payment: null, inclusion: null }); continue; }
-  const view = await eligibilityView(db, cycle, annual.id, drafts.length === 1 ? drafts[0].id : undefined);
+  const view = await projections.viewFor(annual.id, assessmentDrafts.length === 1 ? assessmentDrafts[0].id : undefined);
   const obligations=view.current.sources.requirements;
   const satisfied=obligations.filter(r=>r.satisfied && (r.status!=="waived" || r.allowWaiver)).length;
   const sourceReview=view.current.reasons.some(r=>["COVERED_DOCUMENT_UNVERIFIED","VERIFICATION_STALE"].includes(r.code));
@@ -100,13 +117,9 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
   const claim=await semesterClaim(db,annual.id,cycle.semesterId);
   const retries=queues.filter(q=>q.scholarshipId === annual.id);
   const retry=retries.find(q=>q.status === "assigned") ?? retries.find(q=>q.status === "review") ?? retries.find(q=>q.status === "queued");
-  const deferred=[]; const destinations=[];
-  for(const {batch,projection} of projections) {
-    if((await draftDeferral(db,batch.id,annual.id))?.current) deferred.push(batch);
-    if(projection?.form.rows.some(r=>r.scholarshipId === annual.id)) destinations.push(batch);
-  }
+  const deferred=projections.deferred.get(annual.id) ?? [], destinations=projections.destinations.get(annual.id) ?? [];
   let inclusion: string | null=null;
-  if(claim.paid) {inclusion="Paid this semester";link("View payment",claim.paid.batchId,claim.paid.cycleId);}
+  if(claim.paid) {inclusion="Paid this semester";if(claim.paid.batchId)link("View payment",claim.paid.batchId,claim.paid.cycleId);else if('individualTransactionId' in claim.paid)links.push({label:'View individual payment',href:'#individual-payments?transaction='+claim.paid.individualTransactionId});}
   else if(deadline.expired) inclusion="Claim period ended";
   else if(claim.pending.length) inclusion="Needs review";
   else if(retry?.status === "review") inclusion="Needs review";
@@ -118,11 +131,14 @@ export async function registryEligibility(connection: PoolConnection, raw: unkno
   if(retry) link("Previous attempt",retry.sourceBatchId,retry.sourceCycleId);
   const operational = new Set(["SEMESTER_ALREADY_ALLOCATED","EXISTING_PAYROLL_ALLOCATION","PAYMENT_ALREADY_RECORDED","CLAIM_PERIOD_ENDED","DRAFT_ENTRY_DEFERRED","BATCH_REVIEW_REQUIRED","RECEIPT_TIMING_REQUIRED","SEMESTER_UNAVAILABLE","ENDED_SEMESTER_REVIEW","CYCLE_NOT_OPEN","PERIOD_UNAVAILABLE"]);
   const academicReasons=reasons.filter(r=>!operational.has(r.code) && !(r.code === "NOT_ELIGIBLE" && view.current.reasons.length > 0 && view.current.reasons.every(r=>operational.has(r.code))));
-  const paidEvidence=claim.paid ? (await effectiveRoster(db,claim.paid.batchId))?.snapshot.entries.find(e=>e.evidence.current.sources.scholarship.scholarId === scholarId)?.evidence : undefined;
+  const paidEvidence=claim.paid?.batchId ? (await effectiveRoster(db,claim.paid.batchId))?.snapshot.entries.find(e=>e.evidence.current.sources.scholarship.scholarId === scholarId)?.evidence : undefined;
   const academicBasis=paidEvidence ? "payroll_approval" as const : "current" as const;
   const academicEligible=paidEvidence ? paidEvidence.effective.eligible : academicReasons.length === 0;
   const displayedReasons=paidEvidence ? paidEvidence.current.reasons : academicReasons;
-  result.items.push({scholarId,requirements:summaries.get(scholarId),payout:{status:claim.paid?"Paid this semester":inclusion ?? (view.effective.eligible && !issues.length?"Eligible":"Needs review"),eligible:view.effective.eligible && !issues.length,reasons:reasons.filter((r,i)=>reasons.findIndex(x=>x.code===r.code)===i)},eligible:academicEligible,academicEligible,academicBasis,reasons:displayedReasons.filter((r,i)=>displayedReasons.findIndex(x=>x.code===r.code)===i),payment:claim.paid ? "Paid" : claim.attempts.length ? "Not paid" : null,inclusion,links});
+  const effectiveBatch=batches.find(b=>b.id===(claim.paid?.batchId??view.current.sources.semesterPayroll?.batchId))??included.get(annual.id);
+  const unassigned=Boolean(regularPeriod&&!effectiveBatch&&!inclusion);
+  const unique=(values:EligibilityReason[])=>values.filter((r,i)=>values.findIndex(x=>x.code===r.code&&x.requirementCode===r.requirementCode)===i);
+  result.items.push({scholarId,requirements:summaries.get(scholarId),payout:{status:claim.paid?"Paid this semester":inclusion ?? (unassigned?"Not yet assigned to a new payroll":view.effective.eligible && !issues.length?"Eligible":"Needs review"),eligible:!unassigned&&view.effective.eligible && !issues.length,reasons:unique(reasons),...(regularPeriod?{publishedActive:view.current.sources.official.valid&&view.current.sources.scholarship.status==='active',context:{year:cycle.yearCode,semester:cycle.semesterCode,batchId:effectiveBatch?.id??null,batchCode:effectiveBatch?.code??null}}:{})},eligible:academicEligible,academicEligible,academicBasis,reasons:unique(displayedReasons),payment:claim.paid ? "Paid" : claim.attempts.length ? "Not paid" : null,inclusion,links});
 
  }
  return result;

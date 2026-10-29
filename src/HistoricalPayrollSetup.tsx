@@ -5,9 +5,10 @@ import {configurationRequest as request} from "./configuration-api";
 import FocusedDialog from "./FocusedDialog";
 import {pendingPrior,usePriorCommand} from "./prior-command";
 import {receivingToday} from "./receiving-selection";
+import HistoricalPayrollAppend from './HistoricalPayrollAppend';
 export default function HistoricalPayrollSetup({cycleId,session,onChanged}:{cycleId:string;session:Session;onChanged:()=>void}){
  const path=`payout-cycles/${cycleId}/historical-setup`;
- const [open,setOpen]=useState(()=>pendingPrior(session.user.id)?.path===path);
+ const [open,setOpen]=useState(()=>[path,`payout-cycles/${cycleId}/historical-append`].includes(pendingPrior(session.user.id)?.path??''));
  return <><button className="btn btn-outline-secondary my-2" onClick={()=>setOpen(true)}>Set up previously approved payroll batch</button>{open&&<HistoricalSetupDialog cycleId={cycleId} session={session} onClose={()=>setOpen(false)} onChanged={onChanged}/>}</>;
 }
 function HistoricalSetupDialog({cycleId,session,onClose,onChanged}:{cycleId:string;session:Session;onClose:()=>void;onChanged:()=>void}){
@@ -17,6 +18,7 @@ function HistoricalSetupDialog({cycleId,session,onClose,onChanged}:{cycleId:stri
  useEffect(()=>{const abort=new AbortController();Promise.all([request<SubmissionWindowView>(`payout-cycles/${cycleId}/submission-windows`,{signal:abort.signal}),request<{items:typeof imports}>("document-batches",{signal:abort.signal})]).then(([v,i])=>{if(!abort.signal.aborted){setData(v);setImports(i.items);}}).catch(e=>{if(!abort.signal.aborted)setError(e instanceof Error?e.message:"Could not load payroll setup.");});return()=>abort.abort();},[cycleId]);
  const ready=data&&!data.termNumber&&data.legacyBatchesWithUnknownDeadline===0&&!data.ambiguous&&!data.mappingStale&&importId&&deadline&&release&&reference.trim().length>=3&&location.trim().length>=3&&reason.trim().length>=5&&reviewed&&!job.locked;
  async function save(retry=false){if(!retry&&!ready)return;const result=await job.run({expectedCycleVersion:data?.cycle.version,expectedSemesterVersion:data?.period.semesterVersion,expectedYearVersion:data?.period.yearVersion,importId,deadlineOn:deadline,reportedReleaseOn:release,reference,sourceLocation:location,reason,reviewed},"payouts",retry);if(result){setNotice("Historical setup and Draft batch saved. Open the payout cycle explicitly, then review/finalize the payroll. No individual payments were recorded.");setReviewed(false);setData(null);onChanged();}}
+ if(data?.termNumber&&data.historical&&data.historicalAppendEnabled)return <HistoricalPayrollAppend data={data} session={session} onClose={onClose} onChanged={onChanged}/>;
  return <FocusedDialog title="Set up previously approved payroll batch" busy={job.locked} onClose={onClose}>
   <p>Record the actual historical submission deadline and reported batch release. The planned payout target and all recorded receipt/payment dates stay unchanged.</p>
   {(error||job.error)&&<p role="alert" className="alert alert-danger">{error||job.error}</p>}{notice&&<p role="status" className="alert alert-success">{notice}</p>}

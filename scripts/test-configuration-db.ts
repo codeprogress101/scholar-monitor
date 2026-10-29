@@ -1,3 +1,4 @@
+import {schemaManifest} from '../server/schema-manifest.js';
 import { testRolloverReceiving } from "./test-rollover-receiving.js";
 import { testHistoricalPolicyScenarios } from "./test-historical-policy-scenarios.js";
 import { rolloverFixture, correctedGraduateFixture } from "./rollover-fixture.js";
@@ -53,7 +54,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,

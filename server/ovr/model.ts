@@ -35,6 +35,8 @@ export type OvrValidation = {
   }[];
 };
 export type OvrBatch = {
+  processingEvidence?: { version: "payment-processing/v1"; baseRevision: number; validationHash: string };
+  paymentAcknowledgement?: { basis: "staff_actual_receipt"; operationId: string; confirmed: true };
   automaticSourceHash?: string;
   id: string;
   cycleId: string;
@@ -91,7 +93,7 @@ export type OvrFinalization = {
   reference: string;
 };
 export type OvrDetail = {
-  semesterPayments?: {scholarshipId:string;paidBatchId:string|null;paidCycleId:string|null;paymentId:string|null;pendingCorrection:boolean}[];
+  semesterPayments?: {scholarshipId:string;paidBatchId:string|null;paidCycleId:string|null;paymentId:string|null;pendingCorrection:boolean;paidTransactionId?:string}[];
   historicalReceipts?: Awaited<ReturnType<typeof import("./treasury-state.js").historicalReceipts>>;
   treasuryEvidence?: import("./treasury-state.js").TreasuryEvidence | null;
   claimDeadline?: {endsOn: string | null; expired: boolean};

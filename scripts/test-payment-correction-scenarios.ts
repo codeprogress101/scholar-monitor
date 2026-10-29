@@ -48,6 +48,11 @@ export async function testOpenPaymentCorrection(c: Context, batch: OvrBatch) {
     effectiveOn: p.effectiveOn,
     remarks: "Corrected disbursement receipt",
   };
+  if(p.outcome==="not_paid"){
+    const denied=await cmd("correct","staff",{...data,outcome:"not_paid",amount:"0.00",effectiveOn:null,unpaidReason:p.unpaidReason==="did_not_claim"?"review":"did_not_claim",remarks:"Unpaid classification changes need Coordinator authority"});
+    assert.equal(denied.statusCode,403,denied.body);
+    assert.deepEqual((await read()).payments,v.payments,"A denied semantic outcome change must preserve current and historical payment evidence");
+  }
   assert.equal((await cmd("correct", "system_admin", data)).statusCode, 403);
   for (const amount of ["abc", "1.2.3", "0.00", "-1.00"])
     assert.equal(
@@ -73,7 +78,7 @@ export async function testOpenPaymentCorrection(c: Context, batch: OvrBatch) {
   }
   assert.deepEqual((await read()).payments, v.payments);
   assert.equal((await read()).batch.revision, batch.revision);
-  await save("correct", "staff", data);
+  await save("correct", "coordinator", data);
   assert.equal((await read()).reconciliation.paidTotal, "5000.00");
   assert.deepEqual((await read()).originalPayments, v.originalPayments);
   assert.equal((await cmd("correct", "staff", {...data,outcome:"not_paid",amount:"0.00",remarks:"No receipt occurred"})).statusCode,423);
@@ -86,7 +91,7 @@ export async function testOpenPaymentCorrection(c: Context, batch: OvrBatch) {
   assert.equal((await read()).reconciliation.paidTotal, "5000.00", "Pending reversal leaves the paid outcome effective");
   await save("approve", "coordinator", {correctionId:(await read()).paymentCorrections[0].id});
   assert.equal((await read()).reconciliation.paidTotal, "0.00");
-  const result = await save("correct", "staff", data);
+  const result = await save("correct", "coordinator", data);
   assert.equal((await read()).paymentCorrections.length, 3);
   console.log(
     "PASS F25 Pre-closure corrections preserve original outcomes, reconcile status/amount changes and roll back on audit failure",

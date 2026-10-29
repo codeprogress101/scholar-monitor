@@ -7,6 +7,7 @@ export async function configurationRequest<T>(
     body?: unknown;
     csrf?: string;
     key?: string;
+    notify?: boolean;
   },
 ): Promise<T> {
   const response = await fetch("/api/v1/" + path, {
@@ -36,6 +37,6 @@ export async function configurationRequest<T>(
       body?.error?.request_id,
     );
   if (!body) throw new Error("Unexpected service response.");
-  if (options?.body !== undefined && !path.startsWith("notifications/")) window.dispatchEvent(new Event("workflow-updated"));
+  if (options?.body !== undefined && options.notify!==false && !path.startsWith("notifications/")) window.dispatchEvent(new Event("workflow-updated"));
   return body as T;
 }

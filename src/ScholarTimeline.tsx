@@ -55,10 +55,7 @@ export default function ScholarTimeline({ scholarId }: { scholarId: string }) {
           Refresh profile timeline
         </button>
       </div>
-      <p>
-        Current records and historical versions are shown separately. Use the
-        existing workflow panels for authorized changes.
-      </p>
+      <details className="u1-context-help"><summary>History scope</summary><p>Current records and historical versions remain separate. Make authorized changes in their workflow tabs.</p></details>
       {error && (
         <p className="alert alert-danger" role="alert">
           {error}

@@ -1,5 +1,6 @@
 import PayrollFormLinks from "./PayrollFormLinks";
-import type { OvrDetail } from "../server/ovr/model";
+import type { OvrSections } from "../server/ovr/detail-model";
+type OvrDetail = OvrSections["candidates"];
 import { PagedTable } from "./WorkspaceUI";
 
 export default function AutomaticPayrollDraft({ detail }: { detail: OvrDetail }) {

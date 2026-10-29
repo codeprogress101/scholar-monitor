@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useRef, useState, type FormEvent } from "react";
 import type { SemesterAcademicView } from "../server/continuing/semester-academic";
 import { configurationRequest as request } from "./configuration-api";
@@ -36,7 +37,7 @@ export default function SemesterCategoryCorrection({ data, path, session, onSave
           <label className="form-label d-block">Reason for correction<input className="form-control" required minLength={5} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
           <label className="form-label d-block">Supporting evidence reference<input className="form-control" required minLength={3} maxLength={300} value={reference} onChange={(e) => setReference(e.target.value)} /></label>
           <label className="d-block my-2"><input type="checkbox" required checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> I checked the evidence and confirm this corrects a recording error, not a course shift.</label>
-          <button className="btn configuration-primary" disabled={!reviewed || category === data.category}>{busy ? "Saving correction..." : "Confirm category correction"}</button>
+          <ActionButton pending={busy} className="btn configuration-primary" disabled={!reviewed || category === data.category}>{busy ? "Saving correction..." : "Confirm category correction"}</ActionButton>
         </fieldset>
       </form>}
     </>}

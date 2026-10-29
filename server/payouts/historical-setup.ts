@@ -8,6 +8,7 @@ import { parseId,parseKey } from "../configuration/validation.js";
 import { today } from "../scholars/validation.js";
 import { semesterIdentity } from "../continuing/regular-coverage.js";
 import { currentPayout } from "./service.js";
+import {requirePreparationOpen} from './preparation.js';
 import { decodePrior,priorApprovalForOwner } from "../requirements/prior-approval-source.js";
 const text=(min:number,max:number)=>z.string().trim().min(min).max(max).regex(/^\P{Cc}*$/u);
 export const historicalSetupSchema=z.object({expectedCycleVersion:z.number().int().positive(),expectedSemesterVersion:z.number().int().positive(),expectedYearVersion:z.number().int().positive(),importId:z.uuid(),deadlineOn:z.iso.date(),reportedReleaseOn:z.iso.date(),reference:text(3,300),sourceLocation:text(3,500),reason:text(5,500),reviewed:z.literal(true)}).strict();
@@ -22,6 +23,7 @@ export class HistoricalPayoutSetupService {
    const [[retry]]=await db.execute<RowDataPacket[]>("SELECT payload_hash,result FROM workflow_commands WHERE actor_id=? AND command_id=? FOR UPDATE",[actor,key]);
    if(retry){if(retry.payload_hash!==payloadHash)throw new AuthError(409,"IDEMPOTENCY_CONFLICT","This key belongs to another historical setup.");return decodePrior<Record<string,unknown>>(retry.result);}
    const cycle=await currentPayout(db,id);
+   await requirePreparationOpen(db,id);
    if(cycle.version!==input.expectedCycleVersion)throw new AuthError(409,"VERSION_CONFLICT","The cycle changed. Refresh first.");
    if(cycle.periodUnavailable||!["draft","open"].includes(cycle.state))throw new AuthError(423,"PERIOD_UNAVAILABLE","Use an available Draft or Open cycle.");
    const [[period]]=await db.execute<RowDataPacket[]>("SELECT s.version,s.academic_year_id,y.version year_version,DATE_FORMAT(s.starts_on,'%Y-%m-%d') starts,DATE_FORMAT(s.ends_on,'%Y-%m-%d') ends FROM semesters s JOIN academic_years y ON y.id=s.academic_year_id WHERE s.id=?",[cycle.semesterId]);

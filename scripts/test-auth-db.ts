@@ -1,3 +1,4 @@
+import {schemaManifest} from '../server/schema-manifest.js';
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -44,7 +45,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   pass("Ordered migrations apply once and verify checksums on rerun");
   await admin.query(

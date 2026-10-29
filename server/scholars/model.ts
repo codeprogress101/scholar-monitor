@@ -11,8 +11,11 @@ export type ScholarFields = {
 export type RegistryPlacement = {
  academicYearId: string; schoolId: string | null; school: string | null; courseId: string | null; course: string | null; yearLevel: string | null;
  classification: "new" | "continuing" | null; provisional: boolean; scholarshipStanding?: string;
+ classificationBasis?: "supplied" | "legacy_derived" | "unknown";
+ legacyClassification?: "new" | "continuing" | null;
 };
 export type ScholarSummary = {
+  annualIntake?: import("./annual-intake-model.js").AnnualIntake | null;
   placement?: RegistryPlacement | null;
   graduation?: import("../status/graduation.js").Graduation | null;
   id: string;

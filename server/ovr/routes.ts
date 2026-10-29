@@ -4,6 +4,13 @@ import type { FastifyInstance } from "fastify";
 import type { OvrService } from "./service.js";
 export function registerOvr(app: FastifyInstance, service: OvrService) {
   const config = { config: { permission: "ovr.prepare" as const } };
+  app.get<{Params:{cycleId:string}}>("/api/v1/payout-cycles/:cycleId/ovr-batch-summaries", config, r => service.summaries(r.authSession!.user.id,r.params.cycleId,r.query));
+  app.get<{Params:{id:string}}>("/api/v1/ovr-batches/:id/summary", config, r => service.summary(r.authSession!.user.id,r.params.id));
+  app.get<{Params:{id:string}}>("/api/v1/ovr-batches/:id/candidates", config, r => service.candidatePage(r.authSession!.user.id,r.params.id,r.query));
+  app.get<{Params:{id:string}}>("/api/v1/ovr-batches/:id/roster", config, r => service.entryPage(r.authSession!.user.id,r.params.id,r.query));
+  app.get<{Params:{id:string}}>("/api/v1/ovr-batches/:id/history", config, r => service.historyPage(r.authSession!.user.id,r.params.id,r.query));
+  app.get<{Params:{id:string}}>("/api/v1/ovr-batches/:id/payment-history", config, r => service.paymentPage(r.authSession!.user.id,r.params.id,r.query));
+  app.get<{Params:{id:string;section:string}}>("/api/v1/ovr-batches/:id/sections/:section", config, r => service.section(r.authSession!.user.id,r.params.id,r.params.section));
   app.get<{ Params: { cycleId: string } }>(
     "/api/v1/payout-cycles/:cycleId/ovr-batches",
     config,

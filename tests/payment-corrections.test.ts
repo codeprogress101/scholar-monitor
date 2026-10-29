@@ -1,11 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { parsePaymentCorrection } from "../server/ovr/payment-correction-service.js";
+import { correctionChangesOutcome, parsePaymentCorrection } from "../server/ovr/payment-correction-service.js";
 import {
   effectivePayments,
   type PaymentCorrection,
 } from "../server/ovr/payment-correction-state.js";
 import type { PaymentRecord } from "../server/ovr/processing-model.js";
 describe("payment corrections", () => {
+  it("treats unpaid classification changes as outcome changes while preserving date-only authority", () => {
+    const paid = { outcome: "paid" as const };
+    const unclaimed = { outcome: "not_paid" as const, unpaidReason: "did_not_claim" as const };
+    const withheld = { outcome: "not_paid" as const, unpaidReason: "withheld" as const };
+    const review = { outcome: "not_paid" as const, unpaidReason: "review" as const };
+    const unspecified = { outcome: "not_paid" as const };
+    for (const [before, after] of [
+      [paid, unclaimed], [unclaimed, paid], [unclaimed, withheld],
+      [withheld, unclaimed], [review, unclaimed], [unclaimed, review],
+      [unspecified, unclaimed], [unclaimed, unspecified],
+    ]) expect(correctionChangesOutcome(before, after)).toBe(true);
+    for (const before of [paid, unclaimed, withheld, review, unspecified])
+      expect(correctionChangesOutcome(before, { ...before })).toBe(false);
+  });
   const input = {
     expectedRevision: 1,
     paymentId: "11111111-1111-4111-8111-111111111111",

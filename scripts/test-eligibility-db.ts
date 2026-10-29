@@ -1,4 +1,12 @@
+import {schemaManifest} from '../server/schema-manifest.js';
+import { assertNotificationCurrent } from "./test-notification-parity.js";
+import { assertPaymentFoundation } from "./test-payment-foundation.js";
+import { assertReportParity, assertReportSnapshot, assertReportCapacity, assertReportRoutes } from "./test-report-parity.js";
 import { testAutomaticPayroll } from "./test-automatic-payroll-scenarios.js";
+import { assertRegistryParity, registryCheckpoints, testRegistryLegacy } from "./test-registry-parity.js";
+import { assertCandidateParity } from "./test-candidate-parity.js";
+import { assertDashboardParity } from "./test-dashboard-parity.js";
+import { assertPayrollDetailParity, assertPayrollReadApi } from "./test-payroll-detail-parity.js";
 import { testMainPayroll } from "./test-main-payroll-scenarios.js";
 import { testAudit } from "./test-audit-scenarios.js";
 import { testDashboard } from "./test-dashboard-scenarios.js";
@@ -68,7 +76,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,
@@ -96,9 +104,11 @@ try {
     close: async () => {},
   };
   app = buildApp(
-    loadConfig({ APP_ENV: "test", PORT: "3003", APP_ORIGIN: origin }),
+    loadConfig({ APP_ENV: "test", PORT: "3003", APP_ORIGIN: origin,INDIVIDUAL_PAYMENTS_ENABLED:process.argv.includes('--individual-payments')||process.argv.includes('--omitted-payments')?'true':'false',OMITTED_PAYMENTS_ENABLED:process.argv.includes('--omitted-payments')?'true':'false',INDIVIDUAL_DOCUMENTS_ENABLED:process.argv.includes('--individual-documents')||process.argv.includes('--individual-settlement')?'true':'false',INDIVIDUAL_SETTLEMENT_ENABLED:process.argv.includes('--individual-settlement')?'true':'false' }),
     { database: db },
   );
+  if(process.argv.includes('--individual-payments'))app.addHook('onError',(r,_reply,e,done)=>{if(r.url.includes('individual-payments'))console.error('P04 disposable diagnostic',e.code,e.message);done();});
+  if(process.argv.includes('--omitted-payments'))app.addHook('onError',(r,_reply,e,done)=>{if(r.url.includes('individual-payments')||r.url.endsWith('/preparation'))console.error('P05 disposable diagnostic',e.code,e.message);done();});
   const accounts = new Map<
     string,
     { id: string; cookie: string; csrf: string }
@@ -144,7 +154,8 @@ try {
       csrf: response.json().csrfToken,
     });
   }
-  const request = (
+  const registryCheckpoint=registryCheckpoints(root);
+  const request = async (
     role: string,
     url: string,
     body?: object,
@@ -152,7 +163,7 @@ try {
     method: "GET" | "POST" | "PATCH" = body ? "POST" : "GET",
   ) => {
     const account = accounts.get(role)!;
-    return app!.inject({
+    const response=await app!.inject({
       method,
       url,
       headers: {
@@ -169,7 +180,35 @@ try {
       },
       ...(body ? { payload: body } : {}),
     });
+    if(process.argv.includes("--payment-foundation") && method==="GET" && response.statusCode===200 && /^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url)) assertPaymentFoundation(response.json());
+    if(process.argv.includes("--registry-parity") && method==="GET" && response.statusCode===200) {
+      if(/^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url))await registryCheckpoint(account.id,response.json());
+      if(url.startsWith("/api/v1/scholars/eligibility?"))await assertRegistryParity(root!,account.id,Object.fromEntries(new URL(url,origin).searchParams));
+    }
+    if(process.argv.includes("--candidate-parity") && method==="GET" && response.statusCode===200 && /^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url)) await assertCandidateParity(root!,account.id,response.json().batch.id);
+    if(process.argv.includes("--dashboard-parity") && method==="GET" && response.statusCode===200 && /^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url)) await assertDashboardParity(root!,account.id,response.json().cycle.id);
+    if(process.argv.includes("--payroll-detail-parity") && method==="GET" && response.statusCode===200 && /^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url)) {
+      await assertPayrollReadApi(request,response.json().batch.id,response.json().cycle.id);
+      await assertPayrollDetailParity(root!,account.id,response.json().batch.id);
+    }
+    if(process.argv.includes("--report-pagination") && method==="GET" && response.statusCode===200 && /^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url)) await assertReportParity(root!,account.id,response.json().cycle.id);
+    if(process.argv.includes("--report-pagination") && method==="GET" && response.statusCode===200 && /^\/api\/v1\/ovr-batches\/[^/?]+$/.test(url)) await assertNotificationCurrent(new AuthorizationService(root), [...accounts.values()].map(a=>a.id));
+    if (process.argv.includes("--report-pagination") && method === "GET" && response.statusCode === 200) {
+      const context = url.match(/^\/api\/v1\/payout-cycles\/([^/?]+)\/scholarships\/[^/?]+\/eligibility$/);
+      if (context) { await assertReportParity(root!, account.id, context[1]); await assertNotificationCurrent(new AuthorizationService(root), [...accounts.values()].map(a=>a.id)); }
+    }
+    return response;
   };
+  if(process.argv.includes('--individual-documents')){
+    const staffAccount=accounts.get('staff')!,transactionId=randomUUID();
+    const unsafe=await app!.inject({method:'POST',url:`/api/v1/individual-payments/transactions/${transactionId}/documents/generate`,headers:{cookie:staffAccount.cookie,origin,'content-type':'application/json','idempotency-key':randomUUID()},payload:{transactionId}});
+    assert.equal(unsafe.statusCode,403,unsafe.body);assert.match(unsafe.json().error.code,/CSRF/);
+  }
+  if(process.argv.includes('--omitted-payments')){
+    const staffAccount=accounts.get('staff')!;
+    const unsafe=await app!.inject({method:'POST',url:'/api/v1/individual-payments/omissions/commands',headers:{cookie:staffAccount.cookie,origin,'content-type':'application/json','idempotency-key':randomUUID()},payload:{action:'record',sourceBatchId:randomUUID(),scholarshipId:randomUUID(),expectedRevision:0}});
+    assert.equal(unsafe.statusCode,403,unsafe.body);assert.match(unsafe.json().error.code,/CSRF/);
+  }
   const expectError = (
     response: LightMyRequestResponse,
     status: number,
@@ -548,6 +587,7 @@ try {
     annualId: annual.id,
   };
   if (process.argv.includes("--automatic-payroll")) await testAutomaticPayroll(ovrContext);
+  if (process.argv.includes("--registry-parity"))await testRegistryLegacy(root,accounts.get("staff")!.id,cycle.id,annual.id);
   if (process.argv.includes("--main-payroll")) await testMainPayroll({ admin, runtime, actor: accounts.get("coordinator")!.id, request });
   if (!process.argv.includes("--browser-release")) {
   const ovrTests = process.argv.includes("--ovr")
@@ -555,6 +595,11 @@ try {
     : null;
   if (process.argv.includes("--reports")) {
     await testReports(ovrContext);
+    if (process.argv.includes("--report-pagination")) {
+      await assertReportRoutes(request,cycle.id);
+      await assertReportSnapshot(root!,accounts.get("staff")!.id,cycle.id);
+      await assertReportCapacity(root!,accounts.get("staff")!.id,cycle.id);
+    }
     pass("F29 reports reconcile to sources and shared OVR eligibility checks");
   }
   const report = (
@@ -1236,9 +1281,13 @@ try {
   );
   if (process.argv.includes("--browser")) {
     const fixture = buildApp(
-      loadConfig({ APP_ENV: "test", PORT: "3003", APP_ORIGIN: origin }),
+      loadConfig({ APP_ENV: "test", PORT: "3003", APP_ORIGIN: origin,INDIVIDUAL_PAYMENTS_ENABLED:process.argv.includes('--individual-payments')||process.argv.includes('--omitted-payments')?'true':'false',OMITTED_PAYMENTS_ENABLED:process.argv.includes('--omitted-payments')?'true':'false',INDIVIDUAL_DOCUMENTS_ENABLED:process.argv.includes('--individual-documents')||process.argv.includes('--individual-settlement')?'true':'false',INDIVIDUAL_SETTLEMENT_ENABLED:process.argv.includes('--individual-settlement')?'true':'false' }),
       { database: db, clientRoot: resolve("dist/client") },
     );
+    if(process.argv.includes('--individual-loss')){
+      let dropped=false;
+      fixture.addHook('onSend',async(r,reply,payload)=>{if(!dropped&&r.method==='POST'&&r.url==='/api/v1/individual-payments/commands'&&reply.statusCode===200){dropped=true;console.log('P04 browser fixture dropped one completed response');reply.hijack();reply.raw.destroy();}return payload;});
+    }
     let stop: () => void = () => {};
     const finished = new Promise<void>((r) => {
       stop = r;

@@ -1,3 +1,4 @@
+import {ActionButton} from "./ActionProgress";
 import { useActionForm } from "./use-action-form";
 import { useEffect, useState, useRef, type FormEvent } from "react";
 import type { Session } from "./auth-api";
@@ -358,13 +359,13 @@ export default function StatusPanel({
                   onChange={(e) => setReference(e.target.value)}
                 />
                 <div className="d-flex gap-2 mt-3">
-                  <button type="submit" className="btn configuration-primary">
+                  <ActionButton pending={saving} type="submit" className="btn configuration-primary">
                     {saving
                       ? "Saving..."
                       : mode.action === "request"
                         ? "Submit status request"
                         : `Confirm ${mode.action}`}
-                  </button>
+                  </ActionButton>
                   <button
                     type="button"
                     className="btn btn-outline-secondary"

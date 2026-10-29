@@ -1,0 +1,112 @@
+%% Individual disbursements and stored documents; core tables: individual_payment_transactions, individual_payment_events, entitlement_payment_routes, individual_document_versions, individual_document_contents
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% entitlement_payment_routes: Both; BASE TABLE
+  entitlement_payment_routes {
+    char entitlement_id PK, FK "not null; SQL char(36)"
+    char transaction_id FK, UK "nullable; SQL char(36)"
+    char event_transaction_id FK "not null; SQL char(36)"
+    int event_revision FK "not null; SQL int(10) unsigned"
+  }
+  %% individual_document_contents: Both; BASE TABLE
+  individual_document_contents {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    enum document_kind PK, FK "not null; SQL enum('OR','DV')"
+    int revision FK "not null; SQL int(10) unsigned"
+    char document_hash FK "not null; SQL char(64)"
+  }
+  %% individual_document_versions: Both; BASE TABLE
+  individual_document_versions {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    enum document_kind PK "not null; SQL enum('OR','DV')"
+    int revision PK "not null; SQL int(10) unsigned"
+    enum source_kind FK "not null; SQL enum('unclaimed','omitted')"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_payment_events: Both; BASE TABLE
+  individual_payment_events {
+    char transaction_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% individual_payment_transactions: Both; BASE TABLE
+  individual_payment_transactions {
+    char id PK "not null; SQL char(36)"
+    char entitlement_id FK "not null; SQL char(36)"
+    char source_payment_id FK "nullable; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char request_transaction_id FK "nullable; SQL char(36)"
+    char replacement_of FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char omission_id FK "nullable; SQL char(36)"
+    int approval_revision FK "nullable; SQL int(10) unsigned"
+  }
+  %% ovr_finalizations: Both; BASE TABLE
+  ovr_finalizations {
+    char batch_id PK, FK "not null; SQL char(36)"
+    int batch_revision FK "not null; SQL int(10) unsigned"
+    char finalized_by FK "not null; SQL char(36)"
+  }
+  %% payment_records: Both; BASE TABLE
+  payment_records {
+    char id PK "not null; SQL char(36)"
+    char batch_id FK "nullable; SQL char(36)"
+    int batch_revision FK "nullable; SQL int(10) unsigned"
+    char cycle_id FK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+    char individual_transaction_id FK, UK "nullable; SQL char(36)"
+    int individual_revision FK "nullable; SQL int(10) unsigned"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char scholar_id FK "nullable; SQL char(36)"
+    char semester_id FK "nullable; SQL char(36)"
+  }
+  %% payroll_omission_events: Both; BASE TABLE
+  payroll_omission_events {
+    char omission_id PK, FK "not null; SQL char(36)"
+    int revision PK "not null; SQL int(10) unsigned"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char destination_batch_id FK "nullable; SQL char(36)"
+    char entitlement_id FK "nullable; SQL char(36)"
+    char authorized_entitlement_id FK "nullable; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% payroll_omissions: Both; BASE TABLE
+  payroll_omissions {
+    char id PK "not null; SQL char(36)"
+    char scholarship_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char source_batch_id FK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% semester_entitlements: Both; BASE TABLE
+  semester_entitlements {
+    char id PK "not null; SQL char(36)"
+    char scholar_semester_id FK "not null; SQL char(36)"
+    char scholar_id FK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  semester_entitlements ||--o| entitlement_payment_routes : "entitlement_payment_routes_ibfk_1"
+  individual_payment_transactions |o..o| entitlement_payment_routes : "entitlement_payment_routes_ibfk_2"
+  individual_payment_transactions ||..o| entitlement_payment_routes : "entitlement_payment_routes_ibfk_3"
+  individual_payment_events ||..o{ entitlement_payment_routes : "entitlement_payment_routes_ibfk_4"
+  individual_document_versions ||..o| individual_document_contents : "individual_document_contents_ibfk_1"
+  individual_payment_transactions ||..o{ individual_document_versions : "individual_document_versions_ibfk_1"
+  users ||..o{ individual_document_versions : "individual_document_versions_ibfk_2"
+  individual_payment_transactions ||--o{ individual_payment_events : "individual_payment_events_ibfk_1"
+  users ||..o{ individual_payment_events : "individual_payment_events_ibfk_2"
+  payroll_omission_events |o..o{ individual_payment_transactions : "fk_individual_omission_approval"
+  payroll_omissions |o..o{ individual_payment_transactions : "fk_individual_omission_origin"
+  semester_entitlements ||..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_1"
+  payment_records |o..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_2"
+  ovr_finalizations ||..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_3"
+  individual_payment_transactions |o..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_4"
+  individual_payment_transactions |o..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_5"
+  users ||..o{ individual_payment_transactions : "individual_payment_transactions_ibfk_6"

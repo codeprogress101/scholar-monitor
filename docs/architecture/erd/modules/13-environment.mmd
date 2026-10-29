@@ -1,0 +1,19 @@
+%% Migration journal and UAT ownership markers; core tables: schema_migrations, _ldss_uat_owner, _ldss_annual_uat_owner, _ip_uat1_owner
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% _ip_uat1_owner: 5181 only; BASE TABLE
+  _ip_uat1_owner {
+    int id PK "not null; SQL int(11)"
+  }
+  %% _ldss_annual_uat_owner: Primary only; BASE TABLE
+  _ldss_annual_uat_owner {
+    int id PK "not null; SQL int(11)"
+  }
+  %% _ldss_uat_owner: Primary only; BASE TABLE
+  _ldss_uat_owner {
+    char id PK "not null; SQL char(36)"
+  }
+  %% schema_migrations: Both; BASE TABLE
+  schema_migrations {
+    varchar version PK "not null; SQL varchar(80)"
+  }

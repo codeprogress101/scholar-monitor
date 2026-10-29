@@ -1,3 +1,4 @@
+import {schemaManifest} from '../server/schema-manifest.js';
 import type { AcademicChangeView } from "../server/academic/changes-model.js";
 import type {
   AmendmentView,
@@ -58,7 +59,7 @@ try {
   );
   createdDatabase = true;
   await admin.changeUser({ database });
-  assert.equal((await applyMigrations(admin)).length, 55);
+  assert.equal((await applyMigrations(admin)).length, schemaManifest.length);
   assert.deepEqual(await applyMigrations(admin), []);
   await admin.query(
     `CREATE USER ${admin.escape(runtimeUser)}@'localhost' IDENTIFIED BY ${admin.escape(runtimePassword)}`,

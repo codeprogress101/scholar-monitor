@@ -1,6 +1,7 @@
 import { useActionForm } from "./use-action-form";
 import { useRef, useState, type FormEvent } from "react";
-import type { OvrDetail } from "../server/ovr/model";
+import type { OvrSections } from "../server/ovr/detail-model";
+type OvrDetail = OvrSections["corrections"];
 import { ApiError, type Session } from "./auth-api";
 import { configurationRequest as request } from "./configuration-api";
 export default function PaymentCorrections({
@@ -23,7 +24,7 @@ export default function PaymentCorrections({
     retry = useRef<{ signature: string; key: string } | null>(null);
   const closed =
     detail.claimDeadline?.expired ||
-    Boolean(detail.releases) ||
+    detail.managedRelease ||
     detail.batch.state === "closed" ||
     detail.cycle.state === "closed" ||
     detail.cycle.periodUnavailable;

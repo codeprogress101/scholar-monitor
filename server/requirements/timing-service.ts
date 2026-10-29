@@ -1,3 +1,5 @@
+import {cutoffPolicy} from "../payouts/cutoff-policy.js";
+import {cutoffEvidenceColumns,recordedWindowTiming,type RecordedWindowTiming} from "../payouts/cutoff-source.js";
 import { reusedOwner, requireActiveDocument } from "./reused-source.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -16,7 +18,7 @@ const decode = <T>(v: T | string): T => typeof v === "string" ? JSON.parse(v) as
 const text = z.string().trim().min(5).max(500).regex(/^\P{Cc}*$/u);
 const decisionSchema = z.object({ batchId: z.uuid(), expectedSourceHash: z.string().regex(/^[a-f0-9]{64}$/), expectedRevision: z.number().int().min(0), decision: z.enum(["approve", "reject"]), evidenceKind: z.enum(["receiving_log", "dated_acknowledgment"]), evidenceReference: text, reason: text }).strict();
 type Decision = { id: string; revision: number; sourceHash: string; decision: "approve" | "reject"; evidenceKind: string; evidenceReference: string; reason: string; actorName: string; recordedAt: string };
-export type TimingWindow = { batchId: string; batchCode: string; cutoffOn: string; revision: number; deadlineRevision: number; sourceHash: string; status: ReceiptTimingStatus; message: string; timingSatisfied: boolean; canDecide: boolean; decisionRevision: number; processingState: string; history: Decision[] };
+export type TimingWindow = { batchId: string; batchCode: string; cutoffOn: string; revision: number; deadlineRevision: number; sourceHash: string; status: ReceiptTimingStatus; message: string; timingSatisfied: boolean; canDecide: boolean; decisionRevision: number; processingState: string; history: Decision[] } & RecordedWindowTiming;
 export type RequirementTimingView = { mode: "legacy" | "managed"; receipt: ReturnType<typeof currentReceiptEvidence>; windows: TimingWindow[]; financialAuthorized: false; issue: string | null };
 
 export async function loadRequirementTiming(db: PoolConnection, instanceId: string): Promise<RequirementTimingView> {
@@ -33,19 +35,20 @@ export async function loadRequirementTiming(db: PoolConnection, instanceId: stri
   const cycle = await currentPayout(db, mapping.cycle_id);
   const [[siblings]] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM payout_cycles WHERE semester_id=?", [owner.semester_id]);
   const issue = receipt.issue ?? (mapping.semester_version !== mapping.sv || mapping.year_version !== mapping.yv || Number(siblings.n) !== 1 || !deadline ? "Regular-period mapping or deadline needs review." : null);
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT w.batch_id,w.batch_number,b.code,v.revision,DATE_FORMAT(v.cutoff_on,'%Y-%m-%d') AS cutoffOn FROM payroll_submission_windows w JOIN ovr_batches b ON b.id=w.batch_id JOIN payroll_submission_window_versions v ON v.batch_id=w.batch_id WHERE w.cycle_id=? AND NOT EXISTS(SELECT 1 FROM payroll_submission_window_versions newer WHERE newer.batch_id=v.batch_id AND newer.revision>v.revision) ORDER BY w.batch_number LOCK IN SHARE MODE", [mapping.cycle_id]);
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT w.batch_id,w.batch_number,b.code,v.revision,DATE_FORMAT(v.cutoff_on,'%Y-%m-%d') AS cutoffOn,${cutoffEvidenceColumns()} FROM payroll_submission_windows w JOIN ovr_batches b ON b.id=w.batch_id JOIN payroll_submission_window_versions v ON v.batch_id=w.batch_id WHERE w.cycle_id=? AND NOT EXISTS(SELECT 1 FROM payroll_submission_window_versions newer WHERE newer.batch_id=v.batch_id AND newer.revision>v.revision) ORDER BY w.batch_number LOCK IN SHARE MODE`, [mapping.cycle_id]);
   const windows: TimingWindow[] = [];
   for (const row of rows) {
     const [[batch]] = await db.execute<RowDataPacket[]>("SELECT revision,state FROM ovr_batch_events WHERE batch_id=? ORDER BY revision DESC LIMIT 1 LOCK IN SHARE MODE", [row.batch_id]);
     const [history] = await db.execute<RowDataPacket[]>("SELECT id,revision,source_hash AS sourceHash,decision,evidence_kind AS evidenceKind,evidence_reference AS evidenceReference,reason,actor_name AS actorName,DATE_FORMAT(recorded_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS recordedAt FROM requirement_timing_decisions WHERE instance_id=? AND batch_id=? ORDER BY revision DESC LOCK IN SHARE MODE", [instanceId, row.batch_id]);
-    const sourceHash = digest(JSON.stringify({ instanceId, receipt: receipt.current, cycleId: cycle.id, cycleVersion: cycle.version, mapping: { semesterId: mapping.semester_id, semesterVersion: mapping.semester_version, yearVersion: mapping.year_version }, deadline: deadline ?? null, window: { batchId: row.batch_id, revision: row.revision, cutoffOn: row.cutoffOn },...(state.priorApproval ? {priorApproval:state.priorApproval}: {}) }));
-    const base = issue || row.cutoffOn > deadline?.day ? "unavailable" : classifyReceiptTiming(receipt.current, row.cutoffOn);
+    const policy=cutoffPolicy(row.cutoffPolicy), timing=await recordedWindowTiming(db,cycle.id,row as {cutoffOn:string;cutoffPolicy:unknown});
+    const sourceHash = digest(JSON.stringify({ instanceId, receipt: receipt.current, cycleId: cycle.id, cycleVersion: cycle.version, mapping: { semesterId: mapping.semester_id, semesterVersion: mapping.semester_version, yearVersion: mapping.year_version }, deadline: deadline ?? null, window: { batchId: row.batch_id, revision: row.revision, cutoffOn: row.cutoffOn, ...(policy==="whole_day_v1"?{}:timing) },...(state.priorApproval ? {priorApproval:state.priorApproval}: {}) }));
+    const base = issue || row.cutoffOn > deadline?.day ? "unavailable" : classifyReceiptTiming(receipt.current, row.cutoffOn, policy,timing.cutoffLocalTime??undefined);
     const latest = history[0];
     const decisionMatches = latest?.sourceHash === sourceHash;
     const [[historical]] = await db.execute<RowDataPacket[]>("SELECT import_job_id,DATE_FORMAT(deadline_on,'%Y-%m-%d') deadline FROM historical_payout_setups WHERE batch_id=? ORDER BY revision DESC LIMIT 1",[row.batch_id]);
-    const priorAccepted=!issue && historical && state.priorApproval?.valid && state.priorApproval.importId===historical.import_job_id && state.priorApproval.deadlineOn===historical.deadline && historical.deadline===row.cutoffOn && !history.length;
+    const priorAccepted=policy === "whole_day_v1" && !issue && historical && state.priorApproval?.valid && state.priorApproval.importId===historical.import_job_id && state.priorApproval.deadlineOn===historical.deadline && historical.deadline===row.cutoffOn && !history.length;
     const status: ReceiptTimingStatus = priorAccepted ? "prior_batch_approved" : base === "review_required" && decisionMatches ? latest.decision === "approve" ? "approved_late_encoding" : "rejected_late_encoding" : base;
-    windows.push({ batchId: row.batch_id, batchCode: row.code, cutoffOn: row.cutoffOn, revision: row.revision, deadlineRevision: deadline?.revision ?? 0, sourceHash, status, message: timingLabels[status], timingSatisfied: ["on_time", "approved_late_encoding", "prior_batch_approved"].includes(status), canDecide: !priorAccepted && base === "review_required" && !cycle.periodUnavailable && cycle.state === "open" && ["draft", "review"].includes(batch?.state), decisionRevision: latest?.revision ?? 0, processingState: batch?.state ?? "unknown", history: history as Decision[] });
+    windows.push({ batchId: row.batch_id, batchCode: row.code, cutoffOn: row.cutoffOn, ...timing, revision: row.revision, deadlineRevision: deadline?.revision ?? 0, sourceHash, status, message: timingLabels[status], timingSatisfied: ["on_time", "approved_late_encoding", "prior_batch_approved"].includes(status), canDecide: !priorAccepted && base === "review_required" && !cycle.periodUnavailable && cycle.state === "open" && ["draft", "review"].includes(batch?.state), decisionRevision: latest?.revision ?? 0, processingState: batch?.state ?? "unknown", history: history as Decision[] });
   }
   return { mode: "managed", receipt, windows, financialAuthorized: false, issue };
 }
@@ -80,7 +83,7 @@ export class RequirementTimingService {
       await semesterRequirementContext(db, id, owner.scholar_semester_id);
       const [[user]] = await db.execute<RowDataPacket[]>("SELECT full_name FROM users WHERE id=?", [actor]);
       const result = { id: randomUUID(), revision: window.decisionRevision + 1 };
-      const snapshot = { receipt: view.receipt.current, batchId: window.batchId, cutoffOn: window.cutoffOn, windowRevision: window.revision, deadlineRevision: window.deadlineRevision, sourceHash: window.sourceHash };
+      const snapshot = { receipt: view.receipt.current, batchId: window.batchId, cutoffOn: window.cutoffOn, windowRevision: window.revision, deadlineRevision: window.deadlineRevision, sourceHash: window.sourceHash, ...(window.cutoffPolicy === "whole_day_v1" ? {} : {cutoffPolicy:window.cutoffPolicy,cutoffLocalTime:window.cutoffLocalTime,cutoffTimeZone:window.cutoffTimeZone,cutoffAtUtc:window.cutoffAtUtc,cutoffRuleRevision:window.cutoffRuleRevision,cutoffRuleHash:window.cutoffRuleHash}) };
       await db.execute("INSERT INTO requirement_timing_decisions(id,instance_id,batch_id,revision,source_hash,decision,evidence_kind,evidence_reference,reason,snapshot,actor_id,actor_name,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))", [result.id, id, window.batchId, result.revision, window.sourceHash, input.decision, input.evidenceKind, input.evidenceReference, input.reason, JSON.stringify(snapshot), actor, user.full_name]);
       await db.execute("INSERT INTO audit_logs(id,event_type,entity_type,entity_id,action,actor_id,actor_kind,occurred_at,request_id,reason,details) VALUES(?,'requirements.timing','requirement_instance',?,?,?,'user',UTC_TIMESTAMP(6),?,?,?)", [randomUUID(), id, input.decision, actor, requestId, input.reason, JSON.stringify({ before: window.history[0] ?? null, after: { ...result, ...input, snapshot }, idempotency_key: key })]);
       await db.execute("INSERT INTO workflow_commands(actor_id,command_id,payload_hash,result) VALUES(?,?,?,?)", [actor, key, hash, JSON.stringify(result)]);

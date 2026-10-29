@@ -1,5 +1,6 @@
 import { graduationFor } from "../status/graduation.js";
 import { semesterSources } from "./semester-sources.js";
+import {omissionSource,mayReviewOwnOmission,omissionReserved} from '../payments/omission-source.js';
 import { validationDetails } from "../validation-details.js";
 import { overrideHistory, effectiveEligibility } from "./override-state.js";
 import { randomUUID } from "node:crypto";
@@ -55,6 +56,7 @@ export async function eligibilitySources(
   cycle: PayoutCycle,
   annualId: string,
   batchId?: string,
+  omissionId?: string,
 ): Promise<EligibilitySources> {
   const { r, official } = await officialMembership(db, cycle, annualId);
   const [checklists] = await db.execute<RowDataPacket[]>(
@@ -120,7 +122,13 @@ export async function eligibilitySources(
     requirements,
   };
   const [reservations] = await db.execute<RowDataPacket[]>("SELECT a.batch_id FROM semester_entitlements e LEFT JOIN payroll_allocations a ON a.entitlement_id=e.id WHERE e.scholar_id=? AND e.semester_id=? LOCK IN SHARE MODE", [r.scholar_id, cycle.semesterId]);
-  if (reservations.some(a => a.batch_id !== batchId)) sources.reservedSemester = true;
+  const omission=await omissionSource(db,r.scholar_id,cycle.semesterId);
+  const own=mayReviewOwnOmission(omission,omissionId,batchId);
+  const reusable=Boolean(omission?.entitlementId&&!omissionReserved(omission.state));
+  // Only a reviewed, unallocated omitted entitlement can be reused. All other
+  // reservations retain the established behavior, including historical ones.
+  if (reservations.some(a => a.batch_id !== batchId && !(a.batch_id===null&&omission?.entitlementId&&(own||reusable)))) sources.reservedSemester = true;
+  if(omission)sources.omission={...omission,reviewingOwn:own};
   const graduation = await graduationFor(db, r.scholar_id);
   if (graduation?.archived) sources.archivedGraduate = true;
   if (r.operational_status === "graduated" && graduation?.requestId && graduation.semesterId === cycle.semesterId) sources.finalSemesterGraduation = { requestId: graduation.requestId, semesterId: graduation.semesterId };
@@ -151,9 +159,10 @@ export async function eligibilityView(
   cycle: PayoutCycle,
   annualId: string,
   batchId?: string,
+  omissionId?: string,
 ): Promise<EligibilityView> {
   const current = evaluateEligibility(
-      await eligibilitySources(db, cycle, annualId, batchId),
+    await eligibilitySources(db, cycle, annualId, batchId, omissionId),
     ),
     saved = await history(db, cycle.id, annualId),
     latest = saved[0] ?? null,

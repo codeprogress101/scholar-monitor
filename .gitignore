@@ -11,3 +11,8 @@ output/
 .DS_Store
 *.tsbuildinfo
 .aider*
+
+# Local editor/tool installations and machine-bound provisioning configuration.
+.agents/
+.vscode/
+/scripts/backup-worker/provision-profile.json

@@ -1,0 +1,44 @@
+%% Signatory storage, configuration and authority; core tables: system_settings, configuration_guard, workflow_authority_versions, workflow_policy_versions, workflow_scope_versions
+%% Database-enforced FKs only. Attributes show PK/FK columns; all columns are in the dictionary.
+erDiagram
+  %% configuration_guard: Both; BASE TABLE
+  configuration_guard {
+    tinyint id PK "not null; SQL tinyint(4)"
+  }
+  %% semesters: Both; BASE TABLE
+  semesters {
+    char id PK "not null; SQL char(36)"
+    char academic_year_id FK "not null; SQL char(36)"
+  }
+  %% system_settings: Both; BASE TABLE
+  system_settings {
+    char id PK "not null; SQL char(36)"
+  }
+  %% users: Both; BASE TABLE
+  users {
+    char id PK "not null; SQL char(36)"
+  }
+  %% workflow_authority_versions: Both; BASE TABLE
+  workflow_authority_versions {
+    char id PK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% workflow_policy_versions: Both; BASE TABLE
+  workflow_policy_versions {
+    char id PK "not null; SQL char(36)"
+    char authority_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  %% workflow_scope_versions: Both; BASE TABLE
+  workflow_scope_versions {
+    char id PK "not null; SQL char(36)"
+    char semester_id FK "not null; SQL char(36)"
+    char policy_version_id FK "not null; SQL char(36)"
+    char actor_id FK "not null; SQL char(36)"
+  }
+  users ||..o{ workflow_authority_versions : "workflow_authority_versions_ibfk_1"
+  workflow_authority_versions ||..o{ workflow_policy_versions : "workflow_policy_versions_ibfk_1"
+  users ||..o{ workflow_policy_versions : "workflow_policy_versions_ibfk_2"
+  semesters ||..o{ workflow_scope_versions : "workflow_scope_versions_ibfk_1"
+  workflow_policy_versions ||..o{ workflow_scope_versions : "workflow_scope_versions_ibfk_2"
+  users ||..o{ workflow_scope_versions : "workflow_scope_versions_ibfk_3"
