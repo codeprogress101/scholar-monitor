@@ -1,0 +1,10 @@
+{
+  "purpose": "Operator-gated repair handoff, not installed",
+  "sha256": {
+    "recovery/Repair-EarlyFailedFoundation.ps1": "fee07b7ce7ecfcd05ff04075a18dc612fb8baca84833bf8c37bed0806349c83d",
+    "v2/Prepare-ProvisioningPackage.ps1": "86fc82b5b942f8aec7a030772eb437edd50fb00b6361b05b16153cfb1ec17714",
+    "v2/Provision-IpUatBackupFoundation.ps1": "886a97f9dac0fa1663feb694934e38305c287122a18adb98e26c56b1fbf09f5b",
+    "v2/BackupFoundation.Native.cs": "466d15f822f8e613f0575e18004f6c41a53f2216e526f65224c53cfc3ea18711",
+    "v2/provision-profile.json": "bcdbb67ee2b44e184658f3137178f88652a8c9cfeaaadf03b6716756525a3528"
+  }
+}

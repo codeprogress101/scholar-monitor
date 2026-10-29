@@ -6,3 +6,12 @@
 /scripts/backup-worker/*.ps1 text eol=lf
 /scripts/backup-worker/*.cs text eol=lf
 /scripts/backup-worker/*.json text eol=lf
+/scripts/backup-worker/recovery/*.ps1 text eol=lf
+/scripts/backup-worker/v2/*.ps1 text eol=lf
+/scripts/backup-worker/v2/*.cs text eol=lf
+/scripts/backup-worker/v2/*.json text eol=lf
+/handoff/**/*.zip binary
+# Transfer checksum inputs must retain exact bytes on every checkout.
+/handoff/**/source-manifest.json -text
+/handoff/**/SHA256SUMS.txt -text
+/handoff/**/ADMIN_SYS_1A_3_REQUEST.md -text

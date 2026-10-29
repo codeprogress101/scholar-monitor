@@ -16,3 +16,11 @@ output/
 .agents/
 .vscode/
 /scripts/backup-worker/provision-profile.json
+/scripts/backup-worker/v2/provision-profile.json
+
+# Never commit local recovery material alongside development handoffs.
+/handoff/**/private/
+/handoff/**/*.key
+/handoff/**/*.pfx
+/handoff/**/*.sql
+/handoff/**/*.ldssbak
